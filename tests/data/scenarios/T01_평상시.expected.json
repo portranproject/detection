@@ -1,0 +1,7 @@
+{
+  "scenario": "T01_평상시",
+  "description": "평상시: 0~20 s 정상 0, 20~40 s 정상 2/s",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

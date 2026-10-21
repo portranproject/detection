@@ -1,0 +1,27 @@
+{
+  "scenario": "T22b_hello다름",
+  "description": "공격 중 10 s에 같은 session·다른 cells(max_conn) hello — 초기화 후 재탐지",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "cell": 1,
+      "t_rel_ms": 6400,
+      "mode": "normal"
+    },
+    {
+      "kind": "END",
+      "cell": 1,
+      "t_rel_ms": 10000,
+      "mode": "normal",
+      "reason": "session_reset"
+    },
+    {
+      "kind": "RAISE",
+      "cell": 1,
+      "t_rel_ms": 12200,
+      "mode": "normal"
+    }
+  ]
+}

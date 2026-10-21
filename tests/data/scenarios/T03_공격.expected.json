@@ -1,0 +1,14 @@
+{
+  "scenario": "T03_공격",
+  "description": "공격 30/s (5 s부터), 정상 1/s",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "cell": 1,
+      "t_rel_ms": 6400,
+      "mode": "normal"
+    }
+  ]
+}

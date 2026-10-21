@@ -1,0 +1,20 @@
+{
+  "scenario": "T21_두셀한셀끊김",
+  "description": "셀 2개 모두 공격 30/s, 셀 2만 5.5 s 칸 유실 — 셀 2만 보류",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "cell": 1,
+      "t_rel_ms": 6400,
+      "mode": "normal"
+    },
+    {
+      "kind": "RAISE",
+      "cell": 2,
+      "t_rel_ms": 7800,
+      "mode": "normal"
+    }
+  ]
+}

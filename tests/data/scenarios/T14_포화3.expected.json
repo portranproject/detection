@@ -1,0 +1,20 @@
+{
+  "scenario": "T14_포화3",
+  "description": "포화 ③: T13에 이어 15 s에 Att까지 멈춤 — 마지막 성립 15.9 s + H_sat",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "cell": 1,
+      "t_rel_ms": 6300,
+      "mode": "normal"
+    },
+    {
+      "kind": "CLEAR",
+      "cell": 1,
+      "t_rel_ms": 18900,
+      "mode": "normal"
+    }
+  ]
+}
