@@ -1,0 +1,20 @@
+{
+  "scenario": "T10_긴공격",
+  "description": "긴 공격 60 s (5~65 s, 30/s), 정상 1/s — 증거 T10·T16용",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "cell": 1,
+      "t_rel_ms": 6400,
+      "mode": "normal"
+    },
+    {
+      "kind": "CLEAR",
+      "cell": 1,
+      "t_rel_ms": 69800,
+      "mode": "normal"
+    }
+  ]
+}
