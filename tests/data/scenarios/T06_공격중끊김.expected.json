@@ -1,0 +1,14 @@
+{
+  "scenario": "T06_공격중끊김",
+  "description": "공격 중 한 칸(12.0 s) 유실 — 보류 후 재개, 경보 유지",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "cell": 1,
+      "t_rel_ms": 6400,
+      "mode": "normal"
+    }
+  ]
+}

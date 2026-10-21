@@ -1,0 +1,14 @@
+{
+  "scenario": "T18a_램프3s",
+  "description": "정상 2/s, 40 s부터 0→30/s를 3 s에 걸쳐 (웜업 뒤)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "cell": 1,
+      "t_rel_ms": 42300,
+      "mode": "normal"
+    }
+  ]
+}

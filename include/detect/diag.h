@@ -25,6 +25,10 @@ enum class DiagKind {
   CellGap,             // 셀 구간 끊김 (2_ §4.1, 3_ §8)
   CellOverlap,         // 셀 구간 겹침·역행
   PeriodMismatch,      // t_end - t_start != period_ms
+  RuleInactive,        // 필수 키 A·S 누락이 연속 missing_key_slots칸 초과 (3_ §8)
+  RuleResumed,         // 필수 키가 다시 들어옴 (3_ §8)
+  ModeChanged,         // normal ↔ dl_missing 전환 (3_ §4.1·§8)
+  BaselineLow,         // 웜업 종료 시 k × base < A_min — C3가 사실상 항상 참 (3_ §5)
 };
 
 const char* to_string(DiagKind kind);

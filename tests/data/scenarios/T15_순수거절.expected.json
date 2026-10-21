@@ -1,0 +1,7 @@
+{
+  "scenario": "T15_순수거절",
+  "description": "순수 거절 폭증 60/s 5~15 s (미완료 급증 이력 없음)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

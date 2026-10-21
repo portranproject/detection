@@ -1,0 +1,27 @@
+{
+  "scenario": "T07_세션변경",
+  "description": "공격 중 12 s에 분석 엔진 재시작(session 변경) — end 후 재탐지(웜업 중 C3 참)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "cell": 1,
+      "t_rel_ms": 6400,
+      "mode": "normal"
+    },
+    {
+      "kind": "END",
+      "cell": 1,
+      "t_rel_ms": 12000,
+      "mode": "normal",
+      "reason": "session_reset"
+    },
+    {
+      "kind": "RAISE",
+      "cell": 1,
+      "t_rel_ms": 14200,
+      "mode": "normal"
+    }
+  ]
+}
