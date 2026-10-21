@@ -14,6 +14,10 @@ add_library(detect
   src/core/diag.cpp
   src/core/message.cpp
   src/core/series.cpp
+  src/core/alert.cpp
+  src/core/baseline.cpp
+  src/core/engine.cpp
+  src/core/rules/bts_variant.cpp
 )
 target_include_directories(detect
   PUBLIC include

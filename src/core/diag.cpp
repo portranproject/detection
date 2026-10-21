@@ -20,6 +20,10 @@ const char* to_string(DiagKind kind) {
     case DiagKind::CellGap: return "cell_gap";
     case DiagKind::CellOverlap: return "cell_overlap";
     case DiagKind::PeriodMismatch: return "period_mismatch";
+    case DiagKind::RuleInactive: return "rule_inactive";
+    case DiagKind::RuleResumed: return "rule_resumed";
+    case DiagKind::ModeChanged: return "mode_changed";
+    case DiagKind::BaselineLow: return "baseline_low";
   }
   return "unknown";
 }
