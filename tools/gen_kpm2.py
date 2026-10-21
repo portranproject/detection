@@ -161,6 +161,10 @@ SCENARIOS = {
         desc="공격 30/s + 정상 20/s — ratio = 3j/(3j+20) ≥ 0.5 → j = 7", duration=15000,
         cells=lambda: [Cell(1, normal=const(20), attack=window(30, 5000))],
         expect=[alert("RAISE", 6900)]),
+    "T10_긴공격": dict(
+        desc="긴 공격 60 s (5~65 s, 30/s), 정상 1/s — 증거 T10·T16용", duration=75000,
+        cells=lambda: [Cell(1, normal=const(1), attack=window(30, 5000, 65000))],
+        expect=[alert("RAISE", 6400), alert("CLEAR", 69800)]),
     "T13_포화2": dict(
         desc="포화 ②: 공격 60/s 5~10 s, 이후 거절 60/s(Att + NetworkReject) 10~20 s", duration=20000,
         cells=lambda: [Cell(1, normal=const(1), attack=window(60, 5000, 10000), reject=window(60, 10000))],

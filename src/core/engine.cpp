@@ -13,6 +13,9 @@ EngineOutput Engine::feed_line(std::string_view line) {
   EngineOutput out;
   FeedResult fed = series_.feed(parse_line(line));
   out.diags = std::move(fed.diags);
+  out.outcome = fed.outcome;
+  out.cell_id = fed.cell_id;
+  out.gap = fed.gap;
   for (auto& rule : rules_) {
     RuleOutput ro;
     rule->on_feed(series_, fed, ro);

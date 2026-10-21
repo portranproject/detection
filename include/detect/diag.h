@@ -29,6 +29,7 @@ enum class DiagKind {
   RuleResumed,         // 필수 키가 다시 들어옴 (3_ §8)
   ModeChanged,         // normal ↔ dl_missing 전환 (3_ §4.1·§8)
   BaselineLow,         // 웜업 종료 시 k × base < A_min — C3가 사실상 항상 참 (3_ §5)
+  EvidenceDropped,     // 큐가 넘쳐 증거를 버림 — 경보마다 처음 1회, post 구간 몫은 post 끝에 (3_ §7.1, 결정 F3·F7)
 };
 
 const char* to_string(DiagKind kind);

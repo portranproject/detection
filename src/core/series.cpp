@@ -59,6 +59,17 @@ std::optional<int64_t> CellSeries::window_sum(int64_t from, int64_t to, CountGet
   return sum;
 }
 
+std::optional<std::pair<int64_t, int64_t>> CellSeries::seq_range(int64_t from, int64_t to) const {
+  std::optional<std::pair<int64_t, int64_t>> r;
+  for (std::size_t i = 0; i < size_; ++i) {
+    const Slot& s = at(i);
+    if (s.kpm.t_start_ms < from || s.kpm.t_end_ms > to) continue;
+    if (!r) r = std::make_pair(s.seq, s.seq);
+    r->second = s.seq;
+  }
+  return r;
+}
+
 // ---- Series ----
 
 namespace {
