@@ -16,6 +16,10 @@ namespace detect {
 struct EngineOutput {
   std::vector<Diag> diags;         // series·룰 진단
   std::vector<AlertEvent> alerts;  // 경보 이벤트
+  // 이번 줄을 series가 어떻게 처리했는지 — 증거 기록기가 '그 셀의 새 칸'과 끊김을 알려고 쓴다 (3_ §7.1)
+  FeedOutcome outcome = FeedOutcome::Dropped;
+  std::optional<int64_t> cell_id;
+  std::optional<GapEvent> gap;
 };
 
 class Engine {

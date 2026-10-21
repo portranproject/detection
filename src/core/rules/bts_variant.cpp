@@ -220,13 +220,17 @@ void BtsVariantRule::on_feed(Series& series, const FeedResult& fed, RuleOutput& 
     st.alert_id = series.session() + "-" + kId + "-" + std::to_string(cell_id) + "-" + std::to_string(slot.seq);
     st.severity = c4 ? Severity::High : Severity::Medium;
     AlertEvent e = make_event(AlertEventKind::Raise);
+    // 근거 구간의 seq 범위 (3_ §7.1). dl_missing이면 A′ 윈도우만 (결정 F5)
     if (*mode == AlertMode::Normal) {
       e.a_w = *a_w;
       e.f_w = f_w;
       e.ratio = ratio;
+      e.a_seq = cs->seq_range(t - W - D * P, t - D * P);
+      e.f_seq = cs->seq_range(t - W, t);
     } else {
       e.a_w = *a2_w;
       e.u = u;
+      e.a_seq = cs->seq_range(t - W, t);
     }
     e.base = base_used;
     e.k = cfg_.k;

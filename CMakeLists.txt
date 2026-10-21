@@ -18,12 +18,23 @@ add_library(detect
   src/core/baseline.cpp
   src/core/engine.cpp
   src/core/rules/bts_variant.cpp
+  src/core/evidence.cpp
+  src/core/evidence_queue.cpp
 )
+find_package(Threads REQUIRED)
 target_include_directories(detect
   PUBLIC include
   PRIVATE third_party   # nlohmann/json 동봉본 3.11.3 (4_ §1)
 )
+target_link_libraries(detect PUBLIC Threads::Threads)  # 증거 큐 (3_ §7.1)
 target_compile_options(detect PRIVATE -Wall -Wextra -Wpedantic)
+
+# detect_io: 파일·소켓 같은 I/O (4_ §2 src/io). 지금은 증거 전달 스레드만
+add_library(detect_io
+  src/io/evidence_sink.cpp
+)
+target_link_libraries(detect_io PUBLIC detect)
+target_compile_options(detect_io PRIVATE -Wall -Wextra -Wpedantic)
 
 if(DETECT_BUILD_TESTS)
   enable_testing()

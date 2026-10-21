@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace detect {
@@ -33,6 +34,10 @@ struct AlertEvent {
   std::optional<int64_t> uectx;     // ext.UeCtxMax (C4가 켜졌을 때만)
   std::optional<int64_t> max_conn;
   std::vector<std::string> candidates;
+  // RAISE 근거 구간의 seq 범위 [첫 seq, 마지막 seq] — 대시보드가 집계값과 원본 줄을 맞춰 보게 (3_ §7.1).
+  // dl_missing이면 a_seq = A′ 윈도우, f_seq 없음 (결정 F5)
+  std::optional<std::pair<int64_t, int64_t>> a_seq;
+  std::optional<std::pair<int64_t, int64_t>> f_seq;
 
   int64_t duration_ms = 0;  // CLEAR·END
   std::string reason;       // END: session_reset | input_lost (3_ §7.1)

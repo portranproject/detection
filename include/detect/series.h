@@ -11,6 +11,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace detect {
@@ -49,6 +50,8 @@ class CellSeries {
   //  - 칸이 윈도우 경계에 일부만 걸림(결정 D8)
   //  - 걸린 칸 중 하나라도 값이 없음(키 없음·null, 2_ §4.5)
   std::optional<int64_t> window_sum(int64_t from, int64_t to, CountGetter get) const;
+  // [from, to) 안에 통째로 든 칸들의 [첫 seq, 마지막 seq]. 없으면 nullopt (3_ §7.1 a_seq·f_seq)
+  std::optional<std::pair<int64_t, int64_t>> seq_range(int64_t from, int64_t to) const;
 
  private:
   std::vector<Slot> buf_;
