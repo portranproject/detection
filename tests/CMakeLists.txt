@@ -37,3 +37,8 @@ find_package(Python3 COMPONENTS Interpreter REQUIRED)
 add_test(NAME integration.detector
   COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/integration/test_detector.py
           $<TARGET_FILE:detector> ${PROJECT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/integration)
+
+# CU 로그 변환기 테스트 (4_ §4.1) — 변환 규칙 + 변환 결과를 detector로 재생
+add_test(NAME tools.ocu_log_to_kpm2
+  COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/tools/test_ocu_log_to_kpm2.py
+          ${PROJECT_SOURCE_DIR} $<TARGET_FILE:detector> ${CMAKE_CURRENT_BINARY_DIR}/tools)

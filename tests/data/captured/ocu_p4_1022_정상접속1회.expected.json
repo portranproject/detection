@@ -1,0 +1,7 @@
+{
+  "scenario": "ocu_p4_1022_정상접속1회",
+  "description": "AWS 세트 p4 CU 로그(2026-10-22, ctl.sh up 때 OAI nrUE 1대 정상 접속, 134 ms) → ocu_log_to_kpm2.py 변환, 접속 전후 30 s — 실측 정상 데이터, 경보 없음(T1)",
+  "t0_ms": 1792636389800,
+  "tolerance_ms": 100,
+  "alerts": []
+}
