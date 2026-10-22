@@ -24,7 +24,7 @@ struct EngineOutput {
 
 class Engine {
  public:
-  explicit Engine(SeriesConfig cfg = {});
+  explicit Engine(SeriesConfig cfg = {}, std::size_t max_line_bytes = kDefaultMaxLineBytes);
 
   void add_rule(std::unique_ptr<Rule> rule);
   EngineOutput feed_line(std::string_view line);
@@ -33,6 +33,7 @@ class Engine {
 
  private:
   Series series_;
+  std::size_t max_line_bytes_;  // 2_ §1 줄 길이 상한 (설정 max_line_bytes)
   std::vector<std::unique_ptr<Rule>> rules_;
 };
 

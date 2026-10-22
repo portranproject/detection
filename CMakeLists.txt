@@ -20,6 +20,7 @@ add_library(detect
   src/core/rules/bts_variant.cpp
   src/core/evidence.cpp
   src/core/evidence_queue.cpp
+  src/core/config.cpp
 )
 find_package(Threads REQUIRED)
 target_include_directories(detect
@@ -29,12 +30,19 @@ target_include_directories(detect
 target_link_libraries(detect PUBLIC Threads::Threads)  # 증거 큐 (3_ §7.1)
 target_compile_options(detect PRIVATE -Wall -Wextra -Wpedantic)
 
-# detect_io: 파일·소켓 같은 I/O (4_ §2 src/io). 지금은 증거 전달 스레드만
+# detect_io: 파일·소켓 같은 I/O (4_ §2 src/io)
 add_library(detect_io
   src/io/evidence_sink.cpp
+  src/io/uds_server.cpp
+  src/io/file_replay.cpp
 )
 target_link_libraries(detect_io PUBLIC detect)
 target_compile_options(detect_io PRIVATE -Wall -Wextra -Wpedantic)
+
+# 실행 파일 detector (4_ §2 app, §5 배포)
+add_executable(detector src/app/detector_main.cpp)
+target_link_libraries(detector PRIVATE detect_io)
+target_compile_options(detector PRIVATE -Wall -Wextra -Wpedantic)
 
 if(DETECT_BUILD_TESTS)
   enable_testing()

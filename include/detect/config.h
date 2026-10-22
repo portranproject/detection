@@ -1,11 +1,13 @@
 #pragma once
-// 룰 파라미터 (3_ §4 파라미터 표·§5·§8). 키 이름과 기본값은 4_ §1.2 설정 파일과 같다.
-// 설정 파일 읽기는 실행 파일 이슈(M4)에서 붙인다 — 지금은 구조체 기본값만 둔다 (결정 E10).
+// 설정 (4_ §1.2 config/detector.json, 1_ FR-7). 키 이름과 기본값은 설정 파일과 같다.
+// parse_config는 JSON 문자열만 받는다 — 파일 읽기는 실행 파일이 한다 (core는 I/O 없음, 4_ §2).
 
 #include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
+#include <vector>
 
 namespace detect {
 
@@ -38,5 +40,23 @@ struct EvidenceConfig {
   std::size_t queue_max = 4096;            // queue_max — 큐 안 evidence 수 상한
   std::string out_path = "evidence.jsonl"; // out_path — 대시보드 전달 방식이 정해지기 전까지 쓰는 파일 (Q-19)
 };
+
+// 설정 파일 전체 (4_ §1.2)
+struct DetectorConfig {
+  std::string socket_path = "/run/ran-detect/kpm.sock";  // socket_path (2_ §1)
+  std::size_t max_line_bytes = 65536;                     // max_line_bytes (2_ §1 줄 길이 상한)
+  BtsVariantConfig bts;                                   // rules."L3-01-V"
+  EvidenceConfig evidence;                                // evidence
+};
+
+struct ConfigResult {
+  bool ok = false;
+  DetectorConfig config;
+  std::string error;                  // ok가 아니면 이유
+  std::vector<std::string> warnings;  // 모르는 키 등 (결정 G3)
+};
+
+// 빠진 키는 기본값, 모르는 키는 경고, 타입·범위가 틀리면 오류 (결정 G3)
+ConfigResult parse_config(std::string_view json_text);
 
 }  // namespace detect

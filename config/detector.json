@@ -1,0 +1,17 @@
+{
+  "socket_path": "/run/ran-detect/kpm.sock",
+  "max_line_bytes": 65536,
+  "rules": {
+    "L3-01-V": {
+      "window_ms": 1000, "a_min": 5, "theta": 0.5, "k": 3,
+      "m_raise": 3, "k_clear": 10, "h_sat_ms": 3000,
+      "warmup_ms": 30000, "baseline_tau_s": 300,
+      "h_hold_ms": 10000, "missing_key_slots": 10,
+      "max_conn": null
+    }
+  },
+  "evidence": {
+    "mode": "full", "pre_slots": null, "post_slots": 10,
+    "queue_max": 4096, "out_path": "evidence.jsonl"
+  }
+}

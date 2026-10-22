@@ -17,13 +17,23 @@ add_executable(detect_tests
   core/test_bts_variant.cpp
   core/test_scenarios.cpp
   core/test_evidence.cpp
+  core/test_config.cpp
+  io/test_uds_server.cpp
+  io/test_file_replay.cpp
 )
 target_link_libraries(detect_tests PRIVATE detect detect_io GTest::gtest_main)
 target_include_directories(detect_tests PRIVATE ${PROJECT_SOURCE_DIR}/third_party)
 target_compile_definitions(detect_tests PRIVATE
   DETECT_SCENARIO_DIR="${PROJECT_SOURCE_DIR}/tests/data/scenarios"
-  DETECT_TMP_DIR="${CMAKE_CURRENT_BINARY_DIR}")
+  DETECT_TMP_DIR="${CMAKE_CURRENT_BINARY_DIR}"
+  DETECT_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 target_compile_options(detect_tests PRIVATE -Wall -Wextra)
 
 include(GoogleTest)
 gtest_discover_tests(detect_tests)
+
+# 실행 파일 통합 테스트 — detector + mock_producer.py, T20 (4_ §4-2·§4-4)
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+add_test(NAME integration.detector
+  COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/integration/test_detector.py
+          $<TARGET_FILE:detector> ${PROJECT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/integration)

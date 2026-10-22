@@ -4,14 +4,15 @@
 
 namespace detect {
 
-Engine::Engine(SeriesConfig cfg) : series_(std::move(cfg)) {}
+Engine::Engine(SeriesConfig cfg, std::size_t max_line_bytes)
+    : series_(std::move(cfg)), max_line_bytes_(max_line_bytes) {}
 
 void Engine::add_rule(std::unique_ptr<Rule> rule) { rules_.push_back(std::move(rule)); }
 
 // 한 줄 처리 (4_ §3): series를 먼저 갱신하고, 그 결과를 등록 순서대로 모든 룰에 넘긴다
 EngineOutput Engine::feed_line(std::string_view line) {
   EngineOutput out;
-  FeedResult fed = series_.feed(parse_line(line));
+  FeedResult fed = series_.feed(parse_line(line, max_line_bytes_));
   out.diags = std::move(fed.diags);
   out.outcome = fed.outcome;
   out.cell_id = fed.cell_id;
