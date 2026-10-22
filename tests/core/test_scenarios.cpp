@@ -18,13 +18,16 @@ namespace fs = std::filesystem;
 
 namespace {
 
+// 시나리오 폴더(합성)와 captured 폴더(실측 변환, 4_ §4.2)의 .expected.json이 있는 데이터셋 — 경로는 scenarios 기준 상대
 std::vector<std::string> scenario_names() {
   std::vector<std::string> names;
-  for (const auto& e : fs::directory_iterator(DETECT_SCENARIO_DIR)) {
+  for (const char* sub : {"", "../captured/"}) {
+  for (const auto& e : fs::directory_iterator(std::string(DETECT_SCENARIO_DIR) + "/" + sub)) {
     const std::string f = e.path().filename().string();
     const std::string suffix = ".expected.json";
     if (f.size() > suffix.size() && f.compare(f.size() - suffix.size(), suffix.size(), suffix) == 0)
-      names.push_back(f.substr(0, f.size() - suffix.size()));
+      names.push_back(std::string(sub) + f.substr(0, f.size() - suffix.size()));
+  }
   }
   std::sort(names.begin(), names.end());
   return names;
@@ -95,7 +98,10 @@ TEST_P(Scenario, AlertsMatchExpected) {
 INSTANTIATE_TEST_SUITE_P(Data, Scenario, ::testing::ValuesIn(scenario_names()),
                          [](const ::testing::TestParamInfo<std::string>& info) {
                            // gtest 이름은 영숫자·_만 — 시나리오 번호(T03 등)만 쓴다
-                           const std::string& n = info.param;
+                           std::string n = info.param;
+                           const bool captured = n.rfind("../captured/", 0) == 0;
+                           if (captured) n = n.substr(12);
                            std::string id = n.substr(0, n.find('_'));
+                           if (captured) id = "captured_" + id + "_" + std::to_string(std::hash<std::string>{}(n) % 1000);
                            return id;
                          });
