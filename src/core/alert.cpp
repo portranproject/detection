@@ -63,7 +63,7 @@ std::string uectx_str(const AlertEvent& e) {
 }  // namespace
 
 // 경보 로그 한 줄 (3_ §7 예시 형식). 예:
-// ALERT RAISE rule=L3-01-V cell=1 t=… A_w=48 F_w=45 ratio=0.94 base=3.1 k=3 theta=0.5 uectx=93/96 severity=high mode=normal candidates=L3-11
+// ALERT RAISE rule=L3-01-V cell=1 t=… A_w=48 F_w=45 ratio=0.94 base=3.1 k=3 theta=0.5 f_abs=10 uectx=93/96 severity=high mode=normal candidates=L3-11
 std::string format_log_line(const AlertEvent& e) {
   switch (e.kind) {
     case AlertEventKind::Raise: {
@@ -74,6 +74,7 @@ std::string format_log_line(const AlertEvent& e) {
         s += " U=" + fmt("%.2f", e.u.value_or(0));  // 결정 E5
       }
       s += " base=" + fmt("%.1f", e.base) + " k=" + fmt("%g", e.k) + " theta=" + fmt("%g", e.theta);
+      if (e.f_abs) s += " f_abs=" + std::to_string(*e.f_abs);  // normal 모드만 (3_ §7, 10/27 Q-41)
       s += uectx_str(e);
       s += std::string(" severity=") + severity_str(e.severity) + " mode=" + mode_str(e.mode);
       if (!e.candidates.empty()) {

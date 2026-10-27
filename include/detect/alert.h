@@ -31,6 +31,7 @@ struct AlertEvent {
   double base = 0;
   double k = 0;
   double theta = 0;
+  std::optional<int64_t> f_abs;     // C2a 문턱 F_abs — normal 모드 RAISE에만 (3_ §7, 10/27 Q-41)
   std::optional<int64_t> uectx;     // ext.UeCtxMax (C4가 켜졌을 때만)
   std::optional<int64_t> max_conn;
   std::vector<std::string> candidates;

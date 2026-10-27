@@ -15,6 +15,7 @@ struct BtsVariantConfig {
   int64_t window_ms = 1000;            // window_ms — W
   int64_t a_min = 5;                   // a_min — A_min
   double theta = 0.5;                  // theta — θ
+  int64_t f_abs = 10;                  // f_abs — F_abs: C2a 절대 실패 수 문턱(건/W), 1 이상 (3_ §4, 10/27 Q-41)
   double k = 3;                        // k — 기준선 배수
   int m_raise = 3;                     // m_raise — M (연속 성립)
   int k_clear = 10;                    // k_clear — K (연속 불성립)

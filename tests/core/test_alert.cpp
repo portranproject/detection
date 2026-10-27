@@ -71,13 +71,14 @@ TEST(AlertLog, RaiseLineMatchesSpecExample) {
   e.base = 3.1;
   e.k = 3;
   e.theta = 0.5;
+  e.f_abs = 10;
   e.uectx = 93;
   e.max_conn = 96;
   e.severity = Severity::High;
   e.mode = AlertMode::Normal;
   e.candidates = {"L3-11"};
   EXPECT_EQ(format_log_line(e),
-            "ALERT RAISE rule=L3-01-V cell=1 t=1792209001200 A_w=48 F_w=45 ratio=0.94 base=3.1 k=3 theta=0.5 "
+            "ALERT RAISE rule=L3-01-V cell=1 t=1792209001200 A_w=48 F_w=45 ratio=0.94 base=3.1 k=3 theta=0.5 f_abs=10 "
             "uectx=93/96 severity=high mode=normal candidates=L3-11");
 }
 

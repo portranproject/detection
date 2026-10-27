@@ -5,7 +5,7 @@
 
 | 폴더 | 담는 것 |
 |---|---|
-| `scenarios/` | 룰 동작 시나리오 T1~T23 (3_ §9) |
+| `scenarios/` | 룰 동작 시나리오 T1~T24 (3_ §9) |
 | `stage1/` | 1단계 표 II kpm2 (UE 컨텍스트 고갈 룰) |
 | `stage2_green/` | 2단계 녹색 4종 (kpm2 + ue_evt) |
 | `stage3_lightgreen/` | 3단계 연한 녹색 5종 |

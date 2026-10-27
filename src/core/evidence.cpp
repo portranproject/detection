@@ -45,6 +45,7 @@ std::string alert_record_line(const AlertEvent& e, int64_t sent, int64_t dropped
     j["base"] = e.base;
     j["k"] = e.k;
     j["theta"] = e.theta;
+    if (e.f_abs) j["f_abs"] = *e.f_abs;  // normal 모드만 (3_ §7.1, 10/27 Q-41)
     j["candidates"] = e.candidates;
     if (e.a_seq) j["a_seq"] = seq_pair(*e.a_seq);
     if (e.f_seq) j["f_seq"] = seq_pair(*e.f_seq);

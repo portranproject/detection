@@ -219,3 +219,56 @@ TEST(BtsVariant, SuspiciousSlotsExcludedFromBaseline) {
   h.slots(20, {10, 0, 10});  // ratio ≈ 1인 칸
   EXPECT_NEAR(*h.rule_->base(1), before, 1.5);  // 제외가 없으면 ≈ 100
 }
+
+// C2a (3_ §4, 10/27 Q-41): 정상 부하가 커서 ratio < θ여도 1초 NoReply가 F_abs(10) 이상이면 C1·C3 없이 RAISE.
+// 정상 6/칸(60/s) + 공격 5/칸(50/s) → ratio ≤ 50/110 ≈ 0.45 < θ, F_w는 공격 NoReply 2칸부터 10 ≥ F_abs
+TEST(BtsVariant, C2aRaisesUnderHighNormalLoad) {
+  Harness h;
+  h.slots(10, {6, 6, 0});
+  h.slots(10, {11, 6, 0});
+  h.slots(4, {11, 6, 5});  // 칸 20..23 NoReply 5/칸 → 칸 21부터 F_w ≥ 10 → M = 3 → 칸 23(t = 2400)에서 RAISE
+  ASSERT_EQ(h.alerts.size(), 1u);
+  const AlertEvent& e = h.alerts[0];
+  EXPECT_EQ(e.kind, AlertEventKind::Raise);
+  EXPECT_EQ(h.t_rel(e), 2400);
+  ASSERT_TRUE(e.ratio);
+  EXPECT_LT(*e.ratio, 0.5);  // 비율로는 못 잡는 경우
+  EXPECT_EQ(e.f_abs, 10);
+  EXPECT_NE(format_log_line(e).find("theta=0.5 f_abs=10"), std::string::npos);
+}
+
+// 같은 입력에서 F_abs를 아주 크게 두면 비율 조건만 남아 경보가 없다 — 위 RAISE가 C2a 때문임을 확인
+TEST(BtsVariant, LargeFabsLeavesRatioOnly) {
+  BtsVariantConfig cfg;
+  cfg.f_abs = 1000000;
+  Harness h(cfg);
+  h.slots(10, {6, 6, 0});
+  h.slots(10, {11, 6, 0});
+  h.slots(20, {11, 6, 5});
+  EXPECT_TRUE(h.alerts.empty());
+}
+
+// C2a 칸도 의심 칸 — ratio < θ지만 F_w ≥ F_abs면 기준선 갱신에서 빠진다 (3_ §5, 10/27 Q-41)
+TEST(BtsVariant, C2aSlotsExcludedFromBaseline) {
+  BtsVariantConfig cfg;
+  cfg.warmup_ms = 1000;
+  cfg.baseline_tau_s = 1;  // α = 0.1
+  cfg.m_raise = 1000;      // 경보가 나지 않게
+  Harness h(cfg);
+  h.slots(40, {30, 30, 0});  // 정상 30/칸: base = 300
+  const double before = *h.rule_->base(1);
+  h.slots(10, {40, 30, 0});  // 공격 10/칸 섞임, NoReply는 아직 — A 윈도우는 아직 정상 구간
+  h.slots(30, {40, 30, 10}); // 첫 NoReply 칸부터 F_w = 10 ≥ F_abs → 의심 칸. ratio = 100/400 = 0.25 < θ, U = 0.25 < θ
+  EXPECT_NEAR(*h.rule_->base(1), before, 0.5);  // 제외가 없으면 400 쪽으로 올라간다
+}
+
+// DL 미관측 모드에는 C2a가 없다 — RAISE에 f_abs가 없고 로그에도 안 찍힘 (3_ §4.1·§7)
+TEST(BtsVariant, DlMissingRaiseHasNoFabs) {
+  Harness h;
+  h.slots(10, {1, 1, std::nullopt});
+  h.slots(10, {3, 0, std::nullopt});  // U가 θ를 넘어 시차 없이 RAISE
+  ASSERT_FALSE(h.alerts.empty());
+  EXPECT_EQ(h.alerts[0].mode, AlertMode::DlMissing);
+  EXPECT_FALSE(h.alerts[0].f_abs);
+  EXPECT_EQ(format_log_line(h.alerts[0]).find("f_abs="), std::string::npos);
+}

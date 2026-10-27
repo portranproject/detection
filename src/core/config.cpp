@@ -70,12 +70,13 @@ void read_nullable_int(const json& obj, const char* key, std::optional<T>& out, 
 void parse_bts(const json& r, BtsVariantConfig& c, std::vector<std::string>& warnings) {
   const std::string w = "rules.L3-01-V.";
   if (!r.is_object()) throw ConfigErr("rules.L3-01-V: not an object");
-  warn_unknown(r, {"window_ms", "a_min", "theta", "k", "m_raise", "k_clear", "h_sat_ms", "warmup_ms",
+  warn_unknown(r, {"window_ms", "a_min", "theta", "f_abs", "k", "m_raise", "k_clear", "h_sat_ms", "warmup_ms",
                    "baseline_tau_s", "h_hold_ms", "missing_key_slots", "max_conn"},
                w, warnings);
   read_int(r, "window_ms", c.window_ms, 1, w);
   read_int(r, "a_min", c.a_min, 0, w);
   read_real(r, "theta", c.theta, 0.0, w);
+  read_int(r, "f_abs", c.f_abs, 1, w);  // C2a 문턱 — 1 이상, 끄는 값은 두지 않음 (3_ §4, 결정 I1)
   read_real(r, "k", c.k, 0.0, w);
   read_int(r, "m_raise", c.m_raise, 1, w);
   read_int(r, "k_clear", c.k_clear, 1, w);
