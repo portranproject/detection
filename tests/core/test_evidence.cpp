@@ -350,3 +350,28 @@ TEST(EvidenceSink, WritesAndDrainsOnStop) {
   EXPECT_EQ(lines[0], "old");  // 이어 쓰기
   EXPECT_EQ(lines[50], "{\"n\":49}");
 }
+
+// 끝난 경보의 집계는 상한(kFinishedMax)까지만 보관하고 오래된 것부터 지운다 (3_ §7.1, 10/27 이슈 #13 W-2)
+TEST(Evidence, FinishedCountsAreBounded) {
+  EvidenceQueue q(100000);
+  EvidenceConfig ecfg;
+  ecfg.mode = EvidenceMode::Ref;  // alert만 — pre 스냅샷이 없어 셀 버퍼 없이 돌릴 수 있다
+  EvidenceRecorder rec(ecfg, q);
+  Series s;
+  const std::size_t n = EvidenceRecorder::kFinishedMax + 100;
+  for (std::size_t i = 0; i < n; ++i) {
+    EngineOutput out;
+    AlertEvent e;
+    e.rule = "L3-01-V";
+    e.cell_id = 1;
+    e.alert_id = "S-L3-01-V-1-" + std::to_string(i);
+    e.kind = AlertEventKind::Raise;
+    out.alerts.push_back(e);
+    e.kind = AlertEventKind::End;
+    e.reason = "session_reset";
+    out.alerts.push_back(e);
+    rec.on_feed(s, out);
+  }
+  EXPECT_EQ(rec.finished_count(), EvidenceRecorder::kFinishedMax);
+  EXPECT_EQ(q.size(), 2 * n);  // alert 레코드는 버리지 않는다
+}
