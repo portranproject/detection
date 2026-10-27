@@ -379,14 +379,67 @@ TEST(Series, SlotKeepsRawLine) {
   EXPECT_EQ(s.cell(1)->back().seq, 2);
 }
 
-// 3_ §8 H_hold용: 끊김 이전 칸을 비워도 새 칸과 연속성 기준은 남는다
-TEST(Series, DropBefore) {
+// ---- 입력 건전성 (Q-46 — 룰에서 옮겨 옴, 3_ §3·§8) ----
+
+// 3_ §8 H_hold: 보류가 H_hold를 넘으면 input_lost, 이 칸 이전 버퍼를 비우고 연속성 기준은 남는다
+TEST(Series, InputLostAfterHholdDropsBuffer) {
   Series s;
   feed(s, hello_line("s1", 1));
   int64_t seq = fill(s, 5);
-  auto r = feed(s, kpm_line("s1", seq++, 1, 200, 1, 1, 0));  // 긴 끊김
+  auto r = feed(s, kpm_line("s1", seq++, 1, 200, 1, 1, 0));  // 19.5 s 끊김 > H_hold 10 s
   ASSERT_TRUE(r.gap);
-  s.cell(1)->drop_before(r.gap->t_to);
+  EXPECT_TRUE(r.hold);
+  EXPECT_TRUE(r.input_lost);
   EXPECT_EQ(s.cell(1)->size(), 1u);
-  EXPECT_FALSE(feed(s, kpm_line("s1", seq, 1, 201, 1, 1, 0)).gap);
+  auto n = feed(s, kpm_line("s1", seq, 1, 201, 1, 1, 0));
+  EXPECT_FALSE(n.gap);
+  EXPECT_TRUE(n.hold);  // 윈도우가 다시 찰 때까지 보류
+  EXPECT_FALSE(n.input_lost);
+}
+
+// 짧은 끊김(< H_hold)은 보류만 — input_lost 아님, 버퍼 유지
+TEST(Series, ShortGapHoldsWithoutInputLost) {
+  Series s;
+  feed(s, hello_line("s1", 1));
+  int64_t seq = fill(s, 25);  // 윈도우가 찬 상태
+  EXPECT_FALSE(feed(s, kpm_line("s1", seq++, 1, 25, 1, 1, 0)).hold);
+  auto r = feed(s, kpm_line("s1", seq++, 1, 27, 1, 1, 0));  // 칸 26 유실 (0.1 s)
+  EXPECT_TRUE(r.gap);
+  EXPECT_TRUE(r.hold);
+  EXPECT_FALSE(r.input_lost);
+  EXPECT_GT(s.cell(1)->size(), 1u);
+}
+
+// 윈도우가 다 차기 전(W/P + D칸)은 보류, 20칸째부터 표준 합계가 채워진다 (3_ §3·§8)
+TEST(Series, HoldUntilStandardWindowsFull) {
+  Series s;
+  feed(s, hello_line("s1", 1));
+  int64_t seq = 2;
+  for (int64_t i = 0; i < 19; ++i) EXPECT_TRUE(feed(s, kpm_line("s1", seq++, 1, i, 2, 1, 1)).hold);
+  auto r = feed(s, kpm_line("s1", seq++, 1, 19, 2, 1, 1));
+  EXPECT_FALSE(r.hold);
+  EXPECT_EQ(r.sums.a_w, 20);  // A 윈도우 [0, 1000) = 칸 0..9
+  EXPECT_EQ(r.sums.f_w, 10);  // F 윈도우 [1000, 2000) = 칸 10..19
+  EXPECT_EQ(r.sums.a2_w, 20);
+  EXPECT_EQ(r.sums.s2_w, 10);
+}
+
+// 필수 키 A·S 누락 (3_ §8): 연속 10칸을 넘으면 비활성 진단, 다시 들어오면 재개 진단. 누락 칸은 보류
+TEST(Series, MissingRequiredKeysStreakDiag) {
+  Series s;
+  feed(s, hello_line("s1", 1));
+  int64_t seq = fill(s, 25);
+  auto null_line = [&](int64_t n) {
+    const int64_t ts = kT0 + n * kP;
+    return R"({"type":"kpm2","ver":1,"session":"s1","seq":)" + std::to_string(seq++) +
+           R"(,"cell_id":1,"t_start_ms":)" + std::to_string(ts) + R"(,"t_end_ms":)" + std::to_string(ts + kP) +
+           R"(,"cc":{"RRC.ConnEstabAtt":null,"RRC.ConnEstabSucc":null}})";
+  };
+  for (int64_t i = 25; i < 35; ++i) {
+    auto r = feed(s, null_line(i));
+    EXPECT_TRUE(r.hold);
+    EXPECT_FALSE(has_diag(r, DiagKind::RuleInactive));
+  }
+  EXPECT_TRUE(has_diag(feed(s, null_line(35)), DiagKind::RuleInactive));  // 11칸째
+  EXPECT_TRUE(has_diag(feed(s, kpm_line("s1", seq++, 1, 36, 1, 1, 0)), DiagKind::RuleResumed));
 }
