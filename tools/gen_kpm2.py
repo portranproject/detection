@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """합성 kpm2 시나리오(.jsonl)와 기대 경보(.expected.json) 생성기.
 
-명세: 4_ §2·§4-2(시나리오 테스트), 3_ §9(T1~T23). 실행: python3 tools/gen_kpm2.py [출력 폴더]
+명세: 4_ §2·§4-2(시나리오 테스트), 3_ §9(T1~T24). 실행: python3 tools/gen_kpm2.py [출력 폴더]
 기본 출력 폴더는 tests/data/scenarios/.
 
 분석 엔진 동작 모델 (2_ §4.2·§5를 단순화):
-- 정상 시도: 같은 칸에 Att·Succ (실측 약 89 ms라 한 칸 안, 3_ §9)
+- 정상 시도: 같은 칸에 Att·Succ. 단 실측(5_ §11)에서 32%가 100 ms를 넘으므로 그 비율(SUCC_2SLOT_FRAC)만큼은
+  Succ를 2칸 뒤에 둔다 (3_ §9, Q-48 해결 10/27). 어느 연결을 2칸으로 할지는 누적기로 정해 같은 입력이면 같은 파일
 - 공격 시도(Msg5 미전송): 그 칸에 Att, D = ⌈T_nr/P⌉칸 뒤 칸에 NoReply (2_ §5)
 - 거절 시도(포화 ②): 같은 칸에 Att·NetworkReject (3_ §6.1)
 - 속도(건/s)는 칸마다 누적기로 정수 건수로 바꾼다 — 같은 입력이면 항상 같은 파일
-- 빠진 칸(gap)은 줄을 내지 않는다. 그 칸의 건수는 사라지고, 앞 칸에서 예약된 NoReply도 그 칸이면 사라진다
+- 빠진 칸(gap)은 줄을 내지 않는다. 그 칸의 건수는 사라지고, 앞 칸에서 예약된 NoReply·2칸 뒤 Succ도 그 칸이면 사라진다
 
 기대 경보의 시각은 이 생성기가 아니라 명세 식(3_ §3 지연 식, §6.1 H_sat)으로 손 계산한 값이다.
 시나리오 시각은 모두 데이터 시작(T0)부터의 ms이고, 테스트는 ±tolerance_ms(1칸)를 허용한다 (3_ §9).
@@ -24,6 +25,7 @@ T0 = 1792209000000  # 데이터 시작 시각 (Unix epoch ms)
 P = 100
 T_NR = 1000
 D = math.ceil(T_NR / P)
+SUCC_2SLOT_FRAC = 0.32  # 정상 연결 중 Succ가 2칸 뒤에 찍히는 비율 — 5_ §11 실측 32% (Q-48 ①)
 
 
 def const(v):
@@ -47,7 +49,11 @@ class Acc:
         self.acc = 0.0
 
     def take(self, rate):
-        self.acc += rate * P / 1000.0
+        return self.add(rate * P / 1000.0)
+
+    def add(self, x):
+        """건수 x(실수)를 누적해 정수 건수로 꺼낸다"""
+        self.acc += x
         n = int(self.acc + 1e-9)
         self.acc -= n
         return n
@@ -60,7 +66,9 @@ class Cell:
         self.drop = set(drop)              # 줄을 내지 않을 칸의 t_start(상대 ms)
         self.missing_as = set(missing_as)  # A·S를 null로 낼 칸
         self.acc = [Acc(), Acc(), Acc()]
+        self.acc2 = Acc()                  # 2칸 뒤 Succ 비율 누적기
         self.noreply = {}                  # 칸 번호 → 예약된 NoReply 수
+        self.succ_later = {}               # 칸 번호 → 2칸 뒤에 찍을 Succ 수
 
 
 def hello(session, seq, cells, max_conn=None):
@@ -84,6 +92,7 @@ def generate(duration_ms, cells, dl_missing=False, events=None):
                 session, seq = ev[1], 1
                 for c in cells:
                     c.noreply.clear()
+                    c.succ_later.clear()
                 lines.append(hello(session, seq, cells, max_conn))
             elif ev[0] == "hello_same":  # 재연결: 같은 session·같은 파라미터
                 seq += 1
@@ -103,10 +112,14 @@ def generate(duration_ms, cells, dl_missing=False, events=None):
             n_rej = c.acc[2].take(c.reject(t_rel))
             if n_atk:
                 c.noreply[i + D] = c.noreply.get(i + D, 0) + n_atk
+            n2 = min(n_norm, c.acc2.add(SUCC_2SLOT_FRAC * n_norm))  # 이 칸 정상 연결 중 Succ가 2칸 뒤에 찍히는 수
+            if n2:
+                c.succ_later[i + 2] = c.succ_later.get(i + 2, 0) + n2
             f = c.noreply.pop(i, 0)
+            s_late = c.succ_later.pop(i, 0)
             if t_rel in c.drop:
                 continue
-            att, succ = n_norm + n_atk + n_rej, n_norm
+            att, succ = n_norm + n_atk + n_rej, n_norm - n2 + s_late
             cc = {"RRC.ConnEstabAtt": {"total": att}, "RRC.ConnEstabSucc": {"total": succ}}
             if t_rel in c.missing_as:
                 cc = {"RRC.ConnEstabAtt": None, "RRC.ConnEstabSucc": None}
@@ -158,9 +171,10 @@ SCENARIOS = {
         # 재시작 뒤 첫 칸 12.0 s → A 윈도우가 차는 t = 14000부터 성립 → RAISE 14200
         expect=[alert("RAISE", 6400), alert("END", 12000, reason="session_reset"), alert("RAISE", 14200)]),
     "T08_공격정상혼합": dict(
-        desc="공격 30/s + 정상 20/s — ratio = 3j/(3j+20) ≥ 0.5 → j = 7", duration=15000,
+        desc="공격 30/s + 정상 20/s — 비율은 3j/(3j+20) ≥ 0.5에 j = 7칸(6.9 s)이지만, C2a(F_w ≥ 10)가 4칸(12건)에 먼저 성립 → 6.6 s (10/27 Q-41)",
+        duration=15000,
         cells=lambda: [Cell(1, normal=const(20), attack=window(30, 5000))],
-        expect=[alert("RAISE", 6900)]),
+        expect=[alert("RAISE", 6600)]),
     "T10_긴공격": dict(
         desc="긴 공격 60 s (5~65 s, 30/s), 정상 1/s — 증거 T10·T16용", duration=75000,
         cells=lambda: [Cell(1, normal=const(1), attack=window(30, 5000, 65000))],
@@ -226,6 +240,13 @@ SCENARIOS = {
                       "t_start_ms": T0 - 100, "t_end_ms": T0,
                       "cc": {"RRC.ConnEstabAtt": {"total": 50}, "RRC.ConnEstabSucc": {"total": 0}}},
         expect=[alert("RAISE", 6400)]),
+    "T24_정상부하포화공격": dict(
+        desc="정상 60/s + 공격 50/s 5~20 s(점유 ≈100 > 96 포화) — ratio ≈ 0.45 < θ라 비율로는 못 잡고 C2a(F_w ≥ 10)로 잡음 (10/27 Q-41)",
+        duration=25000,
+        cells=lambda: [Cell(1, normal=const(60), attack=window(50, 5000, 20000))],
+        # RAISE: 공격 NoReply 2칸(10건)이 F 윈도우에 들어오는 t = 6200부터 성립 → M칸 → 6400 (T_nr + ⌈F_abs/(50×P)⌉×P + (M−1)×P)
+        # CLEAR: F 윈도우에 공격 NoReply 2칸(10건)이 남는 마지막 칸 21800 + H_sat 3000 → 24800
+        expect=[alert("RAISE", 6400), alert("CLEAR", 24800)]),
     "T23_입력장기단절": dict(
         desc="공격 중 10~21 s 입력 끊김(11 s > H_hold 10 s), 이후 정상만", duration=25000,
         cells=lambda: [Cell(1, normal=const(1), attack=window(30, 5000, 10000),
