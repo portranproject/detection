@@ -124,6 +124,9 @@ FeedResult Series::feed(const ParseResult& r) {
       return out;
     case ParseStatus::UnsupportedVersion:
       out.diags.push_back(diag(DiagKind::UnsupportedVersion, std::nullopt, seq, r.error));
+      // ver가 달라도 같은 session의 줄이면 seq 번호열은 이어서 본다 — 모르는 type·ue_evt와 같은 규칙.
+      // 소비하지 않으면 바로 다음 줄에서 seq 건너뜀 로그가 잘못 난다 (2_ §2, 10/27 이슈 #13 W-1)
+      if (active() && r.common && r.common->session == session_) check_seq(r.common->seq, out);
       return out;
     case ParseStatus::UnknownType:
     case ParseStatus::Ok:
