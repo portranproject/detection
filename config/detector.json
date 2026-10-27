@@ -7,7 +7,7 @@
       "m_raise": 3, "k_clear": 10, "h_sat_ms": 3000,
       "warmup_ms": 30000, "baseline_tau_s": 300,
       "h_hold_ms": 10000, "missing_key_slots": 10,
-      "max_conn": null
+      "max_conn": 96
     }
   },
   "evidence": {
