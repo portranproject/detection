@@ -129,12 +129,29 @@ int main(int argc, char** argv) {
   }
   if (args.socket_given) cfg.socket_path = args.socket_path;  // --socket이 설정보다 우선 (결정 G3)
 
+  // 룰 설정 (4_ §1.2, Q-46 결정 J4): rules 맵에서 룰 ID로 꺼내 룰별 파서로 해석한다. 없으면 기본값.
+  // 등록하지 않는 룰 ID가 있으면 경고만(오타를 알아채게, 결정 G3)
+  BtsVariantConfig bts;
+  if (auto it = cfg.rules.find(BtsVariantRule::kId); it != cfg.rules.end()) {
+    BtsVariantConfigResult br = parse_bts_variant_config(it->second);
+    for (const auto& w : br.warnings) log_err("WARN", w);
+    if (!br.ok) {
+      log_err("ERROR", br.error);
+      return 1;
+    }
+    bts = br.config;
+  }
+  for (const auto& [id, _] : cfg.rules)
+    if (id != BtsVariantRule::kId) log_err("WARN", "unknown rule id rules." + id + " (ignored)");
+
   // 엔진·룰·증거 (4_ §3). 버퍼 크기는 W와 pre_slots에서 정한다 (3_ §3·§7.1)
   SeriesConfig scfg;
-  scfg.window_ms = cfg.bts.window_ms;
+  scfg.window_ms = bts.window_ms;
+  scfg.h_hold_ms = bts.h_hold_ms;              // 입력 건전성은 series가 (Q-46, 결정 J5)
+  scfg.missing_key_slots = bts.missing_key_slots;
   scfg.pre_slots = cfg.evidence.pre_slots;
   Engine engine(scfg, cfg.max_line_bytes);
-  engine.add_rule(std::make_unique<BtsVariantRule>(cfg.bts));
+  engine.add_rule(std::make_unique<BtsVariantRule>(bts));
 
   EvidenceQueue queue(cfg.evidence.queue_max);
   EvidenceRecorder recorder(cfg.evidence, queue);

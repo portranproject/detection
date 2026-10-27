@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -42,11 +43,12 @@ struct EvidenceConfig {
   std::string out_path = "evidence.jsonl"; // out_path — 대시보드 전달 방식이 정해지기 전까지 쓰는 파일 (Q-19)
 };
 
-// 설정 파일 전체 (4_ §1.2)
+// 설정 파일 전체 (4_ §1.2). rules는 룰 ID → 그 룰의 설정 객체(JSON 문자열)다 — 공통 파서는 넘기기만 하고
+// 룰별 파서(parse_bts_variant_config 등)가 키·범위를 검사한다 (Q-46, 결정 J4)
 struct DetectorConfig {
   std::string socket_path = "/run/ran-detect/kpm.sock";  // socket_path (2_ §1)
   std::size_t max_line_bytes = 65536;                     // max_line_bytes (2_ §1 줄 길이 상한)
-  BtsVariantConfig bts;                                   // rules."L3-01-V"
+  std::map<std::string, std::string> rules;               // rules.<룰 ID> — 설정 객체를 JSON 문자열 그대로
   EvidenceConfig evidence;                                // evidence
 };
 
@@ -57,7 +59,16 @@ struct ConfigResult {
   std::vector<std::string> warnings;  // 모르는 키 등 (결정 G3)
 };
 
-// 빠진 키는 기본값, 모르는 키는 경고, 타입·범위가 틀리면 오류 (결정 G3)
+// 빠진 키는 기본값, 모르는 키는 경고, 타입·범위가 틀리면 오류 (결정 G3). rules의 값은 객체여야 하고 내용은 검사하지 않는다
 ConfigResult parse_config(std::string_view json_text);
+
+// 룰 L3-01-V의 설정 객체 해석 (3_ §4 파라미터 표 · §5 · §8). 모르는 키는 경고, 타입·범위 오류는 ok = false
+struct BtsVariantConfigResult {
+  bool ok = false;
+  BtsVariantConfig config;
+  std::string error;
+  std::vector<std::string> warnings;
+};
+BtsVariantConfigResult parse_bts_variant_config(std::string_view json_text);
 
 }  // namespace detect
