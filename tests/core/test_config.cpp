@@ -23,6 +23,8 @@ TEST(Config, RepoDefaultFileMatchesDefaults) {
   EXPECT_EQ(r.config.bts.window_ms, d.bts.window_ms);
   EXPECT_EQ(r.config.bts.a_min, d.bts.a_min);
   EXPECT_DOUBLE_EQ(r.config.bts.theta, d.bts.theta);
+  EXPECT_EQ(r.config.bts.f_abs, d.bts.f_abs);
+  EXPECT_EQ(d.bts.f_abs, 10);  // 3_ §4 F_abs 기본값 (10/27 Q-41)
   EXPECT_DOUBLE_EQ(r.config.bts.k, d.bts.k);
   EXPECT_EQ(r.config.bts.h_sat_ms, d.bts.h_sat_ms);
   EXPECT_DOUBLE_EQ(r.config.bts.baseline_tau_s, d.bts.baseline_tau_s);
@@ -36,10 +38,11 @@ TEST(Config, RepoDefaultFileMatchesDefaults) {
 
 // 빠진 키는 기본값, 일부만 덮어쓰기
 TEST(Config, PartialOverride) {
-  ConfigResult r = parse_config(R"({"rules":{"L3-01-V":{"theta":0.7,"max_conn":96}},"evidence":{"mode":"ref","pre_slots":300}})");
+  ConfigResult r = parse_config(R"({"rules":{"L3-01-V":{"theta":0.7,"f_abs":20,"max_conn":96}},"evidence":{"mode":"ref","pre_slots":300}})");
   ASSERT_TRUE(r.ok) << r.error;
   EXPECT_DOUBLE_EQ(r.config.bts.theta, 0.7);
   EXPECT_EQ(r.config.bts.max_conn, 96);
+  EXPECT_EQ(r.config.bts.f_abs, 20);
   EXPECT_EQ(r.config.bts.a_min, 5);
   EXPECT_EQ(r.config.evidence.mode, EvidenceMode::Ref);
   EXPECT_EQ(r.config.evidence.pre_slots, 300u);
@@ -63,6 +66,8 @@ TEST(Config, Errors) {
   EXPECT_FALSE(parse_config(R"({"rules":{"L3-01-V":{"a_min":1.5}}})").ok);
   EXPECT_FALSE(parse_config(R"({"rules":{"L3-01-V":{"theta":0}}})").ok);
   EXPECT_FALSE(parse_config(R"({"rules":{"L3-01-V":{"max_conn":"96"}}})").ok);
+  EXPECT_FALSE(parse_config(R"({"rules":{"L3-01-V":{"f_abs":0}}})").ok);    // 1 이상 (결정 I1)
+  EXPECT_FALSE(parse_config(R"({"rules":{"L3-01-V":{"f_abs":2.5}}})").ok);  // 정수
   EXPECT_FALSE(parse_config(R"({"evidence":{"mode":"all"}})").ok);
   EXPECT_FALSE(parse_config(R"({"evidence":{"out_path":""}})").ok);
   EXPECT_FALSE(parse_config(R"({"rules":[]})").ok);
