@@ -69,7 +69,6 @@ void read_nullable_int(const json& obj, const char* key, std::optional<T>& out, 
 // rules."L3-01-V" (3_ §4 파라미터 표 · §5 · §8)
 void parse_bts(const json& r, BtsVariantConfig& c, std::vector<std::string>& warnings) {
   const std::string w = "rules.L3-01-V.";
-  if (!r.is_object()) throw ConfigErr("rules.L3-01-V: not an object");
   warn_unknown(r, {"window_ms", "a_min", "theta", "f_abs", "k", "m_raise", "k_clear", "h_sat_ms", "warmup_ms",
                    "baseline_tau_s", "h_hold_ms", "missing_key_slots", "max_conn"},
                w, warnings);
@@ -125,12 +124,33 @@ ConfigResult parse_config(std::string_view json_text) {
     warn_unknown(j, {"socket_path", "max_line_bytes", "rules", "evidence"}, "", r.warnings);
     read_string(j, "socket_path", r.config.socket_path, "");
     read_int(j, "max_line_bytes", r.config.max_line_bytes, 1, "");
+    // rules: 룰 ID → 설정 객체. 여기서는 객체인지만 보고 JSON 그대로 넘긴다 — 해석은 룰별 파서, 모르는 룰 ID는
+    // 등록된 룰을 아는 실행 파일이 경고한다 (Q-46, 결정 J4)
     if (const json* rules = find(j, "rules")) {
       if (!rules->is_object()) throw ConfigErr("rules: not an object");
-      warn_unknown(*rules, {"L3-01-V"}, "rules.", r.warnings);
-      if (const json* b = find(*rules, "L3-01-V")) parse_bts(*b, r.config.bts, r.warnings);
+      for (auto it = rules->begin(); it != rules->end(); ++it) {
+        if (!it.value().is_object()) throw ConfigErr("rules." + it.key() + ": not an object");
+        r.config.rules[it.key()] = it.value().dump();
+      }
     }
     if (const json* e = find(j, "evidence")) parse_evidence(*e, r.config.evidence, r.warnings);
+    r.ok = true;
+  } catch (const ConfigErr& e) {
+    r.error = std::string("config: ") + e.what();
+  }
+  return r;
+}
+
+// 룰별 파서 (Q-46, 결정 J4): rules."L3-01-V"의 객체를 받는다
+BtsVariantConfigResult parse_bts_variant_config(std::string_view json_text) {
+  BtsVariantConfigResult r;
+  json j = json::parse(json_text.begin(), json_text.end(), nullptr, false);
+  if (j.is_discarded() || !j.is_object()) {
+    r.error = "config: rules.L3-01-V: not an object";
+    return r;
+  }
+  try {
+    parse_bts(j, r.config, r.warnings);
     r.ok = true;
   } catch (const ConfigErr& e) {
     r.error = std::string("config: ") + e.what();

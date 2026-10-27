@@ -99,11 +99,6 @@ const CellSeries* Series::cell(int64_t cell_id) const {
   return it == cells_.end() ? nullptr : &it->second;
 }
 
-CellSeries* Series::cell(int64_t cell_id) {
-  auto it = cells_.find(cell_id);
-  return it == cells_.end() ? nullptr : &it->second;
-}
-
 std::vector<int64_t> Series::cell_ids() const {
   std::vector<int64_t> ids;
   for (const auto& [id, _] : cells_) ids.push_back(id);
@@ -172,6 +167,7 @@ void Series::start_session(const Common& c, const Hello& h) {
   hello_ = h;
   last_seq_ = c.seq;
   cells_.clear();
+  health_.clear();
   capacity_ = buffer_slots(cfg_.window_ms, h.period_ms, h.noreply_timeout_ms, cfg_.pre_slots);
 }
 
@@ -272,7 +268,59 @@ FeedResult Series::on_kpm2(const Common& c, const Kpm2& k) {
   cs.push(Slot{c.seq, k});
   out.outcome = FeedOutcome::Stored;
   out.cell_id = k.cell_id;
+  assess(k, cs, health_[k.cell_id], out);
   return out;
+}
+
+namespace {
+Count get_att(const Kpm2& k) { return k.conn_estab_att.total; }
+Count get_succ(const Kpm2& k) { return k.conn_estab_succ.total; }
+Count get_noreply(const Kpm2& k) { return k.fail_no_reply; }
+}  // namespace
+
+// 저장된 칸의 입력 건전성 (Q-46 — 룰에서 옮겨 옴, 3_ §3·§8):
+//  1) 구간 끊김이 있으면 보류가 그 끊김의 시작부터 시작된 것으로 본다 (결정 E9)
+//  2) 필수 키 A·S 누락 streak — 연속 missing_key_slots칸을 넘으면 비활성 진단, 다시 들어오면 재개 진단
+//  3) 표준 윈도우 합계 — A는 T_nr(= D칸)만큼 과거, F·A′·S′는 시차 없음 (3_ §3)
+//  4) 보류 판단 (3_ §4.1 결정 E1과 같은 조건): A′·S′ 불완전, 또는 F 완전인데 A 불완전이면 보류.
+//     보류가 H_hold보다 길면 input_lost — 이 칸 이전 버퍼를 비우고 보류 시작을 다시 잰다. 기준선은 룰이 유지
+void Series::assess(const Kpm2& k, CellSeries& cs, InputHealth& h, FeedResult& out) {
+  const int64_t t = k.t_end_ms;
+  const int64_t P = hello_->period_ms;
+  const int64_t D = (hello_->noreply_timeout_ms + P - 1) / P;
+  const int64_t W = cfg_.window_ms;
+
+  if (out.gap) h.hold_start = h.hold_start ? std::min(*h.hold_start, out.gap->t_from) : out.gap->t_from;
+
+  if (!get_att(k) || !get_succ(k)) {
+    if (++h.missing_streak > cfg_.missing_key_slots && !h.inactive) {
+      h.inactive = true;
+      out.diags.push_back(diag(DiagKind::RuleInactive, k.cell_id, std::nullopt,
+                               "required keys A/S missing > " + std::to_string(cfg_.missing_key_slots) + " slots"));
+    }
+  } else {
+    if (h.inactive) out.diags.push_back(diag(DiagKind::RuleResumed, k.cell_id, std::nullopt, "required keys A/S resumed"));
+    h.inactive = false;
+    h.missing_streak = 0;
+  }
+
+  out.sums.a_w = cs.window_sum(t - W - D * P, t - D * P, get_att);
+  out.sums.f_w = cs.window_sum(t - W, t, get_noreply);
+  out.sums.a2_w = cs.window_sum(t - W, t, get_att);
+  out.sums.s2_w = cs.window_sum(t - W, t, get_succ);
+
+  const bool judgeable = out.sums.a2_w && out.sums.s2_w && (!out.sums.f_w || out.sums.a_w);
+  if (judgeable) {
+    h.hold_start.reset();
+    return;
+  }
+  out.hold = true;
+  if (!h.hold_start) h.hold_start = k.t_start_ms;
+  if (k.t_start_ms - *h.hold_start > cfg_.h_hold_ms) {
+    out.input_lost = true;
+    cs.drop_before(k.t_start_ms);
+    h.hold_start = k.t_start_ms;
+  }
 }
 
 }  // namespace detect
