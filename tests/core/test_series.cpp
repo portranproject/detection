@@ -157,12 +157,30 @@ TEST(Series, BadLinesProduceDiagnostics) {
   auto v2 = feed(s, R"({"type":"kpm2","ver":2,"session":"s1","seq":2,"cell_id":1})");
   EXPECT_EQ(v2.outcome, FeedOutcome::Dropped);
   EXPECT_TRUE(has_diag(v2, DiagKind::UnsupportedVersion));
-  auto u = feed(s, R"({"type":"future","ver":1,"session":"s1","seq":2})");
+  auto u = feed(s, R"({"type":"future","ver":1,"session":"s1","seq":3})");  // ver=2 줄이 seq 2를 소비했다 (W-1)
   EXPECT_EQ(u.outcome, FeedOutcome::Ignored);
   EXPECT_TRUE(u.diags.empty());
 }
 
 // ---- seq (2_ §2) ----
+
+// ver 불일치 줄도 같은 session이면 seq를 소비한다 — 다음 줄에서 거짓 seq 건너뜀 로그가 나지 않게 (2_ §2, 10/27 이슈 #13 W-1)
+TEST(Series, UnsupportedVersionConsumesSeq) {
+  Series s;
+  feed(s, hello_line("s1", 1));
+  auto v2 = feed(s, R"({"type":"kpm2","ver":2,"session":"s1","seq":2,"cell_id":1})");
+  EXPECT_EQ(v2.outcome, FeedOutcome::Dropped);
+  EXPECT_TRUE(has_diag(v2, DiagKind::UnsupportedVersion));
+  auto r = feed(s, kpm_line("s1", 3, 1, 0, 1, 1, 0));
+  EXPECT_EQ(r.outcome, FeedOutcome::Stored);
+  EXPECT_FALSE(has_diag(r, DiagKind::SeqGap));
+  // 다른 session의 ver 불일치 줄은 번호열에 넣지 않는다
+  feed(s, R"({"type":"kpm2","ver":2,"session":"other","seq":99,"cell_id":1})");
+  auto r2 = feed(s, kpm_line("s1", 4, 1, 1, 1, 1, 0));
+  EXPECT_FALSE(has_diag(r2, DiagKind::SeqGap));
+  EXPECT_FALSE(has_diag(r2, DiagKind::SeqRegress));
+}
+
 
 TEST(Series, SeqGapIsLoggedButProcessed) {
   Series s;

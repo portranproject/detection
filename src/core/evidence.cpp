@@ -144,7 +144,12 @@ void EvidenceRecorder::finish_post(const std::string& alert_id, std::vector<Diag
   if (it->second.post_dropped > 0)
     diags.push_back(Diag{DiagKind::EvidenceDropped, it->second.cell_id, std::nullopt,
                          "post evidence dropped for " + alert_id + ": " + std::to_string(it->second.post_dropped)});
-  finished_[alert_id] = it->second.counts;
+  // 끝난 경보 집계는 kFinishedMax까지만 — 오래된 것부터 지운다 (10/27 이슈 #13 W-2)
+  if (finished_.insert_or_assign(alert_id, it->second.counts).second) finished_order_.push_back(alert_id);
+  while (finished_order_.size() > kFinishedMax) {
+    finished_.erase(finished_order_.front());
+    finished_order_.pop_front();
+  }
   by_rule_cell_.erase({it->second.rule, it->second.cell_id});
   tracks_.erase(it);
 }

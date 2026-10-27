@@ -13,7 +13,9 @@
 #include "detect/evidence_queue.h"
 #include "detect/series.h"
 
+#include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <map>
 #include <string>
 #include <utility>
@@ -34,6 +36,11 @@ class EvidenceRecorder {
     int64_t dropped = 0;  // 버린 evidence 수
   };
   Counts counts(const std::string& alert_id) const;
+  std::size_t finished_count() const { return finished_.size(); }  // 테스트·진단용
+
+  // 끝난 경보의 집계 보관 상한. clear·end 레코드를 낸 뒤에는 큐에서 늦게 버려진 증거의 수 보정에만 쓰이므로
+  // 작아도 된다 — 상한이 없으면 경보마다 영구히 쌓인다 (3_ §7.1 구현에서 정한 것, 10/27 이슈 #13 W-2)
+  static constexpr std::size_t kFinishedMax = 1024;
 
  private:
   enum class Phase { Active, Post };
@@ -55,7 +62,8 @@ class EvidenceRecorder {
   EvidenceQueue& queue_;
   std::map<std::string, Track> tracks_;                                 // alert_id → 진행 중(active·post) 경보
   std::map<std::pair<std::string, int64_t>, std::string> by_rule_cell_;  // (룰, 셀) → alert_id
-  std::map<std::string, Counts> finished_;                              // 끝난 경보의 집계
+  std::map<std::string, Counts> finished_;                              // 끝난 경보의 집계 (kFinishedMax까지)
+  std::deque<std::string> finished_order_;                              // finished_의 삽입 순서 — 오래된 것부터 지운다
 };
 
 // 레코드 한 줄 만들기 (3_ §7.1 레코드 표). 테스트에서도 쓴다

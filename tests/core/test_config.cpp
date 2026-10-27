@@ -8,8 +8,8 @@
 
 using namespace detect;
 
-// 저장소의 config/detector.json이 해석되고 값이 기본값과 같다
-TEST(Config, RepoDefaultFileMatchesDefaults) {
+// 저장소의 config/detector.json이 해석되고, max_conn(설정 파일만 96)을 빼면 값이 구조체 기본값과 같다
+TEST(Config, RepoConfigFileParses) {
   std::ifstream in(std::string(DETECT_SOURCE_DIR) + "/config/detector.json");
   ASSERT_TRUE(in);
   std::stringstream ss;
@@ -28,7 +28,8 @@ TEST(Config, RepoDefaultFileMatchesDefaults) {
   EXPECT_DOUBLE_EQ(r.config.bts.k, d.bts.k);
   EXPECT_EQ(r.config.bts.h_sat_ms, d.bts.h_sat_ms);
   EXPECT_DOUBLE_EQ(r.config.bts.baseline_tau_s, d.bts.baseline_tau_s);
-  EXPECT_FALSE(r.config.bts.max_conn);
+  EXPECT_EQ(r.config.bts.max_conn, 96);  // DU 셀 UE 한도 (4_ §6.1 #1, 10/27 이슈 #13 W-16). 구조체 기본값은 null(C4 끔)
+  EXPECT_FALSE(d.bts.max_conn);
   EXPECT_EQ(r.config.evidence.mode, EvidenceMode::Full);
   EXPECT_FALSE(r.config.evidence.pre_slots);
   EXPECT_EQ(r.config.evidence.post_slots, 10u);
