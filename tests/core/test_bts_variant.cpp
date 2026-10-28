@@ -114,6 +114,11 @@ TEST(BtsVariant, RaiseWithShiftedWindowsAndLogValues) {
   EXPECT_EQ(e.severity, Severity::Medium);
   EXPECT_EQ(e.candidates, std::vector<std::string>{"L3-11"});
   EXPECT_EQ(e.alert_id, "S-L3-01-V-1-" + std::to_string(2 + 23));  // seq: hello 1, 칸 0 = 2
+  // 공통 경보 형식 (14_ §8.5): 웜업 중이라 C3는 넣지 않음, F_w = 12 ≥ F_abs라 C2a도 성립 (결정 J2)
+  EXPECT_EQ(e.stage, 1);
+  EXPECT_EQ(e.unit, "cell");
+  EXPECT_EQ(e.alert_kind, "attack");
+  EXPECT_EQ(e.cond, (std::vector<std::string>{"C1", "C2", "C2a"}));
 }
 
 // T_nr = 500이면 D = 5칸 — 시차가 hello 값을 따른다 (3_ §3)
@@ -235,6 +240,7 @@ TEST(BtsVariant, C2aRaisesUnderHighNormalLoad) {
   EXPECT_LT(*e.ratio, 0.5);  // 비율로는 못 잡는 경우
   EXPECT_EQ(e.f_abs, 10);
   EXPECT_NE(format_log_line(e).find("theta=0.5 f_abs=10"), std::string::npos);
+  EXPECT_EQ(e.cond, (std::vector<std::string>{"C1", "C2a"}));  // C2 불성립 — C2a로 걸렸음이 보인다
 }
 
 // 같은 입력에서 F_abs를 아주 크게 두면 비율 조건만 남아 경보가 없다 — 위 RAISE가 C2a 때문임을 확인
@@ -271,4 +277,30 @@ TEST(BtsVariant, DlMissingRaiseHasNoFabs) {
   EXPECT_EQ(h.alerts[0].mode, AlertMode::DlMissing);
   EXPECT_FALSE(h.alerts[0].f_abs);
   EXPECT_EQ(format_log_line(h.alerts[0]).find("f_abs="), std::string::npos);
+  EXPECT_EQ(h.alerts[0].cond, std::vector<std::string>{"U"});  // 웜업 중 — C3 없음 (결정 J3)
+}
+
+// 웜업이 끝난 뒤 RAISE면 C3가 cond에 들어간다 (14_ §8.5, 결정 J2). F_abs를 크게 둬 C2a는 빠짐
+TEST(BtsVariant, CondHasC3AfterWarmup) {
+  BtsVariantConfig cfg;
+  cfg.warmup_ms = 1000;
+  cfg.f_abs = 1000;
+  Harness h(cfg);
+  h.slots(40, {0, 0, 0});
+  h.slots(10, {3, 0, 0});
+  h.slots(4, {3, 0, 3});
+  ASSERT_EQ(h.alerts.size(), 1u);
+  EXPECT_EQ(h.alerts[0].cond, (std::vector<std::string>{"C1", "C2", "C3"}));
+}
+
+// DL 미관측 모드도 웜업 뒤면 base′ 기준 C3를 함께 적는다 (결정 J3)
+TEST(BtsVariant, DlMissingCondHasC3AfterWarmup) {
+  BtsVariantConfig cfg;
+  cfg.warmup_ms = 1000;
+  Harness h(cfg);
+  h.slots(40, {1, 1, std::nullopt});  // base′ ≈ 10 → k × base′ ≈ 30
+  h.slots(10, {5, 0, std::nullopt});
+  ASSERT_EQ(h.alerts.size(), 1u);
+  EXPECT_EQ(h.alerts[0].mode, AlertMode::DlMissing);
+  EXPECT_EQ(h.alerts[0].cond, (std::vector<std::string>{"U", "C3"}));
 }
