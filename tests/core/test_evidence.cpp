@@ -145,7 +145,53 @@ TEST(EvidenceRecord, RawIsVerbatim) {
   EXPECT_NO_THROW({ auto parsed = json::parse(line); (void)parsed; });
 }
 
-// ---- T9: RAISE pre 스냅샷에 a_seq·f_seq 범위 칸이 모두 있음 ----
+// alert 레코드는 공통 경보 형식 — 겉모양 + values·params·refs (14_ §8.3·§8.5, 4_ §6.1 #3)
+TEST(EvidenceRecord, AlertRaiseCommonFormat) {
+  AlertEvent e;
+  e.kind = AlertEventKind::Raise;
+  e.rule = "L3-01-V";
+  e.alert_id = "S-L3-01-V-1-5310";
+  e.cell_id = 1;
+  e.t = 1792209001200;
+  e.severity = Severity::High;
+  e.cond = {"C1", "C2", "C3"};
+  e.candidates = {"L3-11"};
+  e.a_w = 48;
+  e.f_w = 45;
+  e.ratio = 0.94;
+  e.base = 3.1;
+  e.uectx = 93;
+  e.max_conn = 96;
+  e.k = 3;
+  e.theta = 0.5;
+  e.f_abs = 10;
+  e.a_seq = {{5280, 5300}};
+  e.f_seq = {{5290, 5310}};
+  EXPECT_EQ(alert_record_line(e, 0, 0),
+            R"({"type":"alert","alert_id":"S-L3-01-V-1-5310","event":"raise","rule":"L3-01-V","stage":1,"unit":"cell",)"
+            R"("kind":"attack","cell":1,"t":1792209001200,"severity":"high","mode":"normal","cond":["C1","C2","C3"],)"
+            R"("candidates":["L3-11"],"values":{"a_w":48,"f_w":45,"ratio":0.94,"base":3.1,"uectx":93,"max_conn":96},)"
+            R"("params":{"k":3.0,"theta":0.5,"f_abs":10},"refs":{"a":[5280,5300],"f":[5290,5310]}})");
+}
+
+// clear·end는 겉모양 + duration·증거 수(+ reason). C4 값이 없으면 values도 없다 (결정 J5)
+TEST(EvidenceRecord, AlertEndCommonFormat) {
+  AlertEvent e;
+  e.kind = AlertEventKind::End;
+  e.rule = "L3-01-V";
+  e.alert_id = "S-L3-01-V-1-25";
+  e.cell_id = 1;
+  e.t = 1000;
+  e.mode = AlertMode::DlMissing;
+  e.duration_ms = 5600;
+  e.reason = "input_lost";
+  EXPECT_EQ(alert_record_line(e, 7, 2),
+            R"({"type":"alert","alert_id":"S-L3-01-V-1-25","event":"end","rule":"L3-01-V","stage":1,"unit":"cell",)"
+            R"("kind":"attack","cell":1,"t":1000,"severity":"medium","mode":"dl_missing","duration_ms":5600,)"
+            R"("evidence_sent":7,"evidence_dropped":2,"reason":"input_lost"})");
+}
+
+// ---- T9: RAISE pre 스냅샷에 refs.a·refs.f(A·F 윈도우 seq 범위) 칸이 모두 있음 ----
 
 TEST(Evidence, T09PreSnapshotCoversWindows) {
   const auto path = scenario("T03_공격");
@@ -154,7 +200,7 @@ TEST(Evidence, T09PreSnapshotCoversWindows) {
   ASSERT_EQ(alerts.size(), 1u);
   const json& raise = alerts[0];
   EXPECT_EQ(raise["event"], "raise");
-  const int64_t a0 = raise["a_seq"][0], f1 = raise["f_seq"][1];
+  const int64_t a0 = raise["refs"]["a"][0], f1 = raise["refs"]["f"][1];
   std::set<int64_t> pre;
   for (const auto& e : of_type(r, "evidence"))
     if (e["phase"] == "pre") pre.insert(e["seq"].get<int64_t>());
@@ -323,7 +369,7 @@ TEST(Evidence, RefAndOffModes) {
   RunResult r = run_scenario(scenario("T06_공격중끊김"), ref);
   ASSERT_FALSE(r.records.empty());
   for (const auto& j : r.records) EXPECT_EQ(j["type"], "alert");
-  EXPECT_TRUE(r.records[0].contains("a_seq"));
+  EXPECT_TRUE(r.records[0]["refs"].contains("a"));
 
   EvidenceConfig off;
   off.mode = EvidenceMode::Off;

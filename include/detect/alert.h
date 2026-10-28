@@ -23,6 +23,13 @@ struct AlertEvent {
   AlertMode mode = AlertMode::Normal;
   Severity severity = Severity::Medium;
 
+  // 공통 경보 형식의 겉모양 (14_ §8.3): 단계 1~4, 판정 단위 cell|ue, 공격 attack|이상 유형 anomaly
+  int stage = 1;
+  std::string unit = "cell";
+  std::string alert_kind = "attack";
+  // RAISE 칸에서 성립한 조건 ID (14_ §8.3 cond, §8.5). 예: {"C1","C2","C3"}, {"C2a"}, dl_missing {"U","C3"}
+  std::vector<std::string> cond;
+
   // 근거 값 (RAISE). normal이면 A_w·F_w·ratio, dl_missing이면 A_w(= A′_w)·U (결정 E5)
   int64_t a_w = 0;
   std::optional<int64_t> f_w;

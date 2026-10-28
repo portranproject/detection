@@ -40,6 +40,7 @@ struct BtsVariantRule::Verdict {
   std::optional<double> ratio;
   std::optional<double> u;
   double base_used = 0;        // 판정에 쓴(갱신 전) 기준선 (결정 E8)
+  std::vector<std::string> cond;  // 이 칸에서 참인 조건 ID — RAISE 칸이면 경보의 cond가 된다 (14_ §8.5)
 };
 
 BtsVariantRule::CellState::CellState(const BtsVariantConfig& cfg, int64_t period_ms)
@@ -71,6 +72,9 @@ void BtsVariantRule::end_alert(CellState& st, int64_t cell_id, int64_t t, const 
     AlertEvent e;
     e.kind = AlertEventKind::End;
     e.rule = kId;
+    e.stage = 1;
+    e.unit = "cell";
+    e.alert_kind = "attack";
     e.alert_id = st.alert_id;
     e.cell_id = cell_id;
     e.t = t;
@@ -116,11 +120,24 @@ BtsVariantRule::Verdict BtsVariantRule::evaluate(const CellState& st, AlertMode 
     // 경보가 아닐 때 (C1∧C2∧C3) ∨ C2a, 경보 중 (C1∧C2) ∨ C2a ∨ (A′_w ≥ A_min ∧ U ≥ θ) — 마지막은 거절로 바뀐 포화 ② (3_ §6.1 나)
     v.satisfied = was_active ? ((c1 && c2) || c2a || u_ok) : ((c1 && c2 && c3) || c2a);
     v.suspicious = *w.a_w > 0 && (c2 || c2a);  // 의심 칸 (3_ §5): 비율이 높거나 절대 실패 수가 큰 칸
+    // 성립한 조건 ID (14_ §8.5, 결정 J2): RAISE는 경보가 아닐 때 성립한 칸에서만 나므로 그때만 모은다.
+    // 웜업 중의 C3는 확인한 값이 아니라 참으로 둔 것이라 넣지 않는다 (3_ §5)
+    if (!was_active && v.satisfied) {
+      if (c1) v.cond.emplace_back("C1");
+      if (c2) v.cond.emplace_back("C2");
+      if (!warming && c3) v.cond.emplace_back("C3");
+      if (c2a) v.cond.emplace_back("C2a");
+    }
   } else {
     // DL 미관측 모드 (3_ §4.1): ratio 대신 U, base′는 A′_w의 기준선
     v.base_used = st.base_dl.value();
     const bool c3 = warming || a2 >= cfg_.k * v.base_used;
     v.satisfied = was_active ? u_ok : (u_ok && c3);
+    // U = (A′_w ≥ A_min ∧ U ≥ θ), 웜업 뒤면 base′ 기준 C3도 (결정 J3)
+    if (!was_active && v.satisfied) {
+      v.cond.emplace_back("U");
+      if (!warming) v.cond.emplace_back("C3");
+    }
   }
   return v;
 }
@@ -156,6 +173,9 @@ void BtsVariantRule::emit(CellState& st, const Ctx& c, AlertMode mode, const Win
     AlertEvent e;
     e.kind = kind;
     e.rule = kId;
+    e.stage = 1;  // 1단계 셀 단위 공격 룰 (14_ §8.5)
+    e.unit = "cell";
+    e.alert_kind = "attack";
     e.alert_id = st.alert_id;
     e.cell_id = c.cell_id;
     e.t = c.t;
@@ -190,6 +210,7 @@ void BtsVariantRule::emit(CellState& st, const Ctx& c, AlertMode mode, const Win
     e.k = cfg_.k;
     e.theta = cfg_.theta;
     e.candidates = {"L3-11"};  // 같은 표 II 모양인 #11 중간자 변형 (3_ §7)
+    e.cond = v.cond;
     out.alerts.push_back(std::move(e));
   } else if (step == AlertMachine::Step::Clear) {
     AlertEvent e = make_event(AlertEventKind::Clear);

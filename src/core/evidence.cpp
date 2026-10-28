@@ -25,34 +25,51 @@ ojson seq_pair(const std::pair<int64_t, int64_t>& p) { return ojson::array({p.fi
 
 }  // namespace
 
-// alert 레코드 (3_ §7.1 표): alert_id·event·룰·셀·시각·근거 값·mode·candidates.
-// raise면 a_seq·f_seq, clear·end면 duration_ms와 내보낸·버린 증거 수, end면 reason
+// alert 레코드 — 공통 경보 형식 (14_ §8.3·§8.5, 4_ §6.1 #3): 겉모양(룰·단계·단위·종류·셀·시각·심각도·모드)은
+// 모든 룰이 같고, 룰마다 다른 것은 values(관측값)·params(파라미터)·refs(근거 seq 범위) 안에만 둔다.
+// raise면 cond·candidates·values·params·refs, clear·end면 duration_ms와 내보낸·버린 증거 수, end면 reason.
+// uectx·max_conn은 C4가 켜져 값이 있을 때만 어느 이벤트든 values에 (결정 J5)
 std::string alert_record_line(const AlertEvent& e, int64_t sent, int64_t dropped) {
   ojson j;
   j["type"] = "alert";
   j["alert_id"] = e.alert_id;
   j["event"] = event_name(e.kind);
   j["rule"] = e.rule;
+  j["stage"] = e.stage;
+  j["unit"] = e.unit;
+  j["kind"] = e.alert_kind;
   j["cell"] = e.cell_id;
   j["t"] = e.t;
-  j["mode"] = e.mode == AlertMode::Normal ? "normal" : "dl_missing";
   j["severity"] = e.severity == Severity::High ? "high" : "medium";
-  if (e.kind == AlertEventKind::Raise) {
-    j["a_w"] = e.a_w;
-    if (e.f_w) j["f_w"] = *e.f_w;
-    if (e.ratio) j["ratio"] = *e.ratio;
-    if (e.u) j["u"] = *e.u;
-    j["base"] = e.base;
-    j["k"] = e.k;
-    j["theta"] = e.theta;
-    if (e.f_abs) j["f_abs"] = *e.f_abs;  // normal 모드만 (3_ §7.1, 10/27 Q-41)
+  j["mode"] = e.mode == AlertMode::Normal ? "normal" : "dl_missing";
+  const bool raise = e.kind == AlertEventKind::Raise;
+  if (raise) {
+    j["cond"] = e.cond;
     j["candidates"] = e.candidates;
-    if (e.a_seq) j["a_seq"] = seq_pair(*e.a_seq);
-    if (e.f_seq) j["f_seq"] = seq_pair(*e.f_seq);
+  }
+  ojson values = ojson::object();
+  if (raise) {
+    values["a_w"] = e.a_w;
+    if (e.f_w) values["f_w"] = *e.f_w;
+    if (e.ratio) values["ratio"] = *e.ratio;
+    if (e.u) values["u"] = *e.u;
+    values["base"] = e.base;
   }
   if (e.uectx && e.max_conn) {
-    j["uectx"] = *e.uectx;
-    j["max_conn"] = *e.max_conn;
+    values["uectx"] = *e.uectx;
+    values["max_conn"] = *e.max_conn;
+  }
+  if (!values.empty()) j["values"] = std::move(values);
+  if (raise) {
+    ojson params;
+    params["k"] = e.k;
+    params["theta"] = e.theta;
+    if (e.f_abs) params["f_abs"] = *e.f_abs;  // normal 모드만 (3_ §7.1, 10/27 Q-41)
+    j["params"] = std::move(params);
+    ojson refs = ojson::object();
+    if (e.a_seq) refs["a"] = seq_pair(*e.a_seq);
+    if (e.f_seq) refs["f"] = seq_pair(*e.f_seq);
+    j["refs"] = std::move(refs);
   }
   if (e.kind == AlertEventKind::Clear || e.kind == AlertEventKind::End) {
     j["duration_ms"] = e.duration_ms;
