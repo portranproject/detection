@@ -1,0 +1,17 @@
+{
+  "scenario": "S21_L3-21_원형_갈래1_RAISE",
+  "description": "무효 등록 5대 거절(실패 UE 5개) → 갈래① medium (L21-T4)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-21",
+      "cell": 1,
+      "t_rel_ms": 6000,
+      "mode": "normal",
+      "severity": "medium",
+      "branch": "1"
+    }
+  ]
+}

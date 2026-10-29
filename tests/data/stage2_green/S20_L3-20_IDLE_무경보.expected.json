@@ -1,0 +1,7 @@
+{
+  "scenario": "S20_L3-20_IDLE_무경보",
+  "description": "피해자 해제 뒤 공격 연결 — 열린 짝 없음, 경보 없음 (L20-T7)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

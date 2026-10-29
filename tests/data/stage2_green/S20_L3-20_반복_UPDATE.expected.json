@@ -1,0 +1,28 @@
+{
+  "scenario": "S20_L3-20_반복_UPDATE",
+  "description": "같은 피해자로 공격 연결 3번(1 s 간격) → RAISE + UPDATE (L20-T15)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-20",
+      "cell": 1,
+      "t_rel_ms": 6100,
+      "mode": "normal",
+      "severity": "medium"
+    },
+    {
+      "kind": "UPDATE",
+      "rule": "L3-20",
+      "cell": 1,
+      "t_rel_ms": 7100
+    },
+    {
+      "kind": "UPDATE",
+      "rule": "L3-20",
+      "cell": 1,
+      "t_rel_ms": 8100
+    }
+  ]
+}

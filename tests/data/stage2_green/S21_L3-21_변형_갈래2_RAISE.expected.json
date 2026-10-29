@@ -1,0 +1,17 @@
+{
+  "scenario": "S21_L3-21_변형_갈래2_RAISE",
+  "description": "한 연결 등록 요청 3번 + 거절 → 갈래② 즉시 (L21-T6)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-21",
+      "cell": 1,
+      "t_rel_ms": 400,
+      "mode": "normal",
+      "severity": "medium",
+      "branch": "2"
+    }
+  ]
+}

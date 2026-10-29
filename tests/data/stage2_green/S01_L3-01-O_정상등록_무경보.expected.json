@@ -1,0 +1,7 @@
+{
+  "scenario": "S01_L3-01-O_정상등록_무경보",
+  "description": "정상 UE 2대 등록·인증 응답 — 고착 없음 (L01-T1)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

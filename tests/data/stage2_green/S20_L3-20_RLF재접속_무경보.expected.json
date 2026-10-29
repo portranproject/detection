@@ -1,0 +1,7 @@
+{
+  "scenario": "S20_L3-20_RLF재접속_무경보",
+  "description": "RLF — 같은 S-TMSI 새 연결이 300 ms 뒤 RRC SMC 수락 (L20-T3)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

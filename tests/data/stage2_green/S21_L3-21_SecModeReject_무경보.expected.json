@@ -1,0 +1,7 @@
+{
+  "scenario": "S21_L3-21_SecModeReject_무경보",
+  "description": "SecurityModeReject만 있는 연결 — 실패 아님 (L21-T15)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}
