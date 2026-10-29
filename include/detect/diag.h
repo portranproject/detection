@@ -30,6 +30,7 @@ enum class DiagKind {
   ModeChanged,         // normal ↔ dl_missing 전환 (3_ §4.1·§8)
   BaselineLow,         // 웜업 종료 시 k × base < A_min — C3가 사실상 항상 참 (3_ §5)
   EvidenceDropped,     // 큐가 넘쳐 증거를 버림 — 경보마다 처음 1회, post 구간 몫은 post 끝에 (3_ §7.1, 결정 F3·F7)
+  InputSilent,         // 벽시계로 마지막 kpm2 뒤 input_silent_ms 동안 kpm2가 없음 — 진행 중 경보를 END (3_ §8, 14_ §6.2, 이슈 #50)
   // 2단계 — UE 상태표·마감 목록 (14_)
   EvtBeforeHello,      // hello 전 ue_evt·f1_evt (2_ §6.5)
   UeEvtOff,            // hello에 ue_evt 표시가 없음 — 2단계 이상 룰을 끈다 (2_ §6.5)

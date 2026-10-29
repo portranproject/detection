@@ -248,11 +248,12 @@ ConfigResult parse_config(std::string_view json_text) {
     return r;
   }
   try {
-    warn_unknown(j, {"socket_path", "max_line_bytes", "max_cells", "rules", "evidence", "ue_table", "alert"}, "",
-                 r.warnings);
+    warn_unknown(j, {"socket_path", "max_line_bytes", "max_cells", "input_silent_ms", "rules", "evidence", "ue_table", "alert"},
+                 "", r.warnings);
     read_string(j, "socket_path", r.config.socket_path, "");
     read_int(j, "max_line_bytes", r.config.max_line_bytes, 1, "");
     read_int_in(j, "max_cells", r.config.max_cells, 1, 1024, "");  // 결정 D7 — 16_ W-24로 설정 키 (이슈 #44)
+    read_int_in(j, "input_silent_ms", r.config.input_silent_ms, 1000, 600000, "");  // 입력 침묵 (3_ §8, Q-45 — 이슈 #50)
     // rules: 룰 ID → 설정 객체. 여기서는 객체인지만 보고 JSON 그대로 넘긴다 — 해석은 룰별 파서, 모르는 룰 ID는
     // 등록된 룰을 아는 실행 파일이 경고한다 (Q-46, 결정 J4)
     if (const json* rules = find(j, "rules")) {

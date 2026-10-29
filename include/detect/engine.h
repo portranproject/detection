@@ -45,6 +45,10 @@ class Engine {
   // 닫힌 항목 recent 보관 시간을 룰의 증거 지평에 맞춰 늘린다 (14_ §2.3)
   void add_ue_rule(std::unique_ptr<UeRule> rule);
   EngineOutput feed_line(std::string_view line);
+  // 입력 침묵 (3_ §8, 14_ §6.2 — 10/29 Q-45 해결, 이슈 #50): 실행 파일이 벽시계로 마지막 kpm2 뒤 input_silent_ms 동안
+  // kpm2가 없다고 알린다(core에는 시계가 없다). 진단 input_silent 1회와 모든 룰의 진행 중 경보 END(reason=input_silent).
+  // 버퍼·기준선·세션·상태표·마감 목록·셀 시계는 그대로 — 판정은 데이터 시각이다. silent_ms = 침묵 길이(진단 문구용)
+  EngineOutput on_input_silent(int64_t silent_ms);
 
   const Series& series() const { return series_; }
   const UeTable& ue_table() const { return table_; }

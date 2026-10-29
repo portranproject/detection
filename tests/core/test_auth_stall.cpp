@@ -1,4 +1,4 @@
-// 룰 L3-01-O 인증 단계 고착 테스트 — 15_ §4.8 L01-T1~T19, 상태표 포화(이슈 #42 → #44). 합성 ue_evt·kpm2 줄로 한다(데이터 파일은 설정 키·데이터 이슈).
+// 룰 L3-01-O 인증 단계 고착 테스트 — 15_ §4.8 L01-T1~T19, 상태표 포화(이슈 #42 → #44), 입력 침묵(이슈 #50). 합성 ue_evt·kpm2 줄로 한다(데이터 파일은 설정 키·데이터 이슈).
 // 시각은 kT0 기준 ms. k번째 고착은 그 UE의 t₀ + auth_wait_ms, 경보는 그 시각 이상인 첫 kpm2(최대 100 ms 뒤)에서 나온다
 #include "detect/engine.h"
 #include "detect/evidence.h"
@@ -620,6 +620,56 @@ TEST(AuthStall, EndOnInputLostAndSessionReset) {
     EXPECT_EQ(h.alerts[1].kind, AlertEventKind::End);
     EXPECT_EQ(h.alerts[1].reason, "session_reset");
     EXPECT_EQ(h.rule->waiting(), 0u);
+  }
+}
+
+// 입력 침묵 (14_ §6.2 — 10/29 Q-45 해결, 이슈 #50): 공격 경보 중 실행 파일이 침묵을 알리면 END(reason=input_silent, t = 경보가
+// 마지막으로 본 칸)와 진단 1회. 대기 표시·셀 기록은 그대로라(on_session_reset과 다름) kpm2가 다시 오면 남은 마감이 평소처럼 판정된다 —
+// 창 안 고착 수가 N 이상이면 새 RAISE. 열린 불확실 경보도 같은 이유로 END
+TEST(AuthStall, EndOnInputSilent) {
+  {
+    Harness h;
+    attack(h, 6);  // 마감 3000·3333·3666·3999·4332·4665 — 다섯째로 4400에서 RAISE, 여섯째는 아직 대기
+    h.tick_to(4400);
+    ASSERT_EQ(h.alerts.size(), 1u);
+    EXPECT_EQ(h.rule->waiting(), 1u);
+    const std::size_t ues = h.engine.ue_table().size();
+    EngineOutput o = h.engine.on_input_silent(10000);
+    ASSERT_EQ(o.alerts.size(), 1u);
+    EXPECT_EQ(o.alerts[0].kind, AlertEventKind::End);
+    EXPECT_EQ(o.alerts[0].reason, "input_silent");
+    EXPECT_EQ(o.alerts[0].alert_kind, "attack");
+    EXPECT_EQ(o.alerts[0].alert_id, h.alerts[0].alert_id);
+    EXPECT_EQ(o.alerts[0].t, kT0 + 4400);
+    EXPECT_EQ(format_log_line(o.alerts[0]),
+              "ALERT END rule=L3-01-O cell=1 t=" + t_str(4400) + " duration_ms=0 reason=input_silent");
+    ASSERT_EQ(o.diags.size(), 1u);
+    EXPECT_EQ(o.diags[0].kind, DiagKind::InputSilent);
+    EXPECT_EQ(h.rule->waiting(), 1u);  // 대기 표시·상태표·셀 시계 유지
+    EXPECT_EQ(h.engine.ue_table().size(), ues);
+    EXPECT_EQ(h.engine.deadlines().clock(1), kT0 + 4400);
+    // 재개: 여섯째 마감(4665)이 4700에서 고착으로 — 창 안 고착 6 ≥ 5 → 새 경보로 RAISE
+    h.tick_to(4700);
+    ASSERT_EQ(h.alerts.size(), 2u);
+    EXPECT_EQ(h.alerts[1].kind, AlertEventKind::Raise);
+    EXPECT_EQ(h.alerts[1].t, kT0 + 4700);
+    EXPECT_NE(h.alerts[1].alert_id, h.alerts[0].alert_id);
+    EXPECT_EQ(h.rule->stalls(), 6);
+    EXPECT_EQ(h.rule->waiting(), 0u);
+  }
+  {
+    Harness h;  // 불확실 경보 중 — 같이 END
+    h.lost(2500, R"(["UL"])");
+    attack(h, 5);
+    h.tick_to(4400);
+    ASSERT_EQ(h.alerts.size(), 1u);
+    EXPECT_EQ(h.alerts[0].alert_kind, "anomaly");
+    EngineOutput o = h.engine.on_input_silent(10000);
+    ASSERT_EQ(o.alerts.size(), 1u);
+    EXPECT_EQ(o.alerts[0].kind, AlertEventKind::End);
+    EXPECT_EQ(o.alerts[0].alert_kind, "anomaly");
+    EXPECT_EQ(o.alerts[0].reason, "input_silent");
+    EXPECT_EQ(o.alerts[0].alert_id, h.alerts[0].alert_id);
   }
 }
 

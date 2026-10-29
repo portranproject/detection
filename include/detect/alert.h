@@ -70,7 +70,7 @@ struct AlertEvent {
   std::vector<std::pair<std::string, std::string>> log_fields;
 
   int64_t duration_ms = 0;  // CLEAR·END
-  std::string reason;       // END: session_reset | input_lost (3_ §7.1)
+  std::string reason;       // END: session_reset | input_lost | input_silent (3_ §7.1·§8, 14_ §8.2)
 };
 
 // 경보 로그 한 줄 (3_ §7, 15_ §2.6·§4.6·§5.6). 골격은 모든 룰이 같고 룰별 필드는 log_fields로 받는다

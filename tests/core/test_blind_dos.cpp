@@ -679,6 +679,35 @@ TEST(BlindDos, EndOnInputLostAndSessionReset) {
   }
 }
 
+// 입력 침묵 (14_ §6.2 — 10/29 Q-45 해결, 이슈 #50): 경보 중 실행 파일이 침묵을 알리면 END(reason=input_silent, t = 경보가 마지막으로 본
+// 칸). 대기 표시는 그대로라 kpm2가 다시 오면 기다리던 공격 연결의 마감이 평소처럼 걸려 새 RAISE
+TEST(BlindDos, EndOnInputSilent) {
+  Harness h;
+  h.victim(3, kS, 0);
+  h.tick_to(1000);
+  h.attack(7, kS, 1000);
+  h.tick_to(6100);  // 마감 6050 → 6100에서 RAISE
+  ASSERT_EQ(h.alerts.size(), 1u);
+  h.attack(8, kS, 6100);  // 다음 공격 연결 — t₀ 6150, 마감 11150
+  h.tick_to(6200);
+  EXPECT_EQ(h.rule->waiting(), 1u);
+  EngineOutput o = h.engine.on_input_silent(10000);
+  ASSERT_EQ(o.alerts.size(), 1u);
+  EXPECT_EQ(o.alerts[0].kind, AlertEventKind::End);
+  EXPECT_EQ(o.alerts[0].reason, "input_silent");
+  EXPECT_EQ(o.alerts[0].alert_id, h.alerts[0].alert_id);
+  EXPECT_EQ(o.alerts[0].t, kT0 + 6200);
+  ASSERT_EQ(o.diags.size(), 1u);
+  EXPECT_EQ(o.diags[0].kind, DiagKind::InputSilent);
+  EXPECT_EQ(h.rule->waiting(), 1u);
+  h.tick_to(11200);  // 재개 — 마감 11150이 11200에서 걸림 → 새 RAISE
+  ASSERT_EQ(h.alerts.size(), 2u);
+  EXPECT_EQ(h.alerts[1].kind, AlertEventKind::Raise);
+  EXPECT_EQ(h.alerts[1].t, kT0 + 11200);
+  EXPECT_NE(h.alerts[1].alert_id, h.alerts[0].alert_id);
+  EXPECT_EQ(h.rule->waiting(), 0u);
+}
+
 // late_until (14_ §4.3 — Q-57 해결, 이슈 #46): 공격 연결의 줄이 늦게 오면(순서 역전) 늦은 줄 + 6 s까지만 판정에서 빠진다.
 // 마감(t₀ + 5 s)이 그 안이면 걸림 없음, 뒤면 걸림 — ues[].uncertain에 late
 TEST(BlindDos, LateUntil) {

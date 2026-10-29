@@ -1,4 +1,5 @@
-// UE 상태표·마감 목록·2단계 분배 테스트 — 14_ §10 공통 테스트 U-T1~U-T29(U-T26·U-T27은 이슈 #44 유령 정리·보호 무리, U-T28은 이슈 #46 late_until, U-T29는 이슈 #48 진단).
+// UE 상태표·마감 목록·2단계 분배 테스트 — 14_ §10 공통 테스트 U-T1~U-T29(U-T26·U-T27은 이슈 #44 유령 정리·보호 무리, U-T28은 이슈 #46 late_until, U-T29는 이슈 #48 진단),
+// 입력 침묵의 엔진 몫(이슈 #50 — 소켓 통합 시험 U-T31은 tests/integration).
 // U-T13(1단계 alert 형식 이전)은 이슈 #17에서 확인했고, U-T20(경보당 증거 UE 상한)은 UE 증거 이슈에서 한다.
 // 닫힌 S-TMSI 기억(U-T1·U-T11의 기억 표 부분)은 보류다(14_ §3.2).
 // 대기 표시가 필요한 시험은 15_ 룰의 대기 규칙(14_ §2.4·§6)을 그대로 따르는 테스트용 룰(WaitRule)로 한다
@@ -829,6 +830,36 @@ TEST(UeTable, CellTickLossAndInputLost) {
   for (const auto& x : g.rule->ticks) lost += std::get<3>(x) ? 1 : 0;
   EXPECT_EQ(lost, 1);
   EXPECT_TRUE(std::get<3>(g.rule->ticks.back()));
+}
+
+// 입력 침묵 (14_ §6.2 — 10/29 Q-45 해결, 이슈 #50): 엔진은 진단 1회를 내고 룰에 알리되(기본 구현은 무동작) 상태표·마감 목록·셀 시계·
+// 대기 표시는 그대로다 — kpm2가 다시 오면 마감이 평소처럼 판정된다. 2단계가 꺼져 있으면(hello에 ue_evt 없음) 2단계 룰은 부르지 않는다
+TEST(UeTable, InputSilentKeepsState) {
+  Harness h;
+  connect(h, 0, 3);
+  h.nas(100, 3, "DL", "AuthenticationRequest");  // 마감 2100
+  h.tick_to(1000);
+  const std::size_t deadlines = h.engine.deadlines().size();  // 룰 몫(auth_resp) + 상태표 몫(stale_setup)
+  EXPECT_EQ(deadlines, 2u);
+  EngineOutput o = h.engine.on_input_silent(10000);
+  ASSERT_EQ(o.diags.size(), 1u);
+  EXPECT_EQ(o.diags[0].kind, DiagKind::InputSilent);
+  EXPECT_FALSE(o.diags[0].cell_id);
+  EXPECT_TRUE(o.alerts.empty());
+  EXPECT_EQ(o.outcome, FeedOutcome::Dropped);
+  EXPECT_NE(h.ue_state(3), nullptr);
+  EXPECT_EQ(h.engine.deadlines().size(), deadlines);
+  EXPECT_EQ(h.engine.deadlines().clock(1), kT0 + 1000);
+  EXPECT_EQ(h.rule->marks.size(), 1u);
+  EXPECT_EQ(h.rule->resets, 0);
+  h.tick_to(2200);
+  ASSERT_EQ(h.rule->hits.size(), 1u);
+  EXPECT_EQ(h.rule->hits[0].at, kT0 + 2100);
+
+  Harness off({}, false);  // 2단계 꺼짐 — 진단만, 상태표 없음
+  EngineOutput p = off.engine.on_input_silent(10000);
+  EXPECT_EQ(p.diags.size(), 1u);
+  EXPECT_TRUE(p.alerts.empty());
 }
 
 // U-T26 (14_ §4.2 ghost_purge — 10/29 Q-56 해결, 이슈 #44): 해제 줄을 잃은 CONNECTED 유령 40개 + 정상 CONNECTED 5개가 열려 있고

@@ -259,6 +259,12 @@ void BtsVariantRule::emit(CellState& st, const Ctx& c, AlertMode mode, const Win
   }
 }
 
+// 입력 침묵 (3_ §8 — 10/29 Q-45 해결, 이슈 #50): 셀마다 진행 중 경보를 END(reason=input_silent, t = 그 셀 마지막 칸)로 끝내고
+// 상태기계를 초기화한다(input_lost END와 같음). 버퍼·기준선·모드·웜업은 그대로 — kpm2가 다시 오면 이어 간다
+void BtsVariantRule::on_input_silent(RuleOutput& out) {
+  for (auto& [cell_id, st] : cells_) end_alert(st, cell_id, st.last_t, "input_silent", out);
+}
+
 // 칸 하나 처리 (3_ §4 '매 kpm2 수신마다 셀별로'): 입력 건전성(series) → 모드 → 판정 → 상태기계 → 기준선 → 이벤트
 void BtsVariantRule::on_feed(const Series& series, const FeedResult& fed, RuleOutput& out) {
   // session 변경(또는 같은 session의 hello 파라미터 변경) — 진행 중 경보를 end로 끝내고
