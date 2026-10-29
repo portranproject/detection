@@ -3,6 +3,9 @@
 // 2단계 룰은 hello에 ue_evt 표시가 있을 때만 돈다(2_ §6.5).
 //  - scenarios/(합성)·captured/(실측 변환, 4_ §4.2): 1단계 시나리오 T1~T24
 //  - stage2_green/: 2단계 데이터 (10/29 이슈 #33). 파일은 팀이 준비해 넣는다 — 비어 있으면 도는 시험이 없다
+// 경보 시각 허용 오차(이슈 #40): 1단계 데이터만 기대 파일의 tolerance_ms(±1칸)를 쓴다 — Succ가 1~2칸 늦게 찍혀 성립 칸이
+// 흔들리기 때문이다(3_ §3·§9, 5_ §11). 2단계부터는 '마감 시각 이상인 첫 kpm2'처럼 시각이 정확히 정해지므로 0으로
+// 정확히 비교한다 — 경보가 한 칸 늦어지는 회귀도 잡게
 #include "detect/engine.h"
 #include "detect/rules/auth_stall.h"
 #include "detect/rules/blind_dos.h"
@@ -73,15 +76,15 @@ std::vector<AlertEvent> replay(const std::string& path) {
   return alerts;
 }
 
-// 기대 파일과 비교: 경보마다 kind·rule(없으면 L3-01-V)·cell·t_rel_ms(±tolerance_ms)는 늘, mode(RAISE)·severity·branch·
-// reason은 기대 파일에 있으면 본다
-void check_dataset(const std::string& name) {
+// 기대 파일과 비교: 경보마다 kind·rule(없으면 L3-01-V)·cell·t_rel_ms는 늘, mode(RAISE)·severity·branch·reason은 기대 파일에
+// 있으면 본다. exact_time이면 기대 파일의 tolerance_ms를 쓰지 않고 시각을 정확히 비교한다(2단계부터)
+void check_dataset(const std::string& name, bool exact_time) {
   const std::string base = std::string(DETECT_SCENARIO_DIR) + "/" + name;
   std::ifstream ef(base + kSuffix);
   ASSERT_TRUE(ef) << base;
   const auto expected = nlohmann::json::parse(ef);
   const int64_t t0 = expected.at("t0_ms").get<int64_t>();
-  const int64_t tol = expected.at("tolerance_ms").get<int64_t>();
+  const int64_t tol = exact_time ? 0 : expected.at("tolerance_ms").get<int64_t>();
 
   const auto got = replay(base + ".jsonl");
 
@@ -97,7 +100,7 @@ void check_dataset(const std::string& name) {
     EXPECT_EQ(g.rule, w.value("rule", std::string(BtsVariantRule::kId))) << "#" << i << "\n" << got_text;
     EXPECT_EQ(g.cell_id, w.at("cell").get<int64_t>()) << "#" << i << "\n" << got_text;
     EXPECT_NEAR(static_cast<double>(g.t - t0), w.at("t_rel_ms").get<double>(), static_cast<double>(tol))
-        << "#" << i << "\n" << got_text;
+        << "#" << i << " (tolerance " << tol << " ms)\n" << got_text;
     if (g.kind == AlertEventKind::Raise && w.contains("mode")) {
       EXPECT_EQ(g.mode == AlertMode::Normal ? "normal" : "dl_missing", w.at("mode").get<std::string>())
           << "#" << i;
@@ -119,9 +122,9 @@ class Stage2Scenario : public ::testing::TestWithParam<std::string> {};
 
 }  // namespace
 
-TEST_P(Scenario, AlertsMatchExpected) { check_dataset(GetParam()); }
+TEST_P(Scenario, AlertsMatchExpected) { check_dataset(GetParam(), false); }
 
-TEST_P(Stage2Scenario, AlertsMatchExpected) { check_dataset(GetParam()); }
+TEST_P(Stage2Scenario, AlertsMatchExpected) { check_dataset(GetParam(), true); }
 
 // stage2_green/ 정리 상태: 폴더가 있고, .jsonl마다 같은 이름 .expected.json이 있다(그 반대도) — 데이터를 넣을 때 짝이
 // 빠지면 시험에서 조용히 빠지지 않게 (4_ §4.2 파일명 규칙)
