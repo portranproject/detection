@@ -24,7 +24,7 @@
 - `hello`에 `"ue_evt": true`가 있어야 2단계 룰이 돈다(입력 명세 `2_` §6.5).
 - 모든 `kpm2`에 `"ue_evt_lost"`(로스가 없으면 `[]`)를 넣는다. 빠지면 양방향 로스로 보아 2단계의 '없음' 판정이 모두 보류된다(`14_` §6.2).
 - 같은 창의 `ue_evt`는 그 창 `kpm2`보다 먼저 둔다(`2_` §6.1). `.jsonl`마다 `.expected.json` 짝이 있어야 한다(시험이 확인).
-- `.expected.json`: `scenario`·`description`·`t0_ms`·`tolerance_ms`·`alerts`. `alerts`의 항목은 `kind`(`RAISE`·`UPDATE`·`CLEAR`·`END`)·`rule`·`cell`·`t_rel_ms`가 필수이고, `mode`·`severity`·`branch`·`reason`은 적으면 비교한다. `rule`이 없으면 `L3-01-V`로 본다.
+- `.expected.json`: `scenario`·`description`·`t0_ms`·`tolerance_ms`·`alerts`. **경보 시각은 정확히 비교한다** — `tolerance_ms`(허용 오차)는 1단계 데이터(`scenarios/`·`captured/`)에만 쓰고 2단계부터는 쓰지 않는다(이슈 #40). `alerts`의 항목은 `kind`(`RAISE`·`UPDATE`·`CLEAR`·`END`)·`rule`·`cell`·`t_rel_ms`가 필수이고, `mode`·`severity`·`branch`·`reason`은 적으면 비교한다. `rule`이 없으면 `L3-01-V`로 본다.
 
 ### 현재 들어 있는 시나리오 (29개 — 손 작성)
 
