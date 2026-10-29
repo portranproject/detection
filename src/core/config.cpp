@@ -2,6 +2,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <set>
 #include <stdexcept>
 
@@ -33,6 +34,18 @@ void read_int(const json& obj, const char* key, T& out, int64_t min, const std::
   if (!v->is_number_integer()) throw ConfigErr(where + key + ": not an integer");
   const int64_t x = v->get<int64_t>();
   if (x < min) throw ConfigErr(where + key + ": out of range");
+  out = static_cast<T>(x);
+}
+
+// 허용 범위 [min, max]가 있는 정수 (2단계 키 — 15_ §1.2·14_ §9)
+template <typename T>
+void read_int_in(const json& obj, const char* key, T& out, int64_t min, int64_t max, const std::string& where) {
+  const json* v = find(obj, key);
+  if (!v) return;
+  if (!v->is_number_integer()) throw ConfigErr(where + key + ": not an integer");
+  const int64_t x = v->get<int64_t>();
+  if (x < min || x > max)
+    throw ConfigErr(where + key + ": out of range [" + std::to_string(min) + ", " + std::to_string(max) + "]");
   out = static_cast<T>(x);
 }
 
@@ -87,6 +100,91 @@ void parse_bts(const json& r, BtsVariantConfig& c, std::vector<std::string>& war
   read_nullable_int(r, "max_conn", c.max_conn, 1, w);
 }
 
+// rules."L3-20" (15_ §1.2·§2.4)
+void parse_blind_dos(const json& r, BlindDosConfig& c, std::vector<std::string>& warnings) {
+  const std::string w = "rules.L3-20.";
+  warn_unknown(r, {"accept_wait_ms", "clear_quiet_ms"}, w, warnings);
+  read_int_in(r, "accept_wait_ms", c.accept_wait_ms, 100, 60000, w);
+  read_int_in(r, "clear_quiet_ms", c.clear_quiet_ms, 1000, 3600000, w);
+}
+
+// rules."L3-01-O" (15_ §1.2·§4.4). max_conn은 null이면 심각도 high를 쓰지 않는다
+void parse_auth_stall(const json& r, AuthStallConfig& c, std::vector<std::string>& warnings) {
+  const std::string w = "rules.L3-01-O.";
+  warn_unknown(r, {"auth_wait_ms", "window_ms", "n_stall", "clear_quiet_ms", "max_conn"}, w, warnings);
+  read_int_in(r, "auth_wait_ms", c.auth_wait_ms, 100, 60000, w);
+  read_int_in(r, "window_ms", c.window_ms, 1000, 600000, w);
+  read_int_in(r, "n_stall", c.n_stall, 1, 10000, w);
+  read_int_in(r, "clear_quiet_ms", c.clear_quiet_ms, 1000, 3600000, w);
+  read_nullable_int(r, "max_conn", c.max_conn, 1, w);
+}
+
+// rules."L3-21" (15_ §1.2·§5.4). ignore_causes는 5GMM 원인값(0~255) 배열 — 중복 없음, 빈 배열은 끔
+void parse_uplink_dos(const json& r, UplinkDosConfig& c, std::vector<std::string>& warnings) {
+  const std::string w = "rules.L3-21.";
+  warn_unknown(r, {"window_ms", "n_fail", "fail_accept_wait_ms", "reg_repeat", "clear_quiet_ms", "ignore_causes"}, w,
+               warnings);
+  read_int_in(r, "window_ms", c.window_ms, 1000, 600000, w);
+  read_int_in(r, "n_fail", c.n_fail, 1, 10000, w);
+  read_int_in(r, "fail_accept_wait_ms", c.fail_accept_wait_ms, 100, 60000, w);
+  read_int_in(r, "reg_repeat", c.reg_repeat, 2, 100, w);
+  read_int_in(r, "clear_quiet_ms", c.clear_quiet_ms, 1000, 3600000, w);
+  if (const json* v = find(r, "ignore_causes")) {
+    if (!v->is_array()) throw ConfigErr(w + "ignore_causes: not an array");
+    std::vector<int64_t> causes;
+    for (const json& x : *v) {
+      if (!x.is_number_integer()) throw ConfigErr(w + "ignore_causes: not an integer");
+      const int64_t n = x.get<int64_t>();
+      if (n < 0 || n > 255) throw ConfigErr(w + "ignore_causes: out of range [0, 255]");
+      if (std::find(causes.begin(), causes.end(), n) != causes.end())
+        throw ConfigErr(w + "ignore_causes: duplicate " + std::to_string(n));
+      causes.push_back(n);
+    }
+    c.ignore_causes = std::move(causes);
+  }
+}
+
+// ue_table (14_ §9 — 허용 범위는 10/29 이슈 #33 사용자 결정). tomb_ms·tomb_max는 예약 키라 경고만 (14_ §3.2)
+void parse_ue_table(const json& e, UeTableConfig& c, std::vector<std::string>& warnings) {
+  const std::string w = "ue_table.";
+  if (!e.is_object()) throw ConfigErr("ue_table: not an object");
+  warn_unknown(e, {"max_ues", "recent_n", "stale_setup_ms", "closed_recent_max", "tomb_ms", "tomb_max"}, w, warnings);
+  for (const char* k : {"tomb_ms", "tomb_max"})
+    if (find(e, k)) warnings.push_back("reserved key " + w + k + " (not used)");
+  read_int_in(e, "max_ues", c.max_ues, 100, 16384, w);
+  read_int_in(e, "recent_n", c.recent_n, 1, 64, w);
+  read_int_in(e, "stale_setup_ms", c.stale_setup_ms, 2000, 600000, w);
+  read_int_in(e, "closed_recent_max", c.closed_recent_max, 0, 16384, w);
+}
+
+// alert (14_ §9 — 허용 범위는 10/29 이슈 #33 사용자 결정)
+void parse_alert(const json& e, AlertConfig& c, std::vector<std::string>& warnings) {
+  const std::string w = "alert.";
+  if (!e.is_object()) throw ConfigErr("alert: not an object");
+  warn_unknown(e, {"ues_max", "update_min_ms", "ue_evidence_max"}, w, warnings);
+  read_int_in(e, "ues_max", c.ues_max, 1, 1000, w);
+  read_int_in(e, "update_min_ms", c.update_min_ms, 100, 60000, w);
+  read_int_in(e, "ue_evidence_max", c.ue_evidence_max, 0, 1000, w);
+}
+
+// 룰 설정 객체 하나를 그 룰의 파서로 해석한다 (Q-46, 결정 J4)
+template <typename T, typename Parse>
+RuleConfigResult<T> parse_rule(std::string_view json_text, const char* id, Parse parse) {
+  RuleConfigResult<T> r;
+  json j = json::parse(json_text.begin(), json_text.end(), nullptr, false);
+  if (j.is_discarded() || !j.is_object()) {
+    r.error = std::string("config: rules.") + id + ": not an object";
+    return r;
+  }
+  try {
+    parse(j, r.config, r.warnings);
+    r.ok = true;
+  } catch (const ConfigErr& e) {
+    r.error = std::string("config: ") + e.what();
+  }
+  return r;
+}
+
 // evidence (3_ §7.1 파라미터 표)
 void parse_evidence(const json& e, EvidenceConfig& c, std::vector<std::string>& warnings) {
   const std::string w = "evidence.";
@@ -121,7 +219,7 @@ ConfigResult parse_config(std::string_view json_text) {
     return r;
   }
   try {
-    warn_unknown(j, {"socket_path", "max_line_bytes", "rules", "evidence"}, "", r.warnings);
+    warn_unknown(j, {"socket_path", "max_line_bytes", "rules", "evidence", "ue_table", "alert"}, "", r.warnings);
     read_string(j, "socket_path", r.config.socket_path, "");
     read_int(j, "max_line_bytes", r.config.max_line_bytes, 1, "");
     // rules: 룰 ID → 설정 객체. 여기서는 객체인지만 보고 JSON 그대로 넘긴다 — 해석은 룰별 파서, 모르는 룰 ID는
@@ -134,6 +232,8 @@ ConfigResult parse_config(std::string_view json_text) {
       }
     }
     if (const json* e = find(j, "evidence")) parse_evidence(*e, r.config.evidence, r.warnings);
+    if (const json* u = find(j, "ue_table")) parse_ue_table(*u, r.config.ue_table, r.warnings);
+    if (const json* a = find(j, "alert")) parse_alert(*a, r.config.alert, r.warnings);
     r.ok = true;
   } catch (const ConfigErr& e) {
     r.error = std::string("config: ") + e.what();
@@ -141,21 +241,21 @@ ConfigResult parse_config(std::string_view json_text) {
   return r;
 }
 
-// 룰별 파서 (Q-46, 결정 J4): rules."L3-01-V"의 객체를 받는다
+// 룰별 파서 (Q-46, 결정 J4): rules.<룰 ID>의 객체를 받는다
 BtsVariantConfigResult parse_bts_variant_config(std::string_view json_text) {
-  BtsVariantConfigResult r;
-  json j = json::parse(json_text.begin(), json_text.end(), nullptr, false);
-  if (j.is_discarded() || !j.is_object()) {
-    r.error = "config: rules.L3-01-V: not an object";
-    return r;
-  }
-  try {
-    parse_bts(j, r.config, r.warnings);
-    r.ok = true;
-  } catch (const ConfigErr& e) {
-    r.error = std::string("config: ") + e.what();
-  }
-  return r;
+  return parse_rule<BtsVariantConfig>(json_text, "L3-01-V", parse_bts);
+}
+
+RuleConfigResult<BlindDosConfig> parse_blind_dos_config(std::string_view json_text) {
+  return parse_rule<BlindDosConfig>(json_text, "L3-20", parse_blind_dos);
+}
+
+RuleConfigResult<AuthStallConfig> parse_auth_stall_config(std::string_view json_text) {
+  return parse_rule<AuthStallConfig>(json_text, "L3-01-O", parse_auth_stall);
+}
+
+RuleConfigResult<UplinkDosConfig> parse_uplink_dos_config(std::string_view json_text) {
+  return parse_rule<UplinkDosConfig>(json_text, "L3-21", parse_uplink_dos);
 }
 
 }  // namespace detect
