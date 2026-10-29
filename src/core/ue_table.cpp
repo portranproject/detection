@@ -6,6 +6,7 @@
 #include <limits>
 #include <tuple>
 #include <utility>
+#include <vector>
 
 namespace detect {
 
@@ -18,6 +19,7 @@ const char* to_string(CloseReason r) {
     case CloseReason::DuReset: return "du_reset";
     case CloseReason::Evicted: return "evicted";
     case CloseReason::SessionReset: return "session_reset";
+    case CloseReason::GhostPurge: return "ghost_purge";
   }
   return "?";
 }
@@ -185,9 +187,10 @@ UeTable::Applied UeTable::apply(const UeEvt& e, int64_t seq, DeadlineQueue& dq) 
     it = entries_.end();
   }
   if (it == entries_.end()) {
-    // 상한 (14_ §4.4): 꽉 찼으면 밀어낼 순서대로 닫는다. 밀려남 자체가 이상 신호라 진단·셀별 수를 남긴다
+    // 상한 (14_ §4.4): 꽉 찼으면 밀어낼 순서대로 닫는다(보호 무리는 뒤로 — pick_victim). 밀려남 자체가 이상 신호라
+    // 진단·셀별 수를 남긴다
     while (!entries_.empty() && entries_.size() >= cfg_.max_ues) {
-      Iter victim = pick_victim();
+      Iter victim = pick_victim(e.t_ms, dq);
       const UeState& v = victim->second.st;
       const int64_t n = ++counts_[v.key.cell_id].evicted;
       a.diags.push_back(Diag{DiagKind::UeEvicted, v.key.cell_id, seq,
@@ -206,6 +209,7 @@ UeTable::Applied UeTable::apply(const UeEvt& e, int64_t seq, DeadlineQueue& dq) 
   a.before = s;  // ③
   const std::optional<uint64_t> old_s = a.opened ? std::nullopt : s.s_tmsi;
   const std::optional<uint64_t> old_p1 = a.opened ? std::nullopt : part1_of(s);
+  if (!a.opened) rank_erase(s);  // 밀어내기 색인 — 상태·t_last가 바뀌므로 갱신 뒤 다시 넣는다 (14_ §4.4)
 
   // ④ 늦은 줄 (2_ §6.5, 14_ §4.3): 그 셀 워터마크(시계)보다 이른 t_ms — 이력에는 넣고, 이미 내린 판정은 룰이 바꾸지 않는다
   if (const std::optional<int64_t> clock = dq.clock(e.cell_id); clock && e.t_ms < *clock) {
@@ -220,6 +224,7 @@ UeTable::Applied UeTable::apply(const UeEvt& e, int64_t seq, DeadlineQueue& dq) 
   ++s.cnt[{e.proto, e.msg}];
   s.last = LastMsg{e.proto, e.dir, e.msg, e.t_ms, seq};
   s.t_last = std::max(s.t_last, e.t_ms);
+  rank_insert(s);
   // 최근 메시지 N개 고리 버퍼 — 원본 줄을 복사해 둔다 (14_ §2.3, 증거용)
   if (cfg_.recent_n > 0) {
     std::deque<RecentLine>& r = it->second.recent;
@@ -285,9 +290,58 @@ std::optional<UeTable::Closed> UeTable::on_deadline(const Deadline& d, DeadlineQ
 void UeTable::mark_loss(int64_t cell, int64_t t_loss) {
   for (auto it = entries_.lower_bound(UeKey{cell, std::numeric_limits<int64_t>::min()});
        it != entries_.end() && it->first.cell_id == cell; ++it) {
-    it->second.st.loss = true;
-    it->second.st.t_loss = t_loss;
+    UeState& s = it->second.st;
+    rank_erase(s);  // loss가 붙으면 무리 ③ → ②로 옮겨질 수 있다 (14_ §4.4)
+    s.loss = true;
+    s.t_loss = t_loss;
+    rank_insert(s);
   }
+}
+
+// 유령 정리 (14_ §4.2 ghost_purge, 10/29 Q-56 해결 — 이슈 #44). 헤더 주석 참고. INACTIVE 항목은 RRC 연결 수에 들지 않으므로
+// C에 세지 않는다. 여유 ghost_margin은 ConnMax가 창당 표본 1개라(2_ §4.3, Q-04) 표본 뒤 붙은 UE와 해제 대기(RELEASING)
+// 몇 개를 덮기 위한 것이다. 조건이 깨지면 초과 시작 시각을 지워 다시 잰다
+UeTable::Purged UeTable::purge_ghosts(const Kpm2& k, int64_t seq, const DeadlineQueue& dq) {
+  Purged out;
+  const int64_t cell = k.cell_id;
+  const std::optional<int64_t> m = k.conn_max ? k.conn_max : k.ue_ctx_max;
+  if (!m) {
+    ghost_over_since_.erase(cell);
+    return out;
+  }
+  const int64_t threshold = static_cast<int64_t>(cfg_.ghost_k * static_cast<double>(*m)) + cfg_.ghost_margin;
+  std::vector<Iter> connected;
+  for (auto it = entries_.lower_bound(UeKey{cell, std::numeric_limits<int64_t>::min()});
+       it != entries_.end() && it->first.cell_id == cell; ++it) {
+    const RrcState r = it->second.st.rrc;
+    if (r == RrcState::Connected || r == RrcState::Releasing) connected.push_back(it);
+  }
+  const int64_t c = static_cast<int64_t>(connected.size());
+  if (c <= threshold) {
+    ghost_over_since_.erase(cell);
+    return out;
+  }
+  auto since = ghost_over_since_.find(cell);
+  if (since == ghost_over_since_.end()) since = ghost_over_since_.emplace(cell, k.t_start_ms).first;
+  if (k.t_end_ms - since->second < cfg_.ghost_hold_ms) return out;
+
+  // 룰 몫 마감이 없는 것 중 t_last 오래된 순(같으면 uid)으로 c − 문턱 개
+  std::vector<Iter> candidates;
+  for (Iter it : connected)
+    if (!dq.has_rule_deadline(it->second.st.key, it->second.st.uid)) candidates.push_back(it);
+  std::sort(candidates.begin(), candidates.end(), [](Iter a, Iter b) {
+    return std::make_pair(a->second.st.t_last, a->second.st.uid) < std::make_pair(b->second.st.t_last, b->second.st.uid);
+  });
+  const std::size_t n = std::min(candidates.size(), static_cast<std::size_t>(c - threshold));
+  for (std::size_t i = 0; i < n; ++i) out.closed.push_back(close(candidates[i], CloseReason::GhostPurge, k.t_end_ms, nullptr));
+  if (n > 0) {
+    counts_[cell].ghost_purged += static_cast<int64_t>(n);
+    out.diags.push_back(Diag{DiagKind::GhostPurge, cell, seq,
+                             "ghost purge: closed " + std::to_string(n) + " of " + std::to_string(c) +
+                                 " connected entries (cell rrc connections " + std::to_string(*m) + ", threshold " +
+                                 std::to_string(threshold) + ")"});
+  }
+  return out;
 }
 
 // f1_evt (14_ §4.2 du_reset, 2_ §6.7): cells(null = 모든 셀)의 열린 항목, du_ue_ids가 있으면 그 UE만 닫는다.
@@ -310,6 +364,8 @@ void UeTable::clear() {
   by_s_tmsi_.clear();
   by_part1_.clear();
   counts_.clear();
+  for (auto& r : ranks_) r.clear();
+  ghost_over_since_.clear();
   next_uid_ = 1;
   kept_.clear();
   kept_order_.clear();
@@ -345,6 +401,7 @@ UeTable::CellCounts UeTable::counts(int64_t cell) const {
 // 최근 메시지를 보관한다 — 경보를 낼 때 걸린 UE가 이미 닫혀 있을 수 있어서다(14_ §2.3). du_reset·evicted는 룰도
 // 대기 표시를 지우므로(15_ §1) 보관하지 않는다
 UeTable::Closed UeTable::close(Iter it, CloseReason reason, int64_t t, DeadlineQueue* dq) {
+  rank_erase(it->second.st);
   Closed c{std::move(it->second.st), reason};
   if (c.last.s_tmsi) index_erase(by_s_tmsi_, *c.last.s_tmsi, c.last.key);
   if (const std::optional<uint64_t> p1 = part1_of(c.last)) index_erase(by_part1_, *p1, c.last.key);
@@ -378,18 +435,42 @@ void UeTable::keep_recent(const UeState& last, std::deque<RecentLine> recent, in
   dq.add(std::move(d));
 }
 
-// 밀어낼 순서 (14_ §4.4): ① rrc가 CONNECTED가 아닌 항목 → ② CONNECTED이지만 불확실한 항목 → ③ 나머지.
-// 같은 무리 안에서는 t_last가 가장 오래된 것부터(같으면 먼저 연 것). t_last만 보면 조용히 데이터만 쓰는 정상 연결
-// (Blind DoS 피해자 후보)이 먼저 밀려나기 때문이다. 꽉 찼을 때만 훑는다 — 상한이 4,096이라 비용이 작다
-UeTable::Iter UeTable::pick_victim() {
-  auto rank = [](const UeState& s) { return s.rrc != RrcState::Connected ? 0 : (s.uncertain() ? 1 : 2); };
-  Iter best = entries_.begin();
-  for (Iter it = std::next(entries_.begin()); it != entries_.end(); ++it) {
-    const UeState& x = it->second.st;
-    const UeState& b = best->second.st;
-    if (std::make_tuple(rank(x), x.t_last, x.uid) < std::make_tuple(rank(b), b.t_last, b.uid)) best = it;
+// 밀어낼 순서 (14_ §4.4, 보호 무리는 10/29 Q-56 해결 — 이슈 #44): 먼저 보호 무리 — 룰 몫 마감이 걸렸거나 마지막 줄이
+// evict_protect_ms 안인 항목 — 는 맨 뒤로 보낸다. 판정 중이거나 막 시작한 항목이 먼저 밀려나지 않게 하기 위해서다(대기
+// 표시는 AuthenticationRequest 등에서야 생기므로 '최근 줄' 조건이 함께 필요하다 — 16_ §3.1-1). 그 밖에서 ① rrc가
+// CONNECTED가 아닌 항목 → ② CONNECTED이지만 불확실한 항목 → ③ 나머지, 같은 무리 안에서는 t_last가 가장 오래된 것부터
+// (같으면 먼저 연 것). t_last만 보면 조용히 데이터만 쓰는 정상 연결(Blind DoS 피해자 후보)이 먼저 밀려나기 때문이다.
+// 보호 무리만 남으면 **룰 몫 마감이 없는 항목 중 t_last가 가장 오래된 것**(무리 순서와 무관), 그것도 없으면 가장 오래된 것 —
+// 무리 순서대로 고르면 ①(막 연 새 항목)이 또 먼저 밀리고, 밀려난 UE의 다음 줄이 mid_join으로 다시 열려 또 밀어내는 연쇄가
+// 이어진다(이슈 #44 구현 중 확인 — 20/s 공격, 상한 100에서 새 판정이 영원히 0건). 후보는 무리별 (t_last, uid) 색인에서
+// 오래된 순으로 찾는다
+int UeTable::rank_of(const UeState& s) { return s.rrc != RrcState::Connected ? 0 : (s.uncertain() ? 1 : 2); }
+
+void UeTable::rank_insert(const UeState& s) { ranks_[rank_of(s)].insert(RankKey{s.t_last, s.uid, s.key}); }
+
+void UeTable::rank_erase(const UeState& s) { ranks_[rank_of(s)].erase(RankKey{s.t_last, s.uid, s.key}); }
+
+UeTable::Iter UeTable::pick_victim(int64_t now, const DeadlineQueue& dq) {
+  const int64_t protect_from = now - cfg_.evict_protect_ms;
+  auto older = [](const UeState& a, const UeState& b) {
+    return std::make_pair(a.t_last, a.uid) < std::make_pair(b.t_last, b.uid);
+  };
+  Iter oldest_free = entries_.end();  // 보호 무리만 남을 때의 예비 — 룰 몫 마감이 없는 것 중 가장 오래된 것
+  Iter oldest_any = entries_.end();   // 전부 마감이 걸렸을 때 — 가장 오래된 것
+  for (const auto& rank : ranks_) {
+    for (const RankKey& rk : rank) {
+      Iter it = entries_.find(std::get<2>(rk));
+      const UeState& s = it->second.st;
+      const bool waiting = dq.has_rule_deadline(s.key, s.uid);
+      if (s.t_last < protect_from && !waiting) return it;  // 보호 무리 밖 — 무리 ①→②→③, 오래된 순
+      if (oldest_any == entries_.end() || older(s, oldest_any->second.st)) oldest_any = it;
+      if (!waiting) {
+        if (oldest_free == entries_.end() || older(s, oldest_free->second.st)) oldest_free = it;
+        break;  // 이 무리에서 마감 없는 가장 오래된 것은 찾았다 — 보호 밖 후보는 t_last가 더 작아야 하므로 뒤에는 없다
+      }
+    }
   }
-  return best;
+  return oldest_free != entries_.end() ? oldest_free : oldest_any;
 }
 
 // S-TMSI 색인 갱신 (14_ §3.1): 48비트 색인에는 48비트를 아는 항목만, Part1 색인에는 Part1만 받은 항목과 48비트를 아는

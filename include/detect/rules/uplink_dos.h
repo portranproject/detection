@@ -80,6 +80,10 @@ class UplinkDosRule : public UeRule {
     int64_t branch2_ues = 0;
     int64_t held_open = 0;                 // 경보가 열린 뒤 보류된 판정 수
     std::deque<int64_t> held_times;        // 보류 시각 — raise의 held는 직전 clear_quiet_ms 동안 (이동 창)
+    // 상태표 밀어내기 (15_ §5.5·§5.6, 14_ §6.3 — Q-56 해결, 이슈 #44): 직전 clear_quiet_ms 동안 밀어내기가 있으면 풀지 않는다
+    int64_t evicted_seen = 0;
+    int64_t evicted_open = 0;
+    std::deque<int64_t> evict_times;
   };
 
   bool is_failure(const UeEvt& evt) const;
@@ -91,6 +95,8 @@ class UplinkDosRule : public UeRule {
   void decorate(std::size_t from, RuleOutput& out);
   int64_t in_window(const CellState& c, bool msgs) const;
   int64_t held_window(CellState& c, int64_t now) const;
+  int64_t evicted_window(CellState& c, int64_t now) const;
+  void note_evictions(CellState& c, int64_t cell, int64_t t, const UeRuleCtx& ctx);
 
   UplinkDosConfig cfg_;
   AlertConfig alert_;

@@ -1,6 +1,7 @@
 {
   "socket_path": "/run/ran-detect/kpm.sock",
   "max_line_bytes": 65536,
+  "max_cells": 64,
   "rules": {
     "L3-01-V": {
       "window_ms": 1000, "a_min": 5, "theta": 0.5, "f_abs": 10, "k": 3,
@@ -19,7 +20,9 @@
       "reg_repeat": 3, "clear_quiet_ms": 60000, "ignore_causes": []
     }
   },
-  "ue_table": { "max_ues": 4096, "recent_n": 16, "stale_setup_ms": 30000, "closed_recent_max": 1024 },
+  "ue_table": { "max_ues": 4096, "recent_n": 16, "stale_setup_ms": 30000, "closed_recent_max": 1024,
+                "ghost_k": 2, "ghost_margin": 16, "ghost_hold_ms": 5000, "evict_protect_ms": 5000,
+                "dl_unobserved_ms": 5000, "recent_keep_margin_ms": 1000 },
   "alert": { "ues_max": 50, "update_min_ms": 1000, "ue_evidence_max": 50 },
   "evidence": {
     "mode": "full", "pre_slots": null, "post_slots": 10,

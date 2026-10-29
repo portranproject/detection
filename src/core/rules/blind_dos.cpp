@@ -120,7 +120,7 @@ void BlindDosRule::mark_victim(const UeId& peer) {
 //  - 짝이 released로 닫히면 피해 확정. 닫힌 짝에는 더 줄이 없으므로 역색인에서 뺀다
 //  - n이 마감 전에 released·reused·stale_setup으로 닫히면 표시를 남기고 닫힐 때 상태를 복사한다 — 마감 전에 닫혔다는 것은
 //    수락 없이 끝났다는 뜻이고, 판정을 마감까지 미루는 것은 닫힌 줄이 든 창의 로스 여부가 그 창 kpm2가 와야 정해지기 때문이다
-//  - du_reset·evicted·superseded·session_reset이면 표시를 지운다
+//  - du_reset·evicted·ghost_purge·superseded·session_reset이면 표시를 지운다(14_ §1.1 — ghost_purge는 이슈 #44)
 void BlindDosRule::on_ue_close(const UeState& last, CloseReason reason, int64_t t, const UeRuleCtx&, RuleOutput&) {
   const UeId id{last.key, last.uid};
   if (reason == CloseReason::Released) mark_victim(id);
@@ -169,6 +169,7 @@ void BlindDosRule::hit(const Mark& m, const UeState& n, int64_t t_hit, int64_t n
     c.peer_uncertain = 0;
     c.victims.clear();
     c.held_open = 0;
+    c.evicted_open = 0;
   }
   ++(m.concurrent ? c.concurrent : c.peer_uncertain);
   const int64_t repeat = ++c.victims[m.s_tmsi];
@@ -207,6 +208,7 @@ void BlindDosRule::decorate(std::size_t from, RuleOutput& out) {
     e.values["peer_uncertain"] = c.peer_uncertain;
     e.values["victims"] = static_cast<int64_t>(c.victims.size());
     e.values["held"] = raise ? held_window(c, e.t) : c.held_open;
+    e.values["evicted"] = raise ? evicted_window(c, e.t) : c.evicted_open;  // 15_ §2.6 (이슈 #44)
     if (!raise || e.ues.empty()) continue;
 
     const AlertUe& u = e.ues.front();
@@ -239,16 +241,35 @@ int64_t BlindDosRule::held_window(CellState& c, int64_t now) const {
 
 // 셀 kpm2마다 (15_ §2.5): input_lost면 진행 중 경보를 END, 모아 둔 UE를 UPDATE 간격에 맞춰 내고, 마지막 걸림 뒤
 // clear_quiet_ms가 지나면 CLEAR — 걸린 연결이 아직 열려 있어도 푼다(해제 줄을 놓친 연결 때문에 경보가 안 풀리는 일을 막는다).
-// 보류는 걸림으로 세지 않으므로 해제를 막지 않는다 (15_ §1)
-void BlindDosRule::on_cell_tick(int64_t cell, const Kpm2& k, const CellLoss&, bool input_lost, const UeRuleCtx&,
+// 보류는 걸림으로 세지 않으므로 해제를 막지 않는다 (15_ §1). 직전 clear_quiet_ms 동안 그 셀에 상태표 밀어내기가 있었으면
+// '조용함'으로 보지 않고 풀지 않는다 — 밀려난 UE는 판정되지 않아 조용해 보이기 때문이다 (Q-56 해결, 이슈 #44)
+void BlindDosRule::on_cell_tick(int64_t cell, const Kpm2& k, const CellLoss&, bool input_lost, const UeRuleCtx& ctx,
                                 RuleOutput& out) {
   const int64_t t = k.t_end_ms;
+  CellState& c = cells_[cell];
+  note_evictions(c, cell, t, ctx);
   const std::size_t from = out.alerts.size();
   if (input_lost) book_.end(cell, t, "input_lost", out.alerts);
   book_.flush(cell, t, out.alerts);
-  if (book_.open(cell) && t - cells_[cell].t_hit_last >= cfg_.clear_quiet_ms) book_.clear(cell, t, out.alerts);
+  if (book_.open(cell) && t - c.t_hit_last >= cfg_.clear_quiet_ms && evicted_window(c, t) == 0)
+    book_.clear(cell, t, out.alerts);
   decorate(from, out);
-  if (auto it = cells_.find(cell); it != cells_.end()) held_window(it->second, t);
+  held_window(c, t);
+}
+
+// 상태표 셀별 누적 evicted(14_ §6.3)의 증가분을 이 칸 시각으로 적는다 — 경보가 열려 있으면 evicted_open도
+void BlindDosRule::note_evictions(CellState& c, int64_t cell, int64_t t, const UeRuleCtx& ctx) {
+  const int64_t total = ctx.table.counts(cell).evicted;
+  for (; c.evicted_seen < total; ++c.evicted_seen) {
+    c.evict_times.push_back(t);
+    if (book_.open(cell)) ++c.evicted_open;
+  }
+}
+
+// 직전 clear_quiet_ms 동안의 밀어내기 수 (이동 창) — raise의 values.evicted와 해제 보류 기준
+int64_t BlindDosRule::evicted_window(CellState& c, int64_t now) const {
+  while (!c.evict_times.empty() && c.evict_times.front() <= now - cfg_.clear_quiet_ms) c.evict_times.pop_front();
+  return static_cast<int64_t>(c.evict_times.size());
 }
 
 // 새 세션 (14_ §7 hello): 진행 중 경보를 END(session_reset)로 끝내고 대기 표시·누적값을 모두 버린다

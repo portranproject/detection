@@ -79,6 +79,31 @@ TEST(DeadlineQueue, LossRecordAndHeld) {
   EXPECT_FALSE(q.loss_end(2, Dir::UL));
 }
 
+// 룰 몫 마감 색인 (14_ §4.4·§4.2 — 이슈 #44): 룰 몫 마감이 걸린 (키, uid)만 참, 꺼내면 거짓. 표 몫(kTableOwner)은 세지 않는다.
+// 같은 (키, uid)에 둘이 걸리면 둘 다 꺼내야 거짓
+TEST(DeadlineQueue, RuleDeadlineIndex) {
+  DeadlineQueue q;
+  Deadline table = at(100, 1, "stale_setup");
+  table.owner = DeadlineQueue::kTableOwner;
+  q.add(table);
+  EXPECT_FALSE(q.has_rule_deadline(UeKey{1, 1}, 0));
+  q.add(at(200, 1, "auth_resp"));  // owner 0 = 룰, uid 0
+  q.add(at(300, 1, "accept"));
+  EXPECT_TRUE(q.has_rule_deadline(UeKey{1, 1}, 0));
+  EXPECT_FALSE(q.has_rule_deadline(UeKey{1, 1}, 1));  // 다른 uid
+  EXPECT_FALSE(q.has_rule_deadline(UeKey{1, 2}, 0));
+  q.set_clock(1, 200);
+  EXPECT_EQ(q.pop_due(1)->tag, "stale_setup");
+  EXPECT_EQ(q.pop_due(1)->tag, "auth_resp");
+  EXPECT_TRUE(q.has_rule_deadline(UeKey{1, 1}, 0));  // accept가 남았다
+  q.set_clock(1, 300);
+  EXPECT_EQ(q.pop_due(1)->tag, "accept");
+  EXPECT_FALSE(q.has_rule_deadline(UeKey{1, 1}, 0));
+  q.add(at(400, 1, "x"));
+  q.clear();
+  EXPECT_FALSE(q.has_rule_deadline(UeKey{1, 1}, 0));
+}
+
 TEST(DeadlineQueue, ClearEmptiesEverything) {
   DeadlineQueue q;
   q.add(at(100, 1, "a"));

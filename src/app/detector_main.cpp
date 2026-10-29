@@ -168,6 +168,7 @@ int main(int argc, char** argv) {
   scfg.h_hold_ms = bts.h_hold_ms;              // 입력 건전성은 series가 (Q-46, 결정 J5)
   scfg.missing_key_slots = bts.missing_key_slots;
   scfg.pre_slots = cfg.evidence.pre_slots;
+  scfg.max_cells = cfg.max_cells;              // 결정 D7 — 설정 키 max_cells (16_ W-24)
   Engine engine(scfg, cfg.max_line_bytes, cfg.ue_table);
   engine.add_rule(std::make_unique<BtsVariantRule>(bts));
   // 2단계 룰 (15_). hello에 ue_evt 표시가 있을 때만 돈다(2_ §6.5). 경보 묶음·UE 증거는 alert.*를 함께 쓴다 (14_ §9)

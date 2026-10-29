@@ -49,6 +49,17 @@ void read_int_in(const json& obj, const char* key, T& out, int64_t min, int64_t 
   out = static_cast<T>(x);
 }
 
+// 허용 범위 [min, max]가 있는 실수 (ue_table.ghost_k — 14_ §9)
+void read_real_in(const json& obj, const char* key, double& out, double min, double max, const std::string& where) {
+  const json* v = find(obj, key);
+  if (!v) return;
+  if (!v->is_number()) throw ConfigErr(where + key + ": not a number");
+  const double x = v->get<double>();
+  if (!(x >= min && x <= max))
+    throw ConfigErr(where + key + ": out of range [" + std::to_string(min) + ", " + std::to_string(max) + "]");
+  out = x;
+}
+
 void read_real(const json& obj, const char* key, double& out, double min_exclusive, const std::string& where) {
   const json* v = find(obj, key);
   if (!v) return;
@@ -148,13 +159,23 @@ void parse_uplink_dos(const json& r, UplinkDosConfig& c, std::vector<std::string
 void parse_ue_table(const json& e, UeTableConfig& c, std::vector<std::string>& warnings) {
   const std::string w = "ue_table.";
   if (!e.is_object()) throw ConfigErr("ue_table: not an object");
-  warn_unknown(e, {"max_ues", "recent_n", "stale_setup_ms", "closed_recent_max", "tomb_ms", "tomb_max"}, w, warnings);
+  warn_unknown(e,
+               {"max_ues", "recent_n", "stale_setup_ms", "closed_recent_max", "tomb_ms", "tomb_max", "ghost_k",
+                "ghost_margin", "ghost_hold_ms", "evict_protect_ms", "dl_unobserved_ms", "recent_keep_margin_ms"},
+               w, warnings);
   for (const char* k : {"tomb_ms", "tomb_max"})
     if (find(e, k)) warnings.push_back("reserved key " + w + k + " (not used)");
   read_int_in(e, "max_ues", c.max_ues, 100, 16384, w);
   read_int_in(e, "recent_n", c.recent_n, 1, 64, w);
   read_int_in(e, "stale_setup_ms", c.stale_setup_ms, 2000, 600000, w);
   read_int_in(e, "closed_recent_max", c.closed_recent_max, 0, 16384, w);
+  // 유령 정리·보호 무리·상수 대체 키 (14_ §9 — 10/29 Q-56 해결·W-24, 이슈 #44)
+  read_real_in(e, "ghost_k", c.ghost_k, 1.0, 10.0, w);
+  read_int_in(e, "ghost_margin", c.ghost_margin, 0, 4096, w);
+  read_int_in(e, "ghost_hold_ms", c.ghost_hold_ms, 0, 600000, w);
+  read_int_in(e, "evict_protect_ms", c.evict_protect_ms, 0, 600000, w);
+  read_int_in(e, "dl_unobserved_ms", c.dl_unobserved_ms, 1000, 600000, w);
+  read_int_in(e, "recent_keep_margin_ms", c.recent_keep_margin_ms, 0, 60000, w);
 }
 
 // alert (14_ §9 — 허용 범위는 10/29 이슈 #33 사용자 결정)
@@ -219,9 +240,11 @@ ConfigResult parse_config(std::string_view json_text) {
     return r;
   }
   try {
-    warn_unknown(j, {"socket_path", "max_line_bytes", "rules", "evidence", "ue_table", "alert"}, "", r.warnings);
+    warn_unknown(j, {"socket_path", "max_line_bytes", "max_cells", "rules", "evidence", "ue_table", "alert"}, "",
+                 r.warnings);
     read_string(j, "socket_path", r.config.socket_path, "");
     read_int(j, "max_line_bytes", r.config.max_line_bytes, 1, "");
+    read_int_in(j, "max_cells", r.config.max_cells, 1, 1024, "");  // 결정 D7 — 16_ W-24로 설정 키 (이슈 #44)
     // rules: 룰 ID → 설정 객체. 여기서는 객체인지만 보고 JSON 그대로 넘긴다 — 해석은 룰별 파서, 모르는 룰 ID는
     // 등록된 룰을 아는 실행 파일이 경고한다 (Q-46, 결정 J4)
     if (const json* rules = find(j, "rules")) {

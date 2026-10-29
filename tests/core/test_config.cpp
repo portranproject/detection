@@ -60,6 +60,17 @@ TEST(Config, RepoConfigFileParses) {
   EXPECT_EQ(r.config.ue_table.recent_n, ud.recent_n);
   EXPECT_EQ(r.config.ue_table.stale_setup_ms, ud.stale_setup_ms);
   EXPECT_EQ(r.config.ue_table.closed_recent_max, ud.closed_recent_max);
+  // 유령 정리·보호 무리·상수 대체 키 (14_ §9, 10/29 Q-56·W-24 — 이슈 #44)와 최상위 max_cells
+  EXPECT_DOUBLE_EQ(r.config.ue_table.ghost_k, ud.ghost_k);
+  EXPECT_EQ(r.config.ue_table.ghost_margin, ud.ghost_margin);
+  EXPECT_EQ(r.config.ue_table.ghost_hold_ms, ud.ghost_hold_ms);
+  EXPECT_EQ(r.config.ue_table.evict_protect_ms, ud.evict_protect_ms);
+  EXPECT_EQ(r.config.ue_table.dl_unobserved_ms, ud.dl_unobserved_ms);
+  EXPECT_EQ(r.config.ue_table.recent_keep_margin_ms, ud.recent_keep_margin_ms);
+  EXPECT_EQ(r.config.max_cells, d.max_cells);
+  EXPECT_EQ(ud.ghost_k, 2);
+  EXPECT_EQ(ud.evict_protect_ms, 5000);
+  EXPECT_EQ(d.max_cells, 64u);
   const AlertConfig ad;
   EXPECT_EQ(r.config.alert.ues_max, ad.ues_max);
   EXPECT_EQ(r.config.alert.update_min_ms, ad.update_min_ms);
@@ -164,6 +175,21 @@ TEST(Config, Stage2KeysRead) {
   EXPECT_EQ(r.config.alert.update_min_ms, 500);
   EXPECT_EQ(r.config.alert.ue_evidence_max, 0u);
 
+  // 이슈 #44 키: ghost_k는 실수, 나머지는 정수. max_cells는 최상위
+  ConfigResult g = parse_config(
+      R"({"max_cells":8,"ue_table":{"ghost_k":1.5,"ghost_margin":0,"ghost_hold_ms":0,"evict_protect_ms":100,)"
+      R"("dl_unobserved_ms":2000,"recent_keep_margin_ms":0}})");
+  ASSERT_TRUE(g.ok) << g.error;
+  EXPECT_TRUE(g.warnings.empty());
+  EXPECT_EQ(g.config.max_cells, 8u);
+  EXPECT_DOUBLE_EQ(g.config.ue_table.ghost_k, 1.5);
+  EXPECT_EQ(g.config.ue_table.ghost_margin, 0);
+  EXPECT_EQ(g.config.ue_table.ghost_hold_ms, 0);
+  EXPECT_EQ(g.config.ue_table.evict_protect_ms, 100);
+  EXPECT_EQ(g.config.ue_table.dl_unobserved_ms, 2000);
+  EXPECT_EQ(g.config.ue_table.recent_keep_margin_ms, 0);
+  EXPECT_DOUBLE_EQ(parse_config(R"({"ue_table":{"ghost_k":3}})").config.ue_table.ghost_k, 3.0);  // 정수도 받는다
+
   auto bl = parse_blind_dos_config(R"({"accept_wait_ms":3000,"clear_quiet_ms":30000})");
   ASSERT_TRUE(bl.ok) << bl.error;
   EXPECT_EQ(bl.config.accept_wait_ms, 3000);
@@ -198,6 +224,9 @@ TEST(Config, Stage2RangeBoundaries) {
   const std::vector<Range> ranges = {
       {"ue_table", "max_ues", 100, 16384},          {"ue_table", "recent_n", 1, 64},
       {"ue_table", "stale_setup_ms", 2000, 600000}, {"ue_table", "closed_recent_max", 0, 16384},
+      {"ue_table", "ghost_margin", 0, 4096},        {"ue_table", "ghost_hold_ms", 0, 600000},
+      {"ue_table", "evict_protect_ms", 0, 600000},  {"ue_table", "dl_unobserved_ms", 1000, 600000},
+      {"ue_table", "recent_keep_margin_ms", 0, 60000}, {"top", "max_cells", 1, 1024},
       {"alert", "ues_max", 1, 1000},                {"alert", "update_min_ms", 100, 60000},
       {"alert", "ue_evidence_max", 0, 1000},        {"L3-20", "accept_wait_ms", 100, 60000},
       {"L3-20", "clear_quiet_ms", 1000, 3600000},   {"L3-01-O", "auth_wait_ms", 100, 60000},
@@ -212,6 +241,10 @@ TEST(Config, Stage2RangeBoundaries) {
     std::string err;
     if (r.section == "ue_table" || r.section == "alert") {
       ConfigResult c = parse_config("{\"" + r.section + "\":" + obj + "}");
+      ok = c.ok;
+      err = c.error;
+    } else if (r.section == "top") {  // 최상위 키 (max_cells)
+      ConfigResult c = parse_config(obj);
       ok = c.ok;
       err = c.error;
     } else if (r.section == "L3-20") {
@@ -239,6 +272,12 @@ TEST(Config, Stage2RangeBoundaries) {
     EXPECT_NE(err.find(r.key + ": out of range"), std::string::npos) << name << ": " << err;
     EXPECT_FALSE(accepts(r, r.hi + 1)) << name;
   }
+  // ghost_k는 실수 범위 [1, 10] (14_ §9)
+  EXPECT_TRUE(parse_config(R"({"ue_table":{"ghost_k":1}})").ok);
+  EXPECT_TRUE(parse_config(R"({"ue_table":{"ghost_k":10}})").ok);
+  EXPECT_FALSE(parse_config(R"({"ue_table":{"ghost_k":0.99}})").ok);
+  EXPECT_FALSE(parse_config(R"({"ue_table":{"ghost_k":10.5}})").ok);
+  EXPECT_NE(parse_config(R"({"ue_table":{"ghost_k":0}})").error.find("ghost_k: out of range"), std::string::npos);
 }
 
 // 타입 오류 — 정수 자리의 실수·문자열·null, 객체가 아닌 ue_table·alert, max_conn은 1 이상 또는 null
@@ -248,6 +287,10 @@ TEST(Config, Stage2TypeErrors) {
   EXPECT_FALSE(parse_config(R"({"alert":{"ues_max":null}})").ok);
   EXPECT_FALSE(parse_config(R"({"ue_table":[1]})").ok);
   EXPECT_FALSE(parse_config(R"({"alert":5})").ok);
+  EXPECT_FALSE(parse_config(R"({"ue_table":{"ghost_k":"2"}})").ok);
+  EXPECT_FALSE(parse_config(R"({"ue_table":{"ghost_margin":1.5}})").ok);
+  EXPECT_FALSE(parse_config(R"({"max_cells":"64"}})").ok);
+  EXPECT_FALSE(parse_config(R"({"max_cells":0})").ok);
   EXPECT_FALSE(parse_blind_dos_config(R"({"accept_wait_ms":5000.0})").ok);
   EXPECT_FALSE(parse_auth_stall_config(R"({"max_conn":0})").ok);
   EXPECT_FALSE(parse_auth_stall_config(R"({"max_conn":"96"})").ok);

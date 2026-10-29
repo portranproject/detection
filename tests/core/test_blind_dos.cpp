@@ -42,8 +42,8 @@ std::string part1(uint64_t v) {
 // 엔진 + L3-20 (+ 증거 기록기). 시각은 kT0 기준 ms
 class Harness {
  public:
-  explicit Harness(SeriesConfig scfg = {}, bool record = false)
-      : engine(scfg, kDefaultMaxLineBytes, UeTableConfig{}), queue(100000), rec(EvidenceConfig{}, queue), record_(record) {
+  explicit Harness(SeriesConfig scfg = {}, bool record = false, UeTableConfig ue_cfg = {})
+      : engine(scfg, kDefaultMaxLineBytes, ue_cfg), queue(100000), rec(EvidenceConfig{}, queue), record_(record) {
     auto r = std::make_unique<BlindDosRule>();
     rule = r.get();
     engine.add_ue_rule(std::move(r));
@@ -213,7 +213,7 @@ TEST(BlindDos, T04ConnectedAttackHigh) {
   EXPECT_EQ(e.cond, kCondConcurrent);
   EXPECT_TRUE(e.candidates.empty());
   EXPECT_EQ(e.alert_id.rfind("S-L3-20-1-", 0), 0u);
-  EXPECT_EQ(e.values.dump(), R"({"concurrent":1,"peer_uncertain":0,"victims":1,"held":0})");
+  EXPECT_EQ(e.values.dump(), R"({"concurrent":1,"peer_uncertain":0,"victims":1,"held":0,"evicted":0})");
   EXPECT_EQ(e.params.dump(), R"({"accept_wait_ms":5000,"clear_quiet_ms":60000})");
   ASSERT_EQ(e.ues.size(), 1u);
   const AlertUe& u = e.ues[0];
@@ -360,7 +360,7 @@ TEST(BlindDos, T15RepeatedAttack) {
   EXPECT_EQ(h.alerts[2].kind, AlertEventKind::Update);
   for (int i = 0; i < 3; ++i) EXPECT_EQ(h.alerts[i].ues[0].values.at("repeat"), i + 1);
   EXPECT_EQ(h.alerts[2].ues_total, 3);
-  EXPECT_EQ(h.alerts[2].values.dump(), R"({"concurrent":3,"peer_uncertain":0,"victims":1,"held":0})");
+  EXPECT_EQ(h.alerts[2].values.dump(), R"({"concurrent":3,"peer_uncertain":0,"victims":1,"held":0,"evicted":0})");
   EXPECT_EQ(h.logs[1], "ALERT UPDATE rule=L3-20 cell=1 t=" + std::to_string(kT0 + 7100) +
                            " ues_new=1 ues_total=2 severity=medium");
 }
@@ -615,6 +615,31 @@ TEST(BlindDos, EndOnInputLostAndSessionReset) {
     EXPECT_EQ(h.alerts[1].reason, "session_reset");
     EXPECT_EQ(h.rule->waiting(), 0u);
   }
+}
+
+// L20-T28 (15_ §2.5 — Q-56 해결, 이슈 #44): RAISE 뒤 그 셀에 상태표 밀어내기가 이어지면 마지막 걸림 + clear_quiet_ms가
+// 지나도 CLEAR하지 않고, 직전 clear_quiet_ms 동안 밀어내기가 0건이 된 칸에서 푼다. 상한 100, 정상 연결 101대로 밀어내기를 만든다
+TEST(BlindDos, T28EvictionHoldsClear) {
+  UeTableConfig ue_cfg;
+  ue_cfg.max_ues = 100;
+  Harness h(SeriesConfig{}, false, ue_cfg);
+  h.victim(3, kS, 0);
+  h.tick_to(1000);
+  h.attack(7, kS, 1000);  // t₀ 1050 → 마감 6050 → RAISE 6100, 마지막 걸림 6050
+  h.tick_to(30000);
+  ASSERT_EQ(h.alerts.size(), 1u);
+  EXPECT_EQ(h.alerts[0].values.at("evicted"), 0);
+  for (int64_t i = 0; i < 101; ++i) {  // 2 + 101 > 100 → 밀어내기 3회, 다음 kpm2(t_end 30100)에서 셈
+    h.rrc(30000 + i, 1000 + i, "UL", "RRCSetupRequest", kRandom);
+    h.rrc(30000 + i, 1000 + i, "UL", "RRCSetupComplete");
+  }
+  h.tick_to(66200);  // 보류가 없었다면 6050 + 60 s → 66100에 CLEAR
+  EXPECT_EQ(h.engine.ue_table().counts(1).evicted, 3);
+  EXPECT_EQ(h.alerts.size(), 1u);
+  h.tick_to(90100);  // 밀어내기 시각 30100 + 60 s = 90100 — 그 칸에서 창 밖(≤ now − 60 s)이라 풀린다
+  ASSERT_EQ(h.alerts.size(), 2u);
+  EXPECT_EQ(h.alerts[1].kind, AlertEventKind::Clear);
+  EXPECT_EQ(h.alerts[1].t, kT0 + 90100);
 }
 
 // 증거 지평 (14_ §1.1): 수락 대기 + UPDATE 모음 지연. 상태표는 여기에 여유 1 s를 더해 닫힌 항목의 recent를 보관한다

@@ -14,6 +14,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -38,8 +39,8 @@ enum class NasState { Unknown, RegInitiated, Registered, Deregistered, SrInitiat
 enum class RrcSecState { Off, Unknown, Cmd, On, Failed };
 enum class NasSecState { None, Unknown, Auth, AuthOk, AuthFail, Cmd, On, Rejected };
 
-// 항목이 닫힌 이유 (14_ §4.2)
-enum class CloseReason { Released, Reused, StaleSetup, Superseded, DuReset, Evicted, SessionReset };
+// 항목이 닫힌 이유 (14_ §4.2). GhostPurge = 유령 정리(10/29 Q-56 해결, 이슈 #44) — 처리는 Evicted와 같다
+enum class CloseReason { Released, Reused, StaleSetup, Superseded, DuReset, Evicted, SessionReset, GhostPurge };
 const char* to_string(CloseReason r);
 
 // 보안 알고리즘 (14_ §2.2 rrc_alg·nas_alg)
@@ -128,6 +129,17 @@ class UeTable {
   std::optional<Closed> on_deadline(const Deadline& d, DeadlineQueue& dq);
   // 그 셀에 로스 창이 났다 — 열린 항목에 loss와 마지막 로스 시각 (14_ §4.3)
   void mark_loss(int64_t cell, int64_t t_loss);
+  // 유령 정리 (14_ §4.2 ghost_purge — 10/29 Q-56 해결, 이슈 #44). 그 셀 kpm2마다 로스 기록 뒤·마감 처리 앞에 부른다(§7).
+  // M = si.RRC.ConnMax(없으면 ext.UeCtxMax, 둘 다 없으면 하지 않음), C = 그 셀 열린 항목 중 rrc가 CONNECTED·RELEASING인 수.
+  // C > ⌊ghost_k × M⌋ + ghost_margin이 ghost_hold_ms 이상 이어지면 넘는 수만큼, 룰 몫 마감이 없는 항목을 t_last 오래된
+  // 것부터 ghost_purge로 닫는다(recent 보관 안 함). 해제 줄을 로스로 놓친 유령은 이것 말고는 superseded·du_reset·
+  // session_reset으로만 닫히고(du_ue_id가 재사용되지 않아 reused는 안 옴, Q-55), 표가 차면 새 항목부터 밀려 2단계가
+  // 보이지 않게 되기 때문이다(16_ §3.1-1)
+  struct Purged {
+    std::vector<Closed> closed;
+    std::vector<Diag> diags;
+  };
+  Purged purge_ghosts(const Kpm2& k, int64_t seq, const DeadlineQueue& dq);
   // f1_evt — DU·CU 재시작으로 그 셀 항목(일부 Reset이면 그 UE만)을 du_reset으로 닫는다 (14_ §4.2)
   std::vector<Closed> close_du(const F1Evt& f);
   // 새 세션 — 표·색인·셀별 수를 모두 비우고 uid를 1부터 다시 센다 (14_ §7 hello)
@@ -147,9 +159,12 @@ class UeTable {
   void set_recent_keep_ms(int64_t ms) { keep_ms_ = ms; }
   int64_t recent_keep_ms() const { return keep_ms_; }
 
+  const UeTableConfig& config() const { return cfg_; }
+
   // 셀별 수 (진단·테스트용)
   struct CellCounts {
-    int64_t evicted = 0;        // 14_ §4.4 ue_evicted
+    int64_t evicted = 0;        // 14_ §4.4 ue_evicted — 룰이 창 안 증가분을 해제 보류·values.evicted에 쓴다(§6.3)
+    int64_t ghost_purged = 0;   // 14_ §4.2 ghost_purge (이슈 #44)
     int64_t late = 0;           // 2_ §6.5 늦은 줄
     int64_t ngap_unlinked = 0;  // 14_ §7 잇지 못한 NGAP NAS
   };
@@ -175,7 +190,13 @@ class UeTable {
   // 닫기. t = 닫힌 데이터 시각, dq가 있으면 보관 대상 이유의 recent를 보관한다
   Closed close(Iter it, CloseReason reason, int64_t t, DeadlineQueue* dq);
   void keep_recent(const UeState& last, std::deque<RecentLine> recent, int64_t t, DeadlineQueue& dq);
-  Iter pick_victim();
+  // 밀어내기 후보 색인 (14_ §4.4, 이슈 #44): 무리 ①(CONNECTED 아님)·②(CONNECTED·불확실)·③(나머지)마다 (t_last, uid, 키) 순.
+  // 보호 무리(룰 몫 마감·최근 줄)는 시각·마감에 따라 바뀌므로 색인에 넣지 않고 고를 때 건너뛴다
+  using RankKey = std::tuple<int64_t, int64_t, UeKey>;
+  static int rank_of(const UeState& s);
+  void rank_insert(const UeState& s);
+  void rank_erase(const UeState& s);
+  Iter pick_victim(int64_t now, const DeadlineQueue& dq);
   void reindex(const UeKey& key, std::optional<uint64_t> old_s, std::optional<uint64_t> old_p1, const UeState& s);
   Deadline stale_deadline(const UeState& s) const;
   std::vector<const UeState*> lookup(const std::map<uint64_t, std::set<UeKey>>& index, uint64_t v) const;
@@ -190,6 +211,8 @@ class UeTable {
   std::map<uint64_t, UeId> kept_order_;  // 넣은 순서 → (키, uid)
   uint64_t next_kept_ = 0;
   int64_t keep_ms_ = 0;
+  std::set<RankKey> ranks_[3];                  // 밀어내기 후보 색인 (14_ §4.4)
+  std::map<int64_t, int64_t> ghost_over_since_;  // 셀 → CONNECTED 수가 문턱을 처음 넘은 kpm2의 t_start_ms (§4.2)
 };
 
 }  // namespace detect

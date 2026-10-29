@@ -1,4 +1,4 @@
-// UE 상태표·마감 목록·2단계 분배 테스트 — 14_ §10 공통 테스트 U-T1~U-T25.
+// UE 상태표·마감 목록·2단계 분배 테스트 — 14_ §10 공통 테스트 U-T1~U-T27(U-T26·U-T27은 이슈 #44 유령 정리·보호 무리).
 // U-T13(1단계 alert 형식 이전)은 이슈 #17에서 확인했고, U-T20(경보당 증거 UE 상한)은 UE 증거 이슈에서 한다.
 // 닫힌 S-TMSI 기억(U-T1·U-T11의 기억 표 부분)은 보류다(14_ §3.2).
 // 대기 표시가 필요한 시험은 15_ 룰의 대기 규칙(14_ §2.4·§6)을 그대로 따르는 테스트용 룰(WaitRule)로 한다
@@ -191,14 +191,18 @@ class Harness {
                 R"(,"t_ms":)" + std::to_string(kT0 + t) + R"(,"msg":")" + msg + R"(","cells":)" + cells +
                 (du_ue_ids.empty() ? "" : R"(,"du_ue_ids":)" + du_ue_ids) + "}");
   }
-  // kpm2 한 칸 [t, t+100) — 그 셀 시계를 t+100으로 올린다. lost = ue_evt_lost 값(빈 문자열이면 키 없음)
+  // kpm2 한 칸 [t, t+100) — 그 셀 시계를 t+100으로 올린다. lost = ue_evt_lost 값(빈 문자열이면 키 없음).
+  // conn_max(cell, v)를 두면 si.RRC.ConnMax로 실린다 (유령 정리 U-T26, 이슈 #44)
   EngineOutput kpm(int64_t t, const std::string& lost = "[]", int64_t cell = 1, const std::string& cc = kCc) {
     next_t_[cell] = t + 100;
+    const auto cm = conn_max_.find(cell);
     return feed(R"({"type":"kpm2","ver":1,"session":")" + session_ + R"(","seq":)" + std::to_string(++seq_) +
                 R"(,"cell_id":)" + std::to_string(cell) + R"(,"t_start_ms":)" + std::to_string(kT0 + t) +
                 R"(,"t_end_ms":)" + std::to_string(kT0 + t + 100) + (cc.empty() ? "" : R"(,"cc":)" + cc) +
+                (cm == conn_max_.end() ? "" : R"(,"si":{"RRC.ConnMax":)" + std::to_string(cm->second) + "}") +
                 (lost.empty() ? "" : R"(,"ue_evt_lost":)" + lost) + "}");
   }
+  void conn_max(int64_t cell, int64_t v) { conn_max_[cell] = v; }
   // 그 셀 시계를 끊김 없이 t까지 올린다 (100 ms 칸, ue_evt_lost [])
   void tick_to(int64_t t, int64_t cell = 1) {
     while (next_t_[cell] < t) kpm(next_t_[cell], "[]", cell);
@@ -234,7 +238,14 @@ class Harness {
   std::string session_;
   int64_t seq_ = 0;
   std::map<int64_t, int64_t> next_t_;
+  std::map<int64_t, int64_t> conn_max_;
 };
+
+// UE du가 CONNECTED로 붙는다 (RRCSetupRequest + RRCSetupComplete, 같은 시각)
+void connect(Harness& h, int64_t t, int64_t du) {
+  h.rrc(t, du, "UL", "RRCSetupRequest");
+  h.rrc(t, du, "UL", "RRCSetupComplete");
+}
 
 }  // namespace
 
@@ -625,10 +636,12 @@ TEST(UeTable, UT18F1EvtDuReset) {
   EXPECT_TRUE(h.ue_state(80, 2));
 }
 
-// U-T19: 상한 초과 — 밀어낼 순서는 CONNECTED 아님 → CONNECTED지만 불확실 → 나머지, 같은 무리 안은 t_last 순 (14_ §4.4)
+// U-T19: 상한 초과 — 밀어낼 순서는 CONNECTED 아님 → CONNECTED지만 불확실 → 나머지, 같은 무리 안은 t_last 순 (14_ §4.4).
+// 무리 순서는 보호 무리 밖에서 적용되므로 '최근 줄' 보호를 끈다(evict_protect_ms 0, 이슈 #44) — 보호 무리의 순서는 U-T27
 TEST(UeTable, UT19EvictionOrder) {
   UeTableConfig cfg;
   cfg.max_ues = 3;
+  cfg.evict_protect_ms = 0;
   Harness h(cfg);
   h.rrc(0, 1, "UL", "RRCSetupRequest");
   h.rrc(0, 1, "UL", "RRCSetupComplete");   // CONNECTED·확실 — 가장 오래됨
@@ -806,4 +819,102 @@ TEST(UeTable, CellTickLossAndInputLost) {
   for (const auto& x : g.rule->ticks) lost += std::get<3>(x) ? 1 : 0;
   EXPECT_EQ(lost, 1);
   EXPECT_TRUE(std::get<3>(g.rule->ticks.back()));
+}
+
+// U-T26 (14_ §4.2 ghost_purge — 10/29 Q-56 해결, 이슈 #44): 해제 줄을 잃은 CONNECTED 유령 40개 + 정상 CONNECTED 5개가 열려 있고
+// 셀 RRC 연결 수(si.RRC.ConnMax) 5가 ghost_hold_ms(5 s) 이어지면 초과분 45 − (2 × 5 + 16) = 19개를 t_last 오래된 순으로 닫는다.
+// 룰 몫 마감이 걸린 항목(UE 1)은 건너뛰고, 정상 5개는 최근이라 남는다. si·ext가 둘 다 없으면 정리하지 않는다
+TEST(UeTable, UT26GhostPurge) {
+  Harness h;
+  for (int64_t du = 1; du <= 40; ++du) connect(h, du, du);          // 유령 — t_last 1..40
+  for (int64_t du = 41; du <= 45; ++du) connect(h, 100 + du, du);   // 정상 — t_last 141..145
+  h.conn_max(1, 5);
+  h.tick_to(4000);  // 첫 칸 [0,100)부터 45 > 2 × 5 + 16 = 26 — 초과 시작 since = 0
+  h.nas(4000, 1, "DL", "AuthenticationRequest");  // UE 1: 룰 몫 마감 6000 → 정리 때 보호
+  h.tick_to(4900);  // 마지막 칸 t_end 4900 − 0 < 5000 — 아직
+  EXPECT_EQ(h.engine.ue_table().size(), 45u);
+  EXPECT_EQ(h.count(DiagKind::GhostPurge), 0);
+  h.kpm(4900);  // t_end 5000 − since 0 = 5000 ≥ ghost_hold_ms → 정리
+  EXPECT_EQ(h.engine.ue_table().size(), 26u);
+  EXPECT_EQ(h.engine.ue_table().counts(1).ghost_purged, 19);
+  EXPECT_EQ(h.count(DiagKind::GhostPurge), 1);
+  EXPECT_TRUE(h.ue_state(1));  // 마감이 걸려 보호
+  for (int64_t du = 2; du <= 20; ++du) EXPECT_FALSE(h.ue_state(du)) << du;
+  for (int64_t du = 21; du <= 45; ++du) EXPECT_TRUE(h.ue_state(du)) << du;
+  EXPECT_TRUE(h.logged("close 1/2/2 ghost_purge"));
+  EXPECT_TRUE(h.logged("close 1/20/20 ghost_purge"));
+  EXPECT_EQ(h.rule->marks.size(), 1u);  // UE 1의 대기 표시 그대로
+  h.kpm(5000);  // 26 ≤ 26 — 더 닫지 않는다
+  EXPECT_EQ(h.engine.ue_table().size(), 26u);
+  EXPECT_EQ(h.count(DiagKind::GhostPurge), 1);
+  {
+    Harness g;  // si·ext 없음 → 정리하지 않는다
+    for (int64_t du = 1; du <= 45; ++du) connect(g, du, du);
+    g.tick_to(12000);
+    EXPECT_EQ(g.engine.ue_table().size(), 45u);
+    EXPECT_EQ(g.count(DiagKind::GhostPurge), 0);
+  }
+}
+
+// U-T27 (14_ §4.4 보호 무리 — 10/29 Q-56 해결, 이슈 #44): 상한 100이 CONNECTED 항목으로 찬 상태에서 새 RRCSetupRequest와
+// 이어지는 AuthenticationRequest(룰 몫 마감) — 새 항목(최근 줄)·마감 걸린 항목은 밀리지 않고 보호 무리 밖의 가장 오래된
+// CONNECTED가 밀린다. 보호 무리만 남으면 룰 몫 마감이 없는 것 중 t_last가 가장 오래된 것이 밀린다(무리 순서와 무관)
+TEST(UeTable, UT27EvictionProtectsRecentAndWaiting) {
+  {
+    UeTableConfig cfg;
+    cfg.max_ues = 100;
+    Harness h(cfg);
+    for (int64_t du = 1; du <= 100; ++du) connect(h, du, du);  // t_last 1..100 — 6 s 뒤에는 모두 보호 밖
+    h.tick_to(6000);
+    h.rrc(6000, 200, "UL", "RRCSetupRequest");  // 상한 → 보호 밖 가장 오래된 CONNECTED(UE 1) 밀림
+    h.nas(6001, 200, "DL", "AuthenticationRequest");  // UE 200에 룰 몫 마감
+    h.rrc(6002, 201, "UL", "RRCSetupRequest");  // UE 200은 SETUP(무리 ①)이지만 최근 줄·마감 → 보호, UE 2 밀림
+    h.rrc(6003, 202, "UL", "RRCSetupRequest");  // UE 201도 최근 줄 → 보호, UE 3 밀림
+    EXPECT_TRUE(h.ue_state(200));
+    EXPECT_TRUE(h.ue_state(201));
+    EXPECT_TRUE(h.ue_state(202));
+    EXPECT_FALSE(h.ue_state(1));
+    EXPECT_FALSE(h.ue_state(2));
+    EXPECT_FALSE(h.ue_state(3));
+    EXPECT_TRUE(h.ue_state(4));
+    std::vector<std::string> evicted;
+    for (const auto& l : h.rule->log)
+      if (l.size() > 8 && l.compare(l.size() - 8, 8, " evicted") == 0) evicted.push_back(l);
+    EXPECT_EQ(evicted, (std::vector<std::string>{"close 1/1/1 evicted", "close 1/2/2 evicted", "close 1/3/3 evicted"}));
+  }
+  {
+    // 마감만으로도 보호된다 (최근 줄 보호 0): UE 200(마감 있음)은 남고, 마감 없는 UE 201(SETUP, 1 ms 전)이 밀린다
+    UeTableConfig cfg;
+    cfg.max_ues = 100;
+    cfg.evict_protect_ms = 0;
+    Harness h(cfg);
+    for (int64_t du = 1; du <= 100; ++du) connect(h, du, du);
+    h.tick_to(6000);
+    h.rrc(6000, 200, "UL", "RRCSetupRequest");
+    h.nas(6001, 200, "DL", "AuthenticationRequest");
+    h.rrc(6002, 201, "UL", "RRCSetupRequest");  // 무리 ①에 UE 200(마감 → 보호)뿐 → 무리 ③ UE 2 밀림
+    h.rrc(6003, 202, "UL", "RRCSetupRequest");  // 무리 ①: UE 200(보호), UE 201(마감 없음, 보호 밖) → UE 201 밀림
+    EXPECT_TRUE(h.ue_state(200));
+    EXPECT_FALSE(h.ue_state(201));
+    EXPECT_TRUE(h.ue_state(202));
+    EXPECT_FALSE(h.ue_state(1));
+    EXPECT_FALSE(h.ue_state(2));
+    EXPECT_TRUE(h.ue_state(3));
+  }
+  {
+    // 보호 무리만 남음(모두 최근 5 s 안): 무리 순서가 아니라 마감 없는 것 중 t_last 가장 오래된 것 — 막 연 SETUP 항목이 밀리지 않는다
+    UeTableConfig cfg;
+    cfg.max_ues = 3;
+    Harness h(cfg);
+    connect(h, 0, 1);                        // CONNECTED, 가장 오래됨
+    h.rrc(10, 2, "UL", "RRCSetupComplete");  // mid_join·CONNECTED
+    h.rrc(20, 3, "UL", "RRCSetupRequest");   // SETUP — 무리 ①이지만 밀리지 않는다
+    h.rrc(30, 4, "UL", "RRCSetupRequest");   // 상한 → UE 1
+    EXPECT_FALSE(h.ue_state(1));
+    EXPECT_TRUE(h.ue_state(3));
+    h.nas(31, 2, "DL", "AuthenticationRequest");  // UE 2에 마감 → 보호
+    h.rrc(40, 5, "UL", "RRCSetupRequest");        // 마감 없는 것 중 가장 오래된 UE 3
+    EXPECT_TRUE(h.ue_state(2));
+    EXPECT_FALSE(h.ue_state(3));
+  }
 }

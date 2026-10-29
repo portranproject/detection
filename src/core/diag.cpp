@@ -29,6 +29,7 @@ const char* to_string(DiagKind kind) {
     case DiagKind::UeEvtOff: return "ue_evt_off";
     case DiagKind::UeLate: return "ue_late";
     case DiagKind::UeEvicted: return "ue_evicted";
+    case DiagKind::GhostPurge: return "ghost_purge";
     case DiagKind::NgapUnlinked: return "ngap_unlinked";
     case DiagKind::UeEvtLostMissing: return "ue_evt_lost_missing";
     case DiagKind::DlUnobserved: return "dl_unobserved";
