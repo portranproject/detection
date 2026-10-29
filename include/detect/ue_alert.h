@@ -21,7 +21,8 @@ AlertUe alert_ue(const UeState& s);
 
 class UeAlertBook {
  public:
-  UeAlertBook(std::string rule, AlertConfig cfg);
+  // kind = 경보 종류 "attack"(공격) 또는 "anomaly"(불확실 경보 — 14_ §6.2·§8.2, 이슈 #48). 룰은 종류마다 묶음을 하나씩 둔다
+  UeAlertBook(std::string rule, AlertConfig cfg, std::string kind = "attack");
 
   // 걸린 UE (14_ §8.2): 그 셀에 열린 경보가 없으면 이 UE들로 RAISE, 있으면 모았다가 간격이 지났으면 UPDATE.
   // sev가 지금 심각도보다 높으면 기다리지 않고 바로 UPDATE(모아 둔 UE 포함). session·seq는 RAISE의 alert_id용
@@ -58,6 +59,7 @@ class UeAlertBook {
 
   std::string rule_;
   AlertConfig cfg_;
+  std::string kind_;
   std::map<int64_t, Open> open_;
 };
 

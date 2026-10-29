@@ -632,6 +632,36 @@ TEST(UplinkDos, EndOnInputLostAndSessionReset) {
   }
 }
 
+// L21-T22 (14_ §6.2 불확실 경보 — Q-58 해결, 이슈 #48): 갈래 ① 대기 5건이 DL 로스로 모두 보류, 공격 경보 없음 → 5번째 보류 칸에서
+// 불확실 경보 RAISE(kind anomaly, held_w 5, candidates L3-21, 갈래 없음). 닫힌 연결은 표시의 복사본으로 싣고 uncertain에 loss
+TEST(UplinkDos, T22HeldAlert) {
+  Harness h;
+  h.lost(2500, R"(["DL"])");  // loss_end[DL] 2600 > t_f 1000~1800 다섯 모두
+  for (int i = 0; i < 5; ++i) h.fail_conn(1000 + 200 * i, 10 + i);  // 마감 6000·6200·6400·6600·6800
+  h.tick_to(6700);
+  EXPECT_TRUE(h.alerts.empty());
+  h.tick_to(6800);
+  EXPECT_EQ(h.rule->held(), 5);
+  EXPECT_EQ(h.rule->failed_ues(), 0);
+  ASSERT_EQ(h.alerts.size(), 1u);
+  const AlertEvent& e = h.alerts[0];
+  EXPECT_EQ(e.kind, AlertEventKind::Raise);
+  EXPECT_EQ(e.alert_kind, "anomaly");
+  EXPECT_EQ(e.t, kT0 + 6800);
+  EXPECT_FALSE(e.branch.has_value());
+  EXPECT_EQ(e.cond, (std::vector<std::string>{"held_count"}));
+  EXPECT_EQ(e.candidates, (std::vector<std::string>{"L3-21"}));
+  EXPECT_EQ(e.values.dump(), R"({"held_w":5})");
+  ASSERT_EQ(e.ues.size(), 5u);
+  EXPECT_EQ(e.ues[0].du_ue_id, 10);
+  EXPECT_EQ(e.ues[0].cond, (std::vector<std::string>{"held"}));
+  EXPECT_EQ(e.ues[0].t_hit, kT0 + 6000);
+  EXPECT_EQ(e.ues[0].uncertain, (std::vector<std::string>{"loss"}));
+  EXPECT_EQ(e.ues[0].values.dump(), R"({"wait_ms":5000,"dir":"DL"})");
+  EXPECT_EQ(h.logs[0], "ALERT RAISE rule=L3-21 cell=1 t=" + std::to_string(kT0 + 6800) +
+                           " kind=anomaly held_w=5 n_fail=5 window_ms=10000 severity=medium mode=normal candidates=L3-21");
+}
+
 // late_until (14_ §4.3 — Q-57 해결, 이슈 #46): 연결·거부 줄이 늦게 온 UE의 갈래 ① 마감(t_f + 5 s)이 늦은 줄 + 16 s 안이면
 // 실패 UE로 세지 않고, 그 뒤의 새 실패(마감이 late_until 뒤)는 센다 — n_fail 1로 RAISE까지, ues[].uncertain에 late
 TEST(UplinkDos, LateUntil) {

@@ -1,0 +1,17 @@
+{
+  "scenario": "S01_L3-01-O_UL로스1칸_불확실RAISE",
+  "description": "인증 무응답 5대, t=1.5 s에 UL 로스 한 칸(100 ms) — 겹치는 5건 모두 보류 → 불확실 경보 RAISE (16_ E2c, L01-T20)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-01-O",
+      "cell": 1,
+      "t_rel_ms": 3000,
+      "mode": "normal",
+      "severity": "medium",
+      "alert_kind": "anomaly"
+    }
+  ]
+}

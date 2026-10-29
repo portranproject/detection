@@ -76,8 +76,8 @@ std::vector<AlertEvent> replay(const std::string& path) {
   return alerts;
 }
 
-// 기대 파일과 비교: 경보마다 kind·rule(없으면 L3-01-V)·cell·t_rel_ms는 늘, mode(RAISE)·severity·branch·reason은 기대 파일에
-// 있으면 본다. exact_time이면 기대 파일의 tolerance_ms를 쓰지 않고 시각을 정확히 비교한다(2단계부터)
+// 기대 파일과 비교: 경보마다 kind·rule(없으면 L3-01-V)·cell·t_rel_ms는 늘, mode(RAISE)·severity·branch·reason·alert_kind는
+// 기대 파일에 있으면 본다. exact_time이면 기대 파일의 tolerance_ms를 쓰지 않고 시각을 정확히 비교한다(2단계부터)
 void check_dataset(const std::string& name, bool exact_time) {
   const std::string base = std::string(DETECT_SCENARIO_DIR) + "/" + name;
   std::ifstream ef(base + kSuffix);
@@ -113,6 +113,9 @@ void check_dataset(const std::string& name, bool exact_time) {
     }
     if (w.contains("reason")) {
       EXPECT_EQ(g.reason, w.at("reason").get<std::string>()) << "#" << i;
+    }
+    if (w.contains("alert_kind")) {  // attack | anomaly — 불확실 경보 (14_ §6.2, 이슈 #48)
+      EXPECT_EQ(g.alert_kind, w.at("alert_kind").get<std::string>()) << "#" << i;
     }
   }
 }
