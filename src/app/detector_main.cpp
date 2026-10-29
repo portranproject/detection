@@ -172,7 +172,7 @@ int main(int argc, char** argv) {
     EngineOutput out = engine.feed_line(line);
     for (const auto& d : out.diags) log_diag(d);
     for (const auto& a : out.alerts) std::cout << format_log_line(a) << std::endl;
-    for (const auto& d : recorder.on_feed(engine.series(), out)) log_diag(d);
+    for (const auto& d : recorder.on_feed(engine.series(), engine.ue_table(), out)) log_diag(d);
   };
 
   int rc = 0;

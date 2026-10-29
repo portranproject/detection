@@ -131,7 +131,8 @@ std::string gap_record_line(const std::string& alert_id, const GapEvent& g) {
   return j.dump();
 }
 
-EvidenceRecorder::EvidenceRecorder(EvidenceConfig cfg, EvidenceQueue& queue) : cfg_(std::move(cfg)), queue_(queue) {}
+EvidenceRecorder::EvidenceRecorder(EvidenceConfig cfg, EvidenceQueue& queue, AlertConfig alert)
+    : cfg_(std::move(cfg)), queue_(queue), ue_(cfg_.mode, alert.ue_evidence_max) {}
 
 EvidenceRecorder::Counts EvidenceRecorder::counts(const std::string& alert_id) const {
   if (auto it = tracks_.find(alert_id); it != tracks_.end()) return it->second.counts;
@@ -191,14 +192,27 @@ void EvidenceRecorder::finish_post(const std::string& alert_id, std::vector<Diag
   }
   by_rule_cell_.erase({it->second.rule, it->second.cell_id});
   tracks_.erase(it);
+  ue_.finish(alert_id);
+}
+
+// UE 단위 경보의 RAISE·UPDATE (14_ §8.3·§8.4): 새로 실린 UE의 evidence·seq_range를 채운 alert 레코드를 낸 뒤
+// 증거를 내는 UE의 recent를 pre로 낸다 — 1단계처럼 alert 다음에 pre
+void EvidenceRecorder::push_ue_alert(const AlertEvent& e, const UeTable& ues, std::vector<Diag>& diags) {
+  AlertEvent rec = e;
+  const std::vector<UeEvidence::Record> pre = ue_.on_alert(rec, ues);
+  push(RecordKind::Alert, e.alert_id, alert_record_line(rec, 0, 0), diags);
+  for (const UeEvidence::Record& r : pre) push(RecordKind::Evidence, r.alert_id, r.line, diags);
 }
 
 // 줄 하나 처리 뒤의 증거 처리 순서 (결정 F2):
 //  1) 이번 줄 전부터 경보 중이던 그 셀의 경보: 끊김이면 gap → 이번 칸 active (post 중이면 post)
 //  2) 이번 줄의 경보 이벤트: raise(alert + pre 스냅샷 — 이번 칸 포함) / clear(alert, 다음 칸부터 post) / end / update
-// kpm2 칸 증거(pre·active·gap·post)는 셀 단위 경보에만 낸다. UE 단위 경보(unit = "ue")의 증거는 UE의 최근 메시지이고
-// post를 쓰지 않는다 (14_ §8.4) — 그 경보는 지금 alert 레코드만 낸다
-std::vector<Diag> EvidenceRecorder::on_feed(const Series& series, const EngineOutput& out) {
+// kpm2 칸 증거(pre·active·post)는 셀 단위 경보에만 낸다. UE 단위 경보(unit = "ue")의 증거는 UE의 최근 메시지이고
+// post를 쓰지 않는다 (14_ §8.4):
+//  1') 그 셀 kpm2가 끊겼으면 UE 단위 경보에도 gap
+//  1'') ue_evt 줄 — 그 UE가 증거를 내는 열린 경보마다 active. 이 줄로 경보에 실리는 UE는 2)의 pre에 이 줄이 들어간다
+//  2') RAISE·UPDATE — 새로 실린 UE의 pre
+std::vector<Diag> EvidenceRecorder::on_feed(const Series& series, const UeTable& ues, const EngineOutput& out) {
   std::vector<Diag> diags;
   if (cfg_.mode == EvidenceMode::Off) return diags;
   const bool full = cfg_.mode == EvidenceMode::Full;
@@ -222,7 +236,15 @@ std::vector<Diag> EvidenceRecorder::on_feed(const Series& series, const EngineOu
         }
       }
     }
+    // 1') UE 단위 경보도 열려 있는 동안 그 셀 kpm2 구간이 끊기면 gap (14_ §8.4)
+    if (out.gap)
+      for (const auto& [id, tr] : tracks_)
+        if (tr.cell_id == *out.cell_id && !tr.cell_unit) push(RecordKind::Gap, id, gap_record_line(id, *out.gap), diags);
   }
+
+  // 1'') ue_evt 줄 — 증거를 내는 UE의 새 줄 (14_ §8.4 active)
+  if (full && out.ue_line)
+    for (const UeEvidence::Record& r : ue_.on_line(*out.ue_line)) push(RecordKind::Evidence, r.alert_id, r.line, diags);
 
   // 2) 경보 이벤트
   for (const AlertEvent& e : out.alerts) {
@@ -237,8 +259,12 @@ std::vector<Diag> EvidenceRecorder::on_feed(const Series& series, const EngineOu
         tr.cell_unit = e.unit == "cell";
         tracks_[e.alert_id] = tr;
         by_rule_cell_[key] = e.alert_id;
+        if (!tr.cell_unit) {
+          push_ue_alert(e, ues, diags);
+          break;
+        }
         push(RecordKind::Alert, e.alert_id, alert_record_line(e, 0, 0), diags);
-        if (full && tr.cell_unit) {
+        if (full) {
           // pre 스냅샷: 버퍼의 마지막 pre_slots칸 (null이면 버퍼 전체, 결정 F1)
           if (const CellSeries* cs = series.cell(e.cell_id)) {
             const std::size_t n = std::min(cs->size(), cfg_.pre_slots.value_or(cs->capacity()));
@@ -268,7 +294,11 @@ std::vector<Diag> EvidenceRecorder::on_feed(const Series& series, const EngineOu
         break;
       }
       case AlertEventKind::Update:
-        push(RecordKind::Alert, e.alert_id, alert_record_line(e, 0, 0), diags);
+        if (e.unit == "ue") {
+          push_ue_alert(e, ues, diags);
+        } else {
+          push(RecordKind::Alert, e.alert_id, alert_record_line(e, 0, 0), diags);
+        }
         break;
     }
   }

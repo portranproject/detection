@@ -48,6 +48,14 @@ struct UeTableConfig {
   std::size_t max_ues = 4096;      // ue_table.max_ues — 열린 항목 상한 (14_ §4.4)
   std::size_t recent_n = 16;       // ue_table.recent_n — UE당 최근 메시지 수, 증거용 (14_ §2.3)
   int64_t stale_setup_ms = 30000;  // ue_table.stale_setup_ms — CONNECTED 전 항목 정리 (14_ §4.2)
+  std::size_t closed_recent_max = 1024;  // ue_table.closed_recent_max — 닫힌 항목 recent 보관 상한 (14_ §2.3)
+};
+
+// UE 단위 경보 (14_ §9 alert.*). 설정 파일 키는 아직 읽지 않고 이 기본값을 쓴다 (4_ §1.2)
+struct AlertConfig {
+  std::size_t ues_max = 50;          // alert.ues_max — 레코드 하나의 ues 칸 수 (14_ §8.3)
+  int64_t update_min_ms = 1000;      // alert.update_min_ms — 새 UE로 내는 update 최소 간격 (14_ §8.2)
+  std::size_t ue_evidence_max = 50;  // alert.ue_evidence_max — 경보 하나에서 증거를 내는 UE 수 상한 (14_ §8.3)
 };
 
 // 설정 파일 전체 (4_ §1.2). rules는 룰 ID → 그 룰의 설정 객체(JSON 문자열)다 — 공통 파서는 넘기기만 하고

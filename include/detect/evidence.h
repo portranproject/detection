@@ -6,13 +6,16 @@
 //   경보 중  : 그 셀의 새 kpm2 줄마다 phase=active (끊김이면 먼저 gap)
 //   CLEAR    : 그 칸까지 active로 낸 뒤 alert(clear), 다음 칸부터 post_slots칸을 phase=post
 //   END      : alert(end) — post 없음
-// 위 kpm2 칸 증거는 셀 단위 경보(unit = "cell")만이다. UE 단위 경보는 alert 레코드만 낸다 (14_ §8.4)
+// 위 kpm2 칸 증거는 셀 단위 경보(unit = "cell")만이다. UE 단위 경보(unit = "ue")는 걸린 UE의 최근 메시지(pre)와
+// 경보 중 그 UE의 새 줄(active)을 낸다 — ue_evidence.* (14_ §8.4). 큐와 경보별 보낸·버린 수는 함께 쓴다
 
 #include "detect/config.h"
 #include "detect/diag.h"
 #include "detect/engine.h"
 #include "detect/evidence_queue.h"
 #include "detect/series.h"
+#include "detect/ue_evidence.h"
+#include "detect/ue_table.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -26,10 +29,10 @@ namespace detect {
 
 class EvidenceRecorder {
  public:
-  EvidenceRecorder(EvidenceConfig cfg, EvidenceQueue& queue);
+  EvidenceRecorder(EvidenceConfig cfg, EvidenceQueue& queue, AlertConfig alert = {});
 
-  // 엔진이 줄 하나를 처리한 직후 부른다. 반환값은 진단(버린 증거 등)
-  std::vector<Diag> on_feed(const Series& series, const EngineOutput& out);
+  // 엔진이 줄 하나를 처리한 직후 부른다. ues = UE 증거(pre)의 recent를 읽을 UE 상태표. 반환값은 진단(버린 증거 등)
+  std::vector<Diag> on_feed(const Series& series, const UeTable& ues, const EngineOutput& out);
 
   // 경보별 집계 — 테스트·진단용
   struct Counts {
@@ -58,6 +61,7 @@ class EvidenceRecorder {
 
   void push(RecordKind kind, const std::string& alert_id, std::string line, std::vector<Diag>& diags);
   void push_evidence(const std::string& alert_id, const char* phase, const Slot& slot, std::vector<Diag>& diags);
+  void push_ue_alert(const AlertEvent& e, const UeTable& ues, std::vector<Diag>& diags);
   void finish_post(const std::string& alert_id, std::vector<Diag>& diags);
 
   EvidenceConfig cfg_;
@@ -66,6 +70,7 @@ class EvidenceRecorder {
   std::map<std::pair<std::string, int64_t>, std::string> by_rule_cell_;  // (룰, 셀) → alert_id
   std::map<std::string, Counts> finished_;                              // 끝난 경보의 집계 (kFinishedMax까지)
   std::deque<std::string> finished_order_;                              // finished_의 삽입 순서 — 오래된 것부터 지운다
+  UeEvidence ue_;                                                       // UE 단위 경보의 증거 UE (14_ §8.4)
 };
 
 // 레코드 한 줄 만들기 (3_ §7.1 레코드 표). 테스트에서도 쓴다
