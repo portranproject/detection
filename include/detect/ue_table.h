@@ -85,10 +85,16 @@ struct UeState {
   bool loss = false;
   bool late = false;
   std::optional<int64_t> t_loss;          // 마지막 로스 창의 t_end_ms
+  // 늦은 줄의 '없음' 판정 제외는 이때까지만 (14_ §4.3, 10/29 Q-57 해결 — 이슈 #46): 늦은 줄 t_ms + 등록된 2단계 룰의
+  // 증거 지평 최댓값. 늦은 줄이 또 오면 늘어난다. 표시 late 자체는 닫힐 때까지 남는다(경보 ues[].uncertain)
+  std::optional<int64_t> late_until;
 
   std::map<std::pair<Proto, std::string>, int64_t> cnt;  // (proto, msg)별 횟수 — 이 연결 안 (14_ §2.3)
 
   bool uncertain() const { return mid_join || loss || late; }
+  // 마감 at의 '없음' 판정을 늦은 줄이 막는가 — 마감 < late_until일 때만 (14_ §4.3). 늦은 줄이 기다리던 응답 자체면 룰이
+  // 이미 대기를 풀므로, 이것이 막는 것은 '마감을 처리한 뒤 늦게 온 응답'뿐이다
+  bool late_blocks(int64_t at) const { return late && late_until && at < *late_until; }
   int64_t count(Proto proto, const std::string& msg) const;
 };
 
@@ -158,6 +164,9 @@ class UeTable {
   // 닫힌 항목 recent 보관 시간 (14_ §1.1·§2.3) — Engine이 등록된 2단계 룰의 증거 지평 최댓값 + 여유로 정한다. 0이면 보관하지 않는다
   void set_recent_keep_ms(int64_t ms) { keep_ms_ = ms; }
   int64_t recent_keep_ms() const { return keep_ms_; }
+  // 늦은 줄 제외 길이 (14_ §4.3 late_until) — Engine이 등록된 2단계 룰의 증거 지평 최댓값(여유 없이)으로 정한다 (이슈 #46)
+  void set_late_horizon_ms(int64_t ms) { late_horizon_ms_ = ms; }
+  int64_t late_horizon_ms() const { return late_horizon_ms_; }
 
   const UeTableConfig& config() const { return cfg_; }
 
@@ -211,6 +220,7 @@ class UeTable {
   std::map<uint64_t, UeId> kept_order_;  // 넣은 순서 → (키, uid)
   uint64_t next_kept_ = 0;
   int64_t keep_ms_ = 0;
+  int64_t late_horizon_ms_ = 0;
   std::set<RankKey> ranks_[3];                  // 밀어내기 후보 색인 (14_ §4.4)
   std::map<int64_t, int64_t> ghost_over_since_;  // 셀 → CONNECTED 수가 문턱을 처음 넘은 kpm2의 t_start_ms (§4.2)
 };

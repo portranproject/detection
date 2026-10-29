@@ -99,7 +99,8 @@ void AuthStallRule::on_ue_close(const UeState& last, CloseReason reason, int64_t
 }
 
 // 마감 처리 (15_ §4.3-6): 표시가 그대로(uid·t_from)이고 마감 전 응답이 없고(있었으면 표시를 지웠다), 대기 구간에 UL 로스가
-// 없고(있으면 보류 — 14_ §6.2), n이 mid_join·late가 아니면(14_ §4.3) 고착이다. t_hit = 마감.
+// 없고(있으면 보류 — 14_ §6.2), n이 mid_join이 아니고 늦은 줄 제외 기간(late_until)이 지났으면(14_ §4.3, 이슈 #46) 고착이다.
+// t_hit = 마감.
 // 여기서는 고착을 기록만 하고 셀 단위 성립·RAISE·심각도는 같은 kpm2의 on_cell_tick에서 본다(10/29 이슈 #29) — 그 칸의
 // UeCtxMax를 넣은 뒤 심각도를 정해야 RAISE와 심각도 UPDATE가 따로 나지 않는다
 void AuthStallRule::on_deadline(const Deadline& d, const UeRuleCtx& ctx, RuleOutput&) {
@@ -119,7 +120,7 @@ void AuthStallRule::on_deadline(const Deadline& d, const UeRuleCtx& ctx, RuleOut
   const UeState* n = ctx.table.find(d.key);
   const bool open = n && n->uid == d.uid;
   if (!open) n = m.closed ? &*m.closed : nullptr;
-  if (!n || n->mid_join || n->late) return;
+  if (!n || n->mid_join || n->late_blocks(d.at)) return;
   ++stalls_n_;
   if (open && !m.responded_late) stalled_.insert(id);
 

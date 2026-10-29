@@ -617,6 +617,36 @@ TEST(BlindDos, EndOnInputLostAndSessionReset) {
   }
 }
 
+// late_until (14_ §4.3 — Q-57 해결, 이슈 #46): 공격 연결의 줄이 늦게 오면(순서 역전) 늦은 줄 + 6 s까지만 판정에서 빠진다.
+// 마감(t₀ + 5 s)이 그 안이면 걸림 없음, 뒤면 걸림 — ues[].uncertain에 late
+TEST(BlindDos, LateUntil) {
+  {
+    Harness h;
+    h.victim(3, kS, 0);
+    h.tick_to(1100);          // 워터마크 1100
+    h.attack(7, kS, 1000);    // 1000~1060 모두 늦음 → late_until 7060, t₀ 1050 → 마감 6050 < 7060 → 판정 없음
+    EXPECT_EQ(h.rule->waiting(), 1u);
+    h.tick_to(7200);
+    EXPECT_EQ(h.rule->waiting(), 0u);
+    EXPECT_TRUE(h.alerts.empty());
+  }
+  {
+    Harness h;
+    h.victim(3, kS, 0);
+    h.tick_to(1100);
+    h.rrc(1000, 7, "UL", "RRCSetupRequest", part1(kS));  // 늦은 줄 → late_until 7000
+    h.tick_to(2100);
+    h.rrc(2100, 7, "DL", "RRCSetup");
+    h.rrc(2150, 7, "UL", "RRCSetupComplete", stmsi(kS));  // t₀ 2150 → 마감 7150 ≥ 7000 → 판정
+    h.nas(2150, 7, "UL", "ServiceRequest", stmsi(kS), 1);
+    h.tick_to(7200);
+    ASSERT_EQ(h.alerts.size(), 1u);
+    EXPECT_EQ(h.alerts[0].t, kT0 + 7200);
+    ASSERT_EQ(h.alerts[0].ues.size(), 1u);
+    EXPECT_EQ(h.alerts[0].ues[0].uncertain, (std::vector<std::string>{"late"}));
+  }
+}
+
 // L20-T28 (15_ §2.5 — Q-56 해결, 이슈 #44): RAISE 뒤 그 셀에 상태표 밀어내기가 이어지면 마지막 걸림 + clear_quiet_ms가
 // 지나도 CLEAR하지 않고, 직전 clear_quiet_ms 동안 밀어내기가 0건이 된 칸에서 푼다. 상한 100, 정상 연결 101대로 밀어내기를 만든다
 TEST(BlindDos, T28EvictionHoldsClear) {

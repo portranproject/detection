@@ -26,7 +26,7 @@
 - 같은 창의 `ue_evt`는 그 창 `kpm2`보다 먼저 둔다(`2_` §6.1). `.jsonl`마다 `.expected.json` 짝이 있어야 한다(시험이 확인).
 - `.expected.json`: `scenario`·`description`·`t0_ms`·`tolerance_ms`·`alerts`. **경보 시각은 정확히 비교한다** — `tolerance_ms`(허용 오차)는 1단계 데이터(`scenarios/`·`captured/`)에만 쓰고 2단계부터는 쓰지 않는다(이슈 #40). `alerts`의 항목은 `kind`(`RAISE`·`UPDATE`·`CLEAR`·`END`)·`rule`·`cell`·`t_rel_ms`가 필수이고, `mode`·`severity`·`branch`·`reason`은 적으면 비교한다. `rule`이 없으면 `L3-01-V`로 본다.
 
-### 현재 들어 있는 시나리오 (33개 — 손 작성)
+### 현재 들어 있는 시나리오 (34개 — 손 작성)
 
 `14_` §10 결정(합성 생성기 범위 밖, 직접 작성)에 따라 손으로 쓴 재생 시나리오다. 룰마다 정상(무경보)·RAISE·심각도(medium/high)·UPDATE·보류(로스)·CLEAR·END를 덮는다. 기대 경보 시각은 명세 식(마감 = t₀/t_f + 대기, 처리는 그 이상인 첫 `kpm2` `t_end`)으로 손 계산하고 네 룰 재생으로 확인했다. 파일명은 `S<단계>_<룰ID>_<설명>_<결과>`, 대응 명세 시험은 설명 끝 괄호(`15_` §2.8·§4.8·§5.8). 생성기는 `tools/gen_stage2.py`(1단계 `gen_kpm2.py`와 같은 틀).
 
@@ -34,6 +34,7 @@
 - **L3-20 Blind DoS (10):** 정상첫등록·RLF재접속·IDLE(무경보) / CONNECTED high(피해자 해제)·medium·공격연결닫힘·peer_uncertain·반복 UPDATE·해제 CLEAR·세션변경 END
 - **L3-21 상향 DoS (10):** 정상·실패4·등록반복무실패·수락경계정시·SecModeReject·로스보류(무경보) / 원형 갈래① RAISE·변형 갈래② RAISE·혼합 high·해제 CLEAR
 
-- **입력 불완전 (4, 이슈 #42 — `16_` §3.1·W-17, 현재 동작 고정):** 순서역전1줄(UE마다 RegistrationRequest가 자기 창 `kpm2` 뒤 → `late`)·순서역전전부·UL로스1칸(t = 1.5 s 한 칸으로 5건 전부 보류)·`ue_evt_lost`누락(양방향 로스로 보아 전부 보류). 모두 '경보 없음'이며 **지금 동작을 고정한 것**이다 — `4_` §6.1 #7(`late_until`)·#8(불확실 경보)에서 기대값이 바뀐다. 생성기 옵션은 `Scenario.late_msgs`·`Scenario.drop_lost`. 상태표 포화는 기본 설정으로 재현되지 않아 단위 테스트(`tests/core/test_auth_stall.cpp` `SaturationStopsVerdicts_CurrentBehavior`, 상한 100)로 둔다.
+- **입력 불완전 (4, 이슈 #42 — `16_` §3.1·W-17, 현재 동작 고정):** 순서역전1줄(UE마다 RegistrationRequest가 자기 창 `kpm2` 뒤 → `late`)·순서역전전부·UL로스1칸(t = 1.5 s 한 칸으로 5건 전부 보류)·`ue_evt_lost`누락(양방향 로스로 보아 전부 보류). 모두 '경보 없음'이며 **지금 동작을 고정한 것**이다 — `4_` §6.1 #8(불확실 경보)에서 UL로스1칸·`ue_evt_lost`누락의 기대값이 바뀐다. 순서역전 둘은 이슈 #46(`late_until` 16 s) 뒤에도 마감 2 s가 그 안이라 그대로다.
+- **`late_until` 만료 (1, 이슈 #46 — `14_` §4.3, `15_` L01-T21):** `순서역전1줄_만료뒤_RAISE` — 같은 5대가 17 s 뒤 두 번째 AuthenticationRequest에 무응답 → 마감이 `late_until` 뒤라 고착 5건, RAISE 20.0 s. 생성기 옵션은 `Scenario.late_msgs`·`Scenario.drop_lost`. 상태표 포화는 기본 설정으로 재현되지 않아 단위 테스트(`tests/core/test_auth_stall.cpp` `SaturationStopsVerdicts_CurrentBehavior`, 상한 100)로 둔다.
 
 #3 Null 암호·무결성(L3-03)과 #20 IDLE형(L3-20-V2)은 탐지 대상이 아니므로(사용자 결정 10/29, `15_` §3·§2.1) 공격 시나리오를 두지 않는다. L3-20 IDLE형은 '경보 없음' 반례(`S20_L3-20_IDLE_무경보`)로만 둔다.

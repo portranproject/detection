@@ -136,7 +136,8 @@ void BlindDosRule::on_ue_close(const UeState& last, CloseReason reason, int64_t 
 }
 
 // 성립 (15_ §2.3): 마감을 처리하는 그 셀 kpm2에서 — 표시가 그대로(uid·t_from)이고 마감 전 수락이 없고(있었으면 표시를
-// 지웠다), 대기 구간에 DL 로스가 없고(있으면 보류 — 14_ §6.2), n이 mid_join·late가 아니면(14_ §4.3) 걸린다
+// 지웠다), 대기 구간에 DL 로스가 없고(있으면 보류 — 14_ §6.2), n이 mid_join이 아니고 늦은 줄 제외 기간(late_until)이
+// 지났으면(14_ §4.3, 이슈 #46) 걸린다
 void BlindDosRule::on_deadline(const Deadline& d, const UeRuleCtx& ctx, RuleOutput& out) {
   const UeId id{d.key, d.uid};
   auto it = marks_.find(id);
@@ -153,7 +154,7 @@ void BlindDosRule::on_deadline(const Deadline& d, const UeRuleCtx& ctx, RuleOutp
   }
   const UeState* n = ctx.table.find(d.key);
   if (!n || n->uid != d.uid) n = m.closed ? &*m.closed : nullptr;
-  if (!n || n->mid_join || n->late) return;
+  if (!n || n->mid_join || n->late_blocks(d.at)) return;
   hit(m, *n, d.at, now, ctx, out);
 }
 

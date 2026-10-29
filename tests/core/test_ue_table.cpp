@@ -1,4 +1,4 @@
-// UE 상태표·마감 목록·2단계 분배 테스트 — 14_ §10 공통 테스트 U-T1~U-T27(U-T26·U-T27은 이슈 #44 유령 정리·보호 무리).
+// UE 상태표·마감 목록·2단계 분배 테스트 — 14_ §10 공통 테스트 U-T1~U-T28(U-T26·U-T27은 이슈 #44 유령 정리·보호 무리, U-T28은 이슈 #46 late_until).
 // U-T13(1단계 alert 형식 이전)은 이슈 #17에서 확인했고, U-T20(경보당 증거 UE 상한)은 UE 증거 이슈에서 한다.
 // 닫힌 S-TMSI 기억(U-T1·U-T11의 기억 표 부분)은 보류다(14_ §3.2).
 // 대기 표시가 필요한 시험은 15_ 룰의 대기 규칙(14_ §2.4·§6)을 그대로 따르는 테스트용 룰(WaitRule)로 한다
@@ -43,7 +43,7 @@ std::string part1(uint64_t v) {
 
 // 테스트용 2단계 룰: NAS AuthenticationRequest(DL) 뒤 kWait ms 안에 AuthenticationResponse(UL)가 없으면 '걸림'.
 // 대기 표시는 (키, uid)로 두고 15_ §1·14_ §2.4의 규칙을 따른다 — released·reused·stale_setup이면 표시를 남겨 마감 때
-// 판정, du_reset·evicted·session_reset이면 지움, 꺼낼 때 uid·t_from 대조, 방향별 보류, mid_join·late는 판정 안 함
+// 판정, du_reset·evicted·session_reset이면 지움, 꺼낼 때 uid·t_from 대조, 방향별 보류, mid_join·late(late_until까지)는 판정 안 함
 class WaitRule : public UeRule {
  public:
   static constexpr int64_t kWait = 2000;
@@ -54,6 +54,7 @@ class WaitRule : public UeRule {
     bool closed = false;
     bool mid_join = false;
     bool late = false;
+    std::optional<int64_t> late_until;  // 닫힌 항목의 늦은 줄 제외 기간 (14_ §4.3, 이슈 #46)
   };
   struct Hit {
     UeKey key;
@@ -66,7 +67,7 @@ class WaitRule : public UeRule {
   std::vector<Hit> hits;
   int held = 0;
   int discarded = 0;
-  int skipped = 0;  // mid_join·late라 판정 안 함
+  int skipped = 0;  // mid_join·late(late_until 안)라 판정 안 함
   int resets = 0;
   std::vector<std::string> log;  // 호출 순서 — "event 1/3/1 RRCSetupRequest", "close 1/3/1 released"
   std::vector<std::tuple<int64_t, bool, bool, bool>> ticks;  // (셀, loss.ul, loss.dl, input_lost)
@@ -83,7 +84,10 @@ class WaitRule : public UeRule {
     const auto k = std::make_pair(after.key, after.uid);
     if (e.proto == Proto::NAS && e.dir == Dir::DL && e.msg == "AuthenticationRequest") {
       if (marks.count(k)) return;  // 기다리는 중 재전송은 다시 시작하지 않는다
-      marks[k] = Mark{e.t_ms, e.t_ms + kWait};
+      Mark m;
+      m.t_from = e.t_ms;
+      m.deadline = e.t_ms + kWait;
+      marks[k] = m;
       ctx.add_deadline(e.t_ms + kWait, after.key, after.uid, "auth_resp", Dir::UL, e.t_ms);
     } else if (e.proto == Proto::NAS && e.dir == Dir::UL && e.msg == "AuthenticationResponse") {
       auto it = marks.find(k);
@@ -104,10 +108,10 @@ class WaitRule : public UeRule {
       return;
     }
     bool mid_join = m.mid_join;
-    bool late = m.late;
+    bool late = m.late && m.late_until && d.at < *m.late_until;  // 14_ §4.3 late_until — 닫힌 항목은 표시의 복사본으로
     if (const UeState* s = ctx.table.find(d.key); s && s->uid == d.uid) {
       mid_join = s->mid_join;
-      late = s->late;
+      late = s->late_blocks(d.at);
     }
     if (mid_join || late) {
       ++skipped;
@@ -124,6 +128,7 @@ class WaitRule : public UeRule {
       it->second.closed = true;
       it->second.mid_join = last.mid_join;
       it->second.late = last.late;
+      it->second.late_until = last.late_until;
     } else {
       marks.erase(it);
     }
@@ -916,5 +921,58 @@ TEST(UeTable, UT27EvictionProtectsRecentAndWaiting) {
     h.rrc(40, 5, "UL", "RRCSetupRequest");        // 마감 없는 것 중 가장 오래된 UE 3
     EXPECT_TRUE(h.ue_state(2));
     EXPECT_FALSE(h.ue_state(3));
+  }
+}
+
+// U-T28 (14_ §4.3 late_until — 10/29 Q-57 해결, 이슈 #46): 늦은 줄이 온 UE의 '없음' 판정 제외는 늦은 줄 t_ms + 등록된 룰의
+// 증거 지평 최댓값(WaitRule 2 s)까지만. 늦은 줄 2 s 뒤 마감은 판정 없음(skipped), 그 뒤 마감은 판정(hits). late 표시는 남고,
+// 늦은 줄이 또 오면 late_until이 늘어난다
+TEST(UeTable, UT28LateUntil) {
+  Harness h;
+  h.rrc(0, 98, "UL", "RRCSetupRequest");
+  h.kpm(0);
+  h.kpm(100);                            // 워터마크 200
+  h.rrc(150, 98, "DL", "RRCSetup");      // 늦은 줄 → late, late_until = 150 + 2000 = 2150
+  EXPECT_TRUE(h.ue_state(98)->late);
+  EXPECT_EQ(h.ue_state(98)->late_until, kT0 + 2150);
+  EXPECT_EQ(h.engine.ue_table().late_horizon_ms(), WaitRule::kWait);
+  h.rrc(200, 98, "UL", "RRCSetupComplete");
+  h.nas(205, 98, "DL", "AuthenticationRequest");  // 마감 2205 ≥ late_until 2150 → 판정
+  h.tick_to(2300);
+  EXPECT_EQ(h.rule->skipped, 0);
+  ASSERT_EQ(h.rule->hits.size(), 1u);
+  EXPECT_EQ(h.rule->hits[0].at, kT0 + 2205);
+  EXPECT_TRUE(h.ue_state(98)->late);  // 표시는 남는다
+  {
+    Harness g;
+    g.rrc(0, 99, "UL", "RRCSetupRequest");
+    g.kpm(0);
+    g.kpm(100);
+    g.rrc(150, 99, "DL", "RRCSetup");               // late_until 2150
+    g.nas(300, 99, "DL", "AuthenticationRequest");  // 마감 2300 ≥ 2150 → 판정될 터
+    g.kpm(200);
+    g.kpm(300);
+    g.kpm(400);                                     // 워터마크 500
+    g.rrc(450, 99, "UL", "RRCSetupComplete");        // 두 번째 늦은 줄 → late_until 2450 > 마감 2300 → 판정 없음
+    EXPECT_EQ(g.ue_state(99)->late_until, kT0 + 2450);
+    g.tick_to(2400);
+    EXPECT_EQ(g.rule->skipped, 1);
+    EXPECT_TRUE(g.rule->hits.empty());
+    g.nas(2500, 99, "DL", "AuthenticationRequest");  // 마감 4500 ≥ 2450 → 판정
+    g.tick_to(4600);
+    EXPECT_EQ(g.rule->hits.size(), 1u);
+  }
+  {
+    Harness c;  // 마감 전에 닫힌 항목도 복사본의 late_until로 같은 판정 (14_ §2.4)
+    c.rrc(0, 97, "UL", "RRCSetupRequest");
+    c.kpm(0);
+    c.kpm(100);
+    c.rrc(150, 97, "DL", "RRCSetup");               // late_until 2150
+    c.nas(300, 97, "DL", "AuthenticationRequest");  // 마감 2300
+    c.f1ap(400, 97, "UL", "UEContextReleaseComplete");  // released — 표시에 복사
+    c.tick_to(2400);
+    EXPECT_EQ(c.rule->skipped, 0);
+    ASSERT_EQ(c.rule->hits.size(), 1u);
+    EXPECT_TRUE(c.rule->hits[0].closed);
   }
 }

@@ -703,6 +703,28 @@ TEST(AuthStall, T22EvictionHoldsClear) {
   EXPECT_EQ(h.alerts[2].t, kT0 + 92000);
 }
 
+// L01-T21 (15_ §1, 14_ §4.3 late_until — Q-57 해결, 이슈 #46): 연결·등록 줄이 늦게 온(순서 역전) UE 5대 — 2 s 뒤 무응답 마감은
+// late_until(늦은 줄 + 13 s) 안이라 판정 없음·경보 없음. 17 s 뒤 다시 AuthenticationRequest 무응답이면 마감이 late_until 뒤라
+// 고착 5건 → RAISE, ues[].uncertain에 late
+TEST(AuthStall, T21LateUntil) {
+  Harness h;
+  h.tick_to(1100);  // 워터마크 1100 — 아래 970~1080의 줄은 모두 늦다
+  for (int i = 0; i < 5; ++i) h.stall_ue(1000 + 20 * i, 10 + i);  // 마지막 늦은 줄 1080 → late_until 14080
+  EXPECT_EQ(h.rule->waiting(), 5u);
+  h.tick_to(5000);  // 마감 3000~3080 < late_until → 판정 없음
+  EXPECT_EQ(h.rule->stalls(), 0);
+  EXPECT_EQ(h.rule->waiting(), 0u);
+  EXPECT_TRUE(h.alerts.empty());
+  for (int i = 0; i < 5; ++i) h.auth_req(17000 + 20 * i, 10 + i);  // 늦지 않은 줄, 마감 19000~19080 ≥ 14080
+  h.tick_to(19100);
+  EXPECT_EQ(h.rule->stalls(), 5);
+  ASSERT_EQ(h.alerts.size(), 1u);
+  EXPECT_EQ(h.alerts[0].kind, AlertEventKind::Raise);
+  EXPECT_EQ(h.alerts[0].t, kT0 + 19100);
+  ASSERT_EQ(h.alerts[0].ues.size(), 5u);
+  for (const AlertUe& u : h.alerts[0].ues) EXPECT_EQ(u.uncertain, (std::vector<std::string>{"late"}));
+}
+
 // 증거 지평 (14_ §1.1): 응답 대기 + 셀 창 + UPDATE 모음 지연. 상태표는 여기에 여유 1 s를 더해 닫힌 항목의 recent를 보관한다
 TEST(AuthStall, EvidenceHorizon) {
   Harness h;

@@ -26,6 +26,8 @@ void Engine::add_rule(std::unique_ptr<Rule> rule) { rules_.push_back(std::move(r
 void Engine::add_ue_rule(std::unique_ptr<UeRule> rule) {
   const int64_t keep = rule->evidence_horizon_ms() + table_.config().recent_keep_margin_ms;
   if (keep > table_.recent_keep_ms()) table_.set_recent_keep_ms(keep);
+  // 늦은 줄 제외 길이 late_until은 증거 지평 최댓값(여유 없이) (14_ §4.3, 이슈 #46)
+  if (rule->evidence_horizon_ms() > table_.late_horizon_ms()) table_.set_late_horizon_ms(rule->evidence_horizon_ms());
   ue_rules_.push_back(std::move(rule));
 }
 
