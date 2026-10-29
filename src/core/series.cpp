@@ -106,7 +106,7 @@ std::vector<int64_t> Series::cell_ids() const {
 }
 
 // 파싱 결과 분기. 형식 오류·ver 불일치는 버리고 진단만 남긴다 (2_ §1·§3, 1_ FR-6).
-// 모르는 type·ue_evt는 쓰지 않지만 같은 session이면 seq는 이어서 본다 — seq는 모든 유형이 함께 쓰는 번호라서 (2_ §2)
+// 모르는 type·ue_evt·f1_evt는 series가 쓰지 않지만 같은 session이면 seq는 이어서 본다 — seq는 모든 유형이 함께 쓰는 번호라서 (2_ §2)
 FeedResult Series::feed(const ParseResult& r) {
   FeedResult out;
   const std::optional<int64_t> seq = r.common ? std::optional<int64_t>(r.common->seq) : std::nullopt;
@@ -141,7 +141,7 @@ FeedResult Series::feed(const ParseResult& r) {
     return kr;
   }
 
-  // 모르는 type, ue_evt (2단계 룰 명세 전이라 본문은 쓰지 않음)
+  // 모르는 type, ue_evt·f1_evt — series는 kpm2만 저장한다. ue_evt·f1_evt는 UE 상태표 몫 (14_ §7)
   out.outcome = FeedOutcome::Ignored;
   if (active() && r.common->session == session_) check_seq(r.common->seq, out);
   return out;
