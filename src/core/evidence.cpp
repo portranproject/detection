@@ -3,6 +3,8 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cinttypes>
+#include <cstdio>
 #include <utility>
 
 namespace detect {
@@ -23,15 +25,47 @@ const char* event_name(AlertEventKind k) {
 
 ojson seq_pair(const std::pair<int64_t, int64_t>& p) { return ojson::array({p.first, p.second}); }
 
+template <typename T>
+ojson opt_value(const std::optional<T>& v) { return v ? ojson(*v) : ojson(nullptr); }
+
+// 48비트 5G-S-TMSI → "0x" + 소문자 16진 12자리 (15_ §2.6 예 "0x0123456789ab")
+std::string s_tmsi_str(uint64_t v) {
+  char buf[32];
+  std::snprintf(buf, sizeof(buf), "0x%012" PRIx64, v);
+  return buf;
+}
+
+// ues[] 한 칸 (14_ §8.3 표 순서). 없는 식별 값은 null, peers는 비면 뺀다
+ojson ue_record(const AlertUe& u) {
+  ojson j;
+  j["cell"] = u.cell;
+  j["du_ue_id"] = u.du_ue_id;
+  j["uid"] = u.uid;
+  j["cu_ue_id"] = opt_value(u.cu_ue_id);
+  j["crnti"] = opt_value(u.crnti);
+  j["s_tmsi"] = u.s_tmsi ? ojson(s_tmsi_str(*u.s_tmsi)) : ojson(nullptr);
+  j["cond"] = u.cond;
+  j["t_hit"] = u.t_hit;
+  j["values"] = u.values.is_null() ? ojson::object() : u.values;
+  j["uncertain"] = u.uncertain;
+  if (!u.peers.empty()) j["peers"] = u.peers;
+  j["seq_range"] = u.seq_range ? seq_pair(*u.seq_range) : ojson(nullptr);
+  j["evidence"] = u.evidence;
+  return j;
+}
+
 }  // namespace
 
-// alert 레코드 — 공통 경보 형식 (14_ §8.3·§8.5, 4_ §6.1 #3): 겉모양(룰·단계·단위·종류·셀·시각·심각도·모드)은
-// 모든 룰이 같고, 룰마다 다른 것은 values(관측값)·params(파라미터)·refs(근거 seq 범위) 안에만 둔다.
-// raise면 cond·candidates·values·params·refs, clear·end면 duration_ms와 내보낸·버린 증거 수, end면 reason.
-// uectx·max_conn은 C4가 켜져 값이 있을 때만 어느 이벤트든 values에 (결정 J5)
+// alert 레코드 — 공통 경보 형식 (14_ §8.3·§8.5, 4_ §6.1 #3·#4·#5). 겉모양(형식 판·룰·단계·단위·종류·셀·시각·
+// 심각도·모드·갈래)은 모든 룰이 같고, 룰마다 다른 것은 룰이 채운 values·params·refs·ues 안에만 있다. 키 순서는 14_ §8.3 표 순서:
+//  - raise: cond·candidates, 룰이 채웠으면 params·refs
+//  - values: 비어 있지 않으면 어느 이벤트든 (1단계 C4의 uectx·max_conn, 결정 J5)
+//  - unit = "ue": raise·update에 ues(update는 새로 걸린 UE만), 모든 이벤트에 ues_total
+//  - clear·end: duration_ms와 내보낸·버린 증거 수, end면 reason
 std::string alert_record_line(const AlertEvent& e, int64_t sent, int64_t dropped) {
   ojson j;
   j["type"] = "alert";
+  j["fmt"] = kAlertFmt;
   j["alert_id"] = e.alert_id;
   j["event"] = event_name(e.kind);
   j["rule"] = e.rule;
@@ -42,34 +76,22 @@ std::string alert_record_line(const AlertEvent& e, int64_t sent, int64_t dropped
   j["t"] = e.t;
   j["severity"] = e.severity == Severity::High ? "high" : "medium";
   j["mode"] = e.mode == AlertMode::Normal ? "normal" : "dl_missing";
+  if (e.branch) j["branch"] = *e.branch;
   const bool raise = e.kind == AlertEventKind::Raise;
   if (raise) {
     j["cond"] = e.cond;
     j["candidates"] = e.candidates;
   }
-  ojson values = ojson::object();
-  if (raise) {
-    values["a_w"] = e.a_w;
-    if (e.f_w) values["f_w"] = *e.f_w;
-    if (e.ratio) values["ratio"] = *e.ratio;
-    if (e.u) values["u"] = *e.u;
-    values["base"] = e.base;
-  }
-  if (e.uectx && e.max_conn) {
-    values["uectx"] = *e.uectx;
-    values["max_conn"] = *e.max_conn;
-  }
-  if (!values.empty()) j["values"] = std::move(values);
-  if (raise) {
-    ojson params;
-    params["k"] = e.k;
-    params["theta"] = e.theta;
-    if (e.f_abs) params["f_abs"] = *e.f_abs;  // normal 모드만 (3_ §7.1, 10/27 Q-41)
-    j["params"] = std::move(params);
-    ojson refs = ojson::object();
-    if (e.a_seq) refs["a"] = seq_pair(*e.a_seq);
-    if (e.f_seq) refs["f"] = seq_pair(*e.f_seq);
-    j["refs"] = std::move(refs);
+  if (!e.values.empty()) j["values"] = e.values;
+  if (raise && !e.params.is_null()) j["params"] = e.params;
+  if (raise && !e.refs.is_null()) j["refs"] = e.refs;
+  if (e.unit == "ue") {
+    if (raise || e.kind == AlertEventKind::Update) {
+      ojson ues = ojson::array();
+      for (const AlertUe& u : e.ues) ues.push_back(ue_record(u));
+      j["ues"] = std::move(ues);
+    }
+    j["ues_total"] = e.ues_total;
   }
   if (e.kind == AlertEventKind::Clear || e.kind == AlertEventKind::End) {
     j["duration_ms"] = e.duration_ms;
@@ -174,6 +196,8 @@ void EvidenceRecorder::finish_post(const std::string& alert_id, std::vector<Diag
 // 줄 하나 처리 뒤의 증거 처리 순서 (결정 F2):
 //  1) 이번 줄 전부터 경보 중이던 그 셀의 경보: 끊김이면 gap → 이번 칸 active (post 중이면 post)
 //  2) 이번 줄의 경보 이벤트: raise(alert + pre 스냅샷 — 이번 칸 포함) / clear(alert, 다음 칸부터 post) / end / update
+// kpm2 칸 증거(pre·active·gap·post)는 셀 단위 경보에만 낸다. UE 단위 경보(unit = "ue")의 증거는 UE의 최근 메시지이고
+// post를 쓰지 않는다 (14_ §8.4) — 그 경보는 지금 alert 레코드만 낸다
 std::vector<Diag> EvidenceRecorder::on_feed(const Series& series, const EngineOutput& out) {
   std::vector<Diag> diags;
   if (cfg_.mode == EvidenceMode::Off) return diags;
@@ -186,7 +210,7 @@ std::vector<Diag> EvidenceRecorder::on_feed(const Series& series, const EngineOu
       const Slot& slot = cs->back();
       std::vector<std::string> ids;
       for (const auto& [id, tr] : tracks_)
-        if (tr.cell_id == *out.cell_id) ids.push_back(id);
+        if (tr.cell_id == *out.cell_id && tr.cell_unit) ids.push_back(id);
       for (const auto& id : ids) {
         Track& tr = tracks_.at(id);
         if (tr.phase == Phase::Active) {
@@ -210,10 +234,11 @@ std::vector<Diag> EvidenceRecorder::on_feed(const Series& series, const EngineOu
         Track tr;
         tr.rule = e.rule;
         tr.cell_id = e.cell_id;
+        tr.cell_unit = e.unit == "cell";
         tracks_[e.alert_id] = tr;
         by_rule_cell_[key] = e.alert_id;
         push(RecordKind::Alert, e.alert_id, alert_record_line(e, 0, 0), diags);
-        if (full) {
+        if (full && tr.cell_unit) {
           // pre 스냅샷: 버퍼의 마지막 pre_slots칸 (null이면 버퍼 전체, 결정 F1)
           if (const CellSeries* cs = series.cell(e.cell_id)) {
             const std::size_t n = std::min(cs->size(), cfg_.pre_slots.value_or(cs->capacity()));
@@ -227,7 +252,7 @@ std::vector<Diag> EvidenceRecorder::on_feed(const Series& series, const EngineOu
         const Counts c = it != tracks_.end() ? it->second.counts : Counts{};
         push(RecordKind::Alert, e.alert_id, alert_record_line(e, c.sent, c.dropped), diags);  // 그 순간까지의 수 (결정 F3)
         if (it == tracks_.end()) break;
-        if (full && cfg_.post_slots > 0) {
+        if (full && cfg_.post_slots > 0 && it->second.cell_unit) {
           it->second.phase = Phase::Post;
           it->second.post_left = cfg_.post_slots;
         } else {

@@ -6,6 +6,7 @@
 //   경보 중  : 그 셀의 새 kpm2 줄마다 phase=active (끊김이면 먼저 gap)
 //   CLEAR    : 그 칸까지 active로 낸 뒤 alert(clear), 다음 칸부터 post_slots칸을 phase=post
 //   END      : alert(end) — post 없음
+// 위 kpm2 칸 증거는 셀 단위 경보(unit = "cell")만이다. UE 단위 경보는 alert 레코드만 낸다 (14_ §8.4)
 
 #include "detect/config.h"
 #include "detect/diag.h"
@@ -47,6 +48,7 @@ class EvidenceRecorder {
   struct Track {
     std::string rule;
     int64_t cell_id = 0;
+    bool cell_unit = true;  // 셀 단위 경보(unit = "cell")만 kpm2 칸 증거를 낸다 (14_ §8.4)
     Phase phase = Phase::Active;
     std::size_t post_left = 0;
     Counts counts;

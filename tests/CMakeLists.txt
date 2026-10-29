@@ -22,7 +22,6 @@ add_executable(detect_tests
   io/test_file_replay.cpp
 )
 target_link_libraries(detect_tests PRIVATE detect detect_io GTest::gtest_main)
-target_include_directories(detect_tests PRIVATE ${PROJECT_SOURCE_DIR}/third_party)
 target_compile_definitions(detect_tests PRIVATE
   DETECT_SCENARIO_DIR="${PROJECT_SOURCE_DIR}/tests/data/scenarios"
   DETECT_TMP_DIR="${CMAKE_CURRENT_BINARY_DIR}"

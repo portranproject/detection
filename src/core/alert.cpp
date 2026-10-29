@@ -1,7 +1,5 @@
 #include "detect/alert.h"
 
-#include <cstdio>
-
 namespace detect {
 
 AlertMachine::Step AlertMachine::on_slot(bool satisfied, int64_t t) {
@@ -41,12 +39,6 @@ void AlertMachine::reset() {
 
 namespace {
 
-std::string fmt(const char* f, double v) {
-  char buf[64];
-  std::snprintf(buf, sizeof(buf), f, v);
-  return buf;
-}
-
 const char* mode_str(AlertMode m) { return m == AlertMode::Normal ? "normal" : "dl_missing"; }
 const char* severity_str(Severity s) { return s == Severity::High ? "high" : "medium"; }
 
@@ -55,40 +47,42 @@ std::string head(const char* kind, const AlertEvent& e) {
          " t=" + std::to_string(e.t);
 }
 
-std::string uectx_str(const AlertEvent& e) {
-  if (!e.uectx || !e.max_conn) return "";
-  return " uectx=" + std::to_string(*e.uectx) + "/" + std::to_string(*e.max_conn);
+std::string fields_str(const AlertEvent& e) {
+  std::string s;
+  for (const auto& [k, v] : e.log_fields) s += " " + k + "=" + v;
+  return s;
 }
 
 }  // namespace
 
-// 경보 로그 한 줄 (3_ §7 예시 형식). 예:
-// ALERT RAISE rule=L3-01-V cell=1 t=… A_w=48 F_w=45 ratio=0.94 base=3.1 k=3 theta=0.5 f_abs=10 uectx=93/96 severity=high mode=normal candidates=L3-11
+// 경보 로그 한 줄 (3_ §7, 15_ §2.6·§4.6·§5.6 예시 형식). 골격은 모든 룰이 같고, 룰마다 다른 필드는 룰이
+// 사람이 읽는 형식으로 log_fields에 넣는다 (4_ §6.1 #5 '룰별 포맷터'). 예:
+//   ALERT RAISE rule=L3-01-V cell=1 t=… A_w=48 … uectx=93/96 severity=high mode=normal candidates=L3-11
+//   ALERT UPDATE rule=L3-21 cell=1 t=… ues_new=2 ues_total=7 branch=1 severity=high
+//   ALERT CLEAR rule=L3-20 cell=1 t=… duration_ms=… ues_total=3
+// candidates는 비어 있어도 'candidates='를 찍는다 (15_ §2.6 L3-20 예)
 std::string format_log_line(const AlertEvent& e) {
+  const bool ue = e.unit == "ue";
   switch (e.kind) {
     case AlertEventKind::Raise: {
-      std::string s = head("RAISE", e) + " A_w=" + std::to_string(e.a_w);
-      if (e.mode == AlertMode::Normal) {
-        s += " F_w=" + std::to_string(e.f_w.value_or(0)) + " ratio=" + fmt("%.2f", e.ratio.value_or(0));
-      } else {
-        s += " U=" + fmt("%.2f", e.u.value_or(0));  // 결정 E5
-      }
-      s += " base=" + fmt("%.1f", e.base) + " k=" + fmt("%g", e.k) + " theta=" + fmt("%g", e.theta);
-      if (e.f_abs) s += " f_abs=" + std::to_string(*e.f_abs);  // normal 모드만 (3_ §7, 10/27 Q-41)
-      s += uectx_str(e);
-      s += std::string(" severity=") + severity_str(e.severity) + " mode=" + mode_str(e.mode);
-      if (!e.candidates.empty()) {
-        s += " candidates=";
-        for (std::size_t i = 0; i < e.candidates.size(); ++i) s += (i ? "," : "") + e.candidates[i];
-      }
+      std::string s = head("RAISE", e) + fields_str(e);
+      s += std::string(" severity=") + severity_str(e.severity) + " mode=" + mode_str(e.mode) + " candidates=";
+      for (std::size_t i = 0; i < e.candidates.size(); ++i) s += (i ? "," : "") + e.candidates[i];
       return s;
     }
-    case AlertEventKind::Clear:
-      return head("CLEAR", e) + " duration_ms=" + std::to_string(e.duration_ms);
+    case AlertEventKind::Clear: {
+      std::string s = head("CLEAR", e) + " duration_ms=" + std::to_string(e.duration_ms);
+      if (ue) s += " ues_total=" + std::to_string(e.ues_total);
+      return s;
+    }
     case AlertEventKind::End:  // 결정 E3
       return head("END", e) + " duration_ms=" + std::to_string(e.duration_ms) + " reason=" + e.reason;
-    case AlertEventKind::Update:  // 결정 E2
-      return head("UPDATE", e) + std::string(" severity=") + severity_str(e.severity) + uectx_str(e);
+    case AlertEventKind::Update: {  // 결정 E2. UE 단위면 새로 걸린 UE 수·누적 수 (14_ §8.2)
+      std::string s = head("UPDATE", e);
+      if (ue) s += " ues_new=" + std::to_string(e.ues.size()) + " ues_total=" + std::to_string(e.ues_total);
+      if (e.branch) s += " branch=" + *e.branch;
+      return s + " severity=" + severity_str(e.severity) + fields_str(e);
+    }
   }
   return {};
 }

@@ -145,7 +145,7 @@ TEST(EvidenceRecord, RawIsVerbatim) {
   EXPECT_NO_THROW({ auto parsed = json::parse(line); (void)parsed; });
 }
 
-// alert 레코드는 공통 경보 형식 — 겉모양 + values·params·refs (14_ §8.3·§8.5, 4_ §6.1 #3)
+// alert 레코드는 공통 경보 형식 — 겉모양 + values·params·refs (14_ §8.3·§8.5, 4_ §6.1 #3), type 뒤에 fmt (4_ §6.1 #4)
 TEST(EvidenceRecord, AlertRaiseCommonFormat) {
   AlertEvent e;
   e.kind = AlertEventKind::Raise;
@@ -156,21 +156,22 @@ TEST(EvidenceRecord, AlertRaiseCommonFormat) {
   e.severity = Severity::High;
   e.cond = {"C1", "C2", "C3"};
   e.candidates = {"L3-11"};
-  e.a_w = 48;
-  e.f_w = 45;
-  e.ratio = 0.94;
-  e.base = 3.1;
-  e.uectx = 93;
-  e.max_conn = 96;
-  e.k = 3;
-  e.theta = 0.5;
-  e.f_abs = 10;
-  e.a_seq = {{5280, 5300}};
-  e.f_seq = {{5290, 5310}};
+  e.values["a_w"] = 48;
+  e.values["f_w"] = 45;
+  e.values["ratio"] = 0.94;
+  e.values["base"] = 3.1;
+  e.values["uectx"] = 93;
+  e.values["max_conn"] = 96;
+  e.params["k"] = 3.0;
+  e.params["theta"] = 0.5;
+  e.params["f_abs"] = 10;
+  e.refs["a"] = {5280, 5300};
+  e.refs["f"] = {5290, 5310};
   EXPECT_EQ(alert_record_line(e, 0, 0),
-            R"({"type":"alert","alert_id":"S-L3-01-V-1-5310","event":"raise","rule":"L3-01-V","stage":1,"unit":"cell",)"
-            R"("kind":"attack","cell":1,"t":1792209001200,"severity":"high","mode":"normal","cond":["C1","C2","C3"],)"
-            R"("candidates":["L3-11"],"values":{"a_w":48,"f_w":45,"ratio":0.94,"base":3.1,"uectx":93,"max_conn":96},)"
+            R"({"type":"alert","fmt":1,"alert_id":"S-L3-01-V-1-5310","event":"raise","rule":"L3-01-V","stage":1,)"
+            R"("unit":"cell","kind":"attack","cell":1,"t":1792209001200,"severity":"high","mode":"normal",)"
+            R"("cond":["C1","C2","C3"],"candidates":["L3-11"],)"
+            R"("values":{"a_w":48,"f_w":45,"ratio":0.94,"base":3.1,"uectx":93,"max_conn":96},)"
             R"("params":{"k":3.0,"theta":0.5,"f_abs":10},"refs":{"a":[5280,5300],"f":[5290,5310]}})");
 }
 
@@ -186,9 +187,93 @@ TEST(EvidenceRecord, AlertEndCommonFormat) {
   e.duration_ms = 5600;
   e.reason = "input_lost";
   EXPECT_EQ(alert_record_line(e, 7, 2),
-            R"({"type":"alert","alert_id":"S-L3-01-V-1-25","event":"end","rule":"L3-01-V","stage":1,"unit":"cell",)"
-            R"("kind":"attack","cell":1,"t":1000,"severity":"medium","mode":"dl_missing","duration_ms":5600,)"
-            R"("evidence_sent":7,"evidence_dropped":2,"reason":"input_lost"})");
+            R"({"type":"alert","fmt":1,"alert_id":"S-L3-01-V-1-25","event":"end","rule":"L3-01-V","stage":1,)"
+            R"("unit":"cell","kind":"attack","cell":1,"t":1000,"severity":"medium","mode":"dl_missing",)"
+            R"("duration_ms":5600,"evidence_sent":7,"evidence_dropped":2,"reason":"input_lost"})");
+}
+
+// UE 단위 경보 — 15_ §2.6 L3-20 alert 레코드 예를 바이트 그대로 (14_ §8.3 ues[] 칸 순서, refs 없음, branch 없음)
+TEST(EvidenceRecord, AlertUeUnitMatchesL320Example) {
+  AlertEvent e;
+  e.kind = AlertEventKind::Raise;
+  e.rule = "L3-20";
+  e.stage = 2;
+  e.unit = "ue";
+  e.alert_id = "20261026T090000Z-L3-20-1-8890";
+  e.cell_id = 1;
+  e.t = 1793005265500;
+  e.severity = Severity::High;
+  e.cond = {"same_stmsi", "concurrent", "not_accepted"};
+  e.values["concurrent"] = 1;
+  e.values["peer_uncertain"] = 0;
+  e.values["victims"] = 1;
+  e.values["held"] = 0;
+  e.params["accept_wait_ms"] = 5000;
+  e.params["clear_quiet_ms"] = 60000;
+  AlertUe u;
+  u.cell = 1;
+  u.du_ue_id = 7;
+  u.uid = 58;
+  u.cu_ue_id = 12;
+  u.crnti = 18050;
+  u.s_tmsi = 0x0123456789abULL;
+  u.cond = e.cond;
+  u.t_hit = 1793005265410;
+  u.values["peer"] = "concurrent";
+  u.values["nas"] = "ServiceRequest";
+  u.values["wait_ms"] = 5000;
+  u.values["closed_ms"] = nullptr;
+  u.values["victim_released"] = true;
+  u.values["repeat"] = 1;
+  u.peers = {{1, 3, 41}};
+  u.seq_range = {{8790, 8812}};
+  u.evidence = true;
+  e.ues = {u};
+  e.ues_total = 1;
+  EXPECT_EQ(alert_record_line(e, 0, 0),
+            R"({"type":"alert","fmt":1,"alert_id":"20261026T090000Z-L3-20-1-8890","event":"raise","rule":"L3-20",)"
+            R"("stage":2,"unit":"ue","kind":"attack","cell":1,"t":1793005265500,"severity":"high","mode":"normal",)"
+            R"("cond":["same_stmsi","concurrent","not_accepted"],"candidates":[],)"
+            R"("values":{"concurrent":1,"peer_uncertain":0,"victims":1,"held":0},)"
+            R"("params":{"accept_wait_ms":5000,"clear_quiet_ms":60000},)"
+            R"("ues":[{"cell":1,"du_ue_id":7,"uid":58,"cu_ue_id":12,"crnti":18050,"s_tmsi":"0x0123456789ab",)"
+            R"("cond":["same_stmsi","concurrent","not_accepted"],"t_hit":1793005265410,)"
+            R"("values":{"peer":"concurrent","nas":"ServiceRequest","wait_ms":5000,"closed_ms":null,)"
+            R"("victim_released":true,"repeat":1},"uncertain":[],"peers":[[1,3,41]],"seq_range":[8790,8812],)"
+            R"("evidence":true}],"ues_total":1})");
+}
+
+// UE 단위 경보의 그 밖 모양: 갈래(branch)는 mode 뒤, 식별 값이 없으면 null·peers는 뺌·values는 {},
+// clear에는 ues 없이 ues_total만 (14_ §8.3)
+TEST(EvidenceRecord, AlertUeUnitBranchNullsAndClear) {
+  AlertEvent e;
+  e.kind = AlertEventKind::Update;
+  e.rule = "L3-21";
+  e.stage = 2;
+  e.unit = "ue";
+  e.alert_id = "S-L3-21-1-9";
+  e.cell_id = 1;
+  e.t = 10;
+  e.branch = "2";
+  AlertUe u;
+  u.cell = 1;
+  u.du_ue_id = 9;
+  u.uid = 77;
+  u.uncertain = {"mid_join"};
+  e.ues = {u};
+  e.ues_total = 3;
+  EXPECT_EQ(alert_record_line(e, 0, 0),
+            R"({"type":"alert","fmt":1,"alert_id":"S-L3-21-1-9","event":"update","rule":"L3-21","stage":2,"unit":"ue",)"
+            R"("kind":"attack","cell":1,"t":10,"severity":"medium","mode":"normal","branch":"2",)"
+            R"("ues":[{"cell":1,"du_ue_id":9,"uid":77,"cu_ue_id":null,"crnti":null,"s_tmsi":null,"cond":[],"t_hit":0,)"
+            R"("values":{},"uncertain":["mid_join"],"seq_range":null,"evidence":false}],"ues_total":3})");
+
+  e.kind = AlertEventKind::Clear;
+  e.duration_ms = 60000;
+  EXPECT_EQ(alert_record_line(e, 0, 0),
+            R"({"type":"alert","fmt":1,"alert_id":"S-L3-21-1-9","event":"clear","rule":"L3-21","stage":2,"unit":"ue",)"
+            R"("kind":"attack","cell":1,"t":10,"severity":"medium","mode":"normal","branch":"2","ues_total":3,)"
+            R"("duration_ms":60000,"evidence_sent":0,"evidence_dropped":0})");
 }
 
 // ---- T9: RAISE pre 스냅샷에 refs.a·refs.f(A·F 윈도우 seq 범위) 칸이 모두 있음 ----
@@ -420,4 +505,47 @@ TEST(Evidence, FinishedCountsAreBounded) {
   }
   EXPECT_EQ(rec.finished_count(), EvidenceRecorder::kFinishedMax);
   EXPECT_EQ(q.size(), 2 * n);  // alert 레코드는 버리지 않는다
+}
+
+// UE 단위 경보(unit = "ue")는 kpm2 칸 증거(pre·active·gap·post)를 내지 않고 alert 레코드만 낸다 (14_ §8.4) —
+// UE 증거는 다음 이슈(UE 상태표)에서 붙인다
+TEST(Evidence, UeUnitAlertHasNoKpm2Evidence) {
+  EvidenceQueue q(100000);
+  EvidenceRecorder rec({}, q);
+  Engine engine;  // 룰 없이 series만 — 셀 버퍼에 칸이 쌓인다
+  const std::string id = "S-L3-20-1-x";
+  int stored = 0;
+  for (const auto& line : read_lines(scenario("T01_평상시"))) {
+    auto out = engine.feed_line(line);
+    if (out.outcome == FeedOutcome::Stored && out.cell_id) {
+      ++stored;
+      AlertEvent e;
+      e.rule = "L3-20";
+      e.stage = 2;
+      e.unit = "ue";
+      e.cell_id = *out.cell_id;
+      e.alert_id = id;
+      if (stored == 30) {
+        e.kind = AlertEventKind::Raise;
+        out.alerts.push_back(e);
+      } else if (stored == 60) {
+        e.kind = AlertEventKind::Clear;
+        out.alerts.push_back(e);
+      }
+    }
+    rec.on_feed(engine.series(), out);
+  }
+  ASSERT_GT(stored, 60 + 10);  // CLEAR 뒤에도 post_slots(10)칸 넘게 칸이 온다
+  q.close();
+  std::vector<json> mine;
+  EvidenceRecord x;
+  while (q.pop(x))
+    if (x.alert_id == id) mine.push_back(json::parse(x.line));
+  ASSERT_EQ(mine.size(), 2u);
+  EXPECT_EQ(mine[0]["type"], "alert");
+  EXPECT_EQ(mine[0]["event"], "raise");
+  EXPECT_EQ(mine[1]["type"], "alert");
+  EXPECT_EQ(mine[1]["event"], "clear");
+  EXPECT_EQ(mine[1]["evidence_sent"], 0);
+  EXPECT_EQ(rec.counts(id).sent, 0);
 }

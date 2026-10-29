@@ -6,6 +6,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cstdio>
 #include <memory>
 #include <optional>
 #include <string>
@@ -108,8 +109,8 @@ TEST(BtsVariant, RaiseWithShiftedWindowsAndLogValues) {
   const AlertEvent& e = h.alerts[0];
   EXPECT_EQ(e.kind, AlertEventKind::Raise);
   EXPECT_EQ(h.t_rel(e), 2400);
-  EXPECT_EQ(e.a_w, 12);  // A 윈도우 = 칸 4..13 → 시도 칸 10..13
-  EXPECT_EQ(e.f_w, 12);  // F 윈도우 = 칸 14..23 → NoReply 칸 20..23
+  EXPECT_EQ(e.values.at("a_w"), 12);  // A 윈도우 = 칸 4..13 → 시도 칸 10..13
+  EXPECT_EQ(e.values.at("f_w"), 12);  // F 윈도우 = 칸 14..23 → NoReply 칸 20..23
   EXPECT_EQ(e.mode, AlertMode::Normal);
   EXPECT_EQ(e.severity, Severity::Medium);
   EXPECT_EQ(e.candidates, std::vector<std::string>{"L3-11"});
@@ -119,6 +120,16 @@ TEST(BtsVariant, RaiseWithShiftedWindowsAndLogValues) {
   EXPECT_EQ(e.unit, "cell");
   EXPECT_EQ(e.alert_kind, "attack");
   EXPECT_EQ(e.cond, (std::vector<std::string>{"C1", "C2", "C2a"}));
+  // 로그 줄 전체 (3_ §7 순서): 룰이 log_fields로 넣는 근거 값 + 공통 꼬리 severity·mode·candidates (4_ §6.1 #5)
+  char base[32];
+  std::snprintf(base, sizeof(base), "%.1f", e.values.at("base").get<double>());
+  EXPECT_EQ(format_log_line(e), "ALERT RAISE rule=L3-01-V cell=1 t=" + std::to_string(e.t) +
+                                    " A_w=12 F_w=12 ratio=1.00 base=" + base +
+                                    " k=3 theta=0.5 f_abs=10 severity=medium mode=normal candidates=L3-11");
+  // alert 레코드의 자리 (14_ §8.5 옮김 표): k·theta는 실수, f_abs는 normal 모드만, refs는 A·F 윈도우 seq 범위
+  EXPECT_EQ(e.params.dump(), R"({"k":3.0,"theta":0.5,"f_abs":10})");
+  EXPECT_TRUE(e.refs.contains("a"));
+  EXPECT_TRUE(e.refs.contains("f"));
 }
 
 // T_nr = 500이면 D = 5칸 — 시차가 hello 값을 따른다 (3_ §3)
@@ -146,8 +157,8 @@ TEST(BtsVariant, C4FromHelloMaxConn) {
   h.slots(4, {3, 0, 3, 90});
   ASSERT_EQ(h.alerts.size(), 1u);
   EXPECT_EQ(h.alerts[0].severity, Severity::High);
-  EXPECT_EQ(h.alerts[0].uectx, 90);
-  EXPECT_EQ(h.alerts[0].max_conn, 96);
+  EXPECT_EQ(h.alerts[0].values.at("uectx"), 90);
+  EXPECT_EQ(h.alerts[0].values.at("max_conn"), 96);
   EXPECT_NE(format_log_line(h.alerts[0]).find("uectx=90/96 severity=high"), std::string::npos);
 }
 
@@ -175,7 +186,7 @@ TEST(BtsVariant, C4OffWithoutInputs) {
   h.slots(4, {3, 0, 3, 96});
   ASSERT_EQ(h.alerts.size(), 1u);
   EXPECT_EQ(h.alerts[0].severity, Severity::Medium);
-  EXPECT_FALSE(h.alerts[0].uectx);
+  EXPECT_FALSE(h.alerts[0].values.contains("uectx"));
 }
 
 // A·S 누락이 10칸을 넘으면 룰 비활성 로그, 다시 들어오면 재개 로그 (3_ §8)
@@ -236,9 +247,9 @@ TEST(BtsVariant, C2aRaisesUnderHighNormalLoad) {
   const AlertEvent& e = h.alerts[0];
   EXPECT_EQ(e.kind, AlertEventKind::Raise);
   EXPECT_EQ(h.t_rel(e), 2400);
-  ASSERT_TRUE(e.ratio);
-  EXPECT_LT(*e.ratio, 0.5);  // 비율로는 못 잡는 경우
-  EXPECT_EQ(e.f_abs, 10);
+  ASSERT_TRUE(e.values.contains("ratio"));
+  EXPECT_LT(e.values.at("ratio").get<double>(), 0.5);  // 비율로는 못 잡는 경우
+  EXPECT_EQ(e.params.at("f_abs"), 10);
   EXPECT_NE(format_log_line(e).find("theta=0.5 f_abs=10"), std::string::npos);
   EXPECT_EQ(e.cond, (std::vector<std::string>{"C1", "C2a"}));  // C2 불성립 — C2a로 걸렸음이 보인다
 }
@@ -275,7 +286,7 @@ TEST(BtsVariant, DlMissingRaiseHasNoFabs) {
   h.slots(10, {3, 0, std::nullopt});  // U가 θ를 넘어 시차 없이 RAISE
   ASSERT_FALSE(h.alerts.empty());
   EXPECT_EQ(h.alerts[0].mode, AlertMode::DlMissing);
-  EXPECT_FALSE(h.alerts[0].f_abs);
+  EXPECT_FALSE(h.alerts[0].params.contains("f_abs"));
   EXPECT_EQ(format_log_line(h.alerts[0]).find("f_abs="), std::string::npos);
   EXPECT_EQ(h.alerts[0].cond, std::vector<std::string>{"U"});  // 웜업 중 — C3 없음 (결정 J3)
 }
