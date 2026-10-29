@@ -1,0 +1,16 @@
+{
+  "scenario": "S20_L3-20_CONNECTED_high",
+  "description": "피해자 S-TMSI로 연 공격 연결, 수락 없음, 피해자 해제 → high (L20-T4)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-20",
+      "cell": 1,
+      "t_rel_ms": 6100,
+      "mode": "normal",
+      "severity": "high"
+    }
+  ]
+}

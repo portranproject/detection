@@ -1,0 +1,25 @@
+{
+  "scenario": "S21_L3-21_혼합_high",
+  "description": "갈래① RAISE 뒤 같은 셀 갈래② UE 걸림 → UPDATE·high (L21-T11)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-21",
+      "cell": 1,
+      "t_rel_ms": 6000,
+      "mode": "normal",
+      "severity": "medium",
+      "branch": "1"
+    },
+    {
+      "kind": "UPDATE",
+      "rule": "L3-21",
+      "cell": 1,
+      "t_rel_ms": 6400,
+      "severity": "high",
+      "branch": "1"
+    }
+  ]
+}

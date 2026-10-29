@@ -1,0 +1,23 @@
+{
+  "scenario": "S20_L3-20_세션변경_END",
+  "description": "공격 RAISE 뒤 분석 엔진 재시작(새 session) → END (14_ §7)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-20",
+      "cell": 1,
+      "t_rel_ms": 6100,
+      "mode": "normal",
+      "severity": "high"
+    },
+    {
+      "kind": "END",
+      "rule": "L3-20",
+      "cell": 1,
+      "t_rel_ms": 7000,
+      "reason": "session_reset"
+    }
+  ]
+}

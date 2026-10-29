@@ -1,0 +1,7 @@
+{
+  "scenario": "S20_L3-20_정상첫등록_무경보",
+  "description": "정상 첫 등록(SUCI, S-TMSI 없음) — 짝 없음, 경보 없음 (L20-T1)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}
