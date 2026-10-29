@@ -181,7 +181,7 @@ UeTable::Applied UeTable::apply(const UeEvt& e, int64_t seq, DeadlineQueue& dq) 
   auto it = entries_.find(a.key);
   // 열린 키에 RRCSetupRequest — UEContextReleaseComplete를 놓쳐 F1AP ID가 재사용됐다. 옛 항목을 reused로 닫고 새로 연다 (14_ §4.1)
   if (it != entries_.end() && is(e, Proto::RRC, Dir::UL, "RRCSetupRequest")) {
-    a.closed.push_back(close(it, CloseReason::Reused));
+    a.closed.push_back(close(it, CloseReason::Reused, e.t_ms, &dq));
     it = entries_.end();
   }
   if (it == entries_.end()) {
@@ -194,7 +194,7 @@ UeTable::Applied UeTable::apply(const UeEvt& e, int64_t seq, DeadlineQueue& dq) 
                              "UE table full (" + std::to_string(cfg_.max_ues) + "): evicted du_ue_id=" +
                                  std::to_string(v.key.du_ue_id) + " uid=" + std::to_string(v.uid) +
                                  " (cell total " + std::to_string(n) + ")"});
-      a.closed.push_back(close(victim, CloseReason::Evicted));
+      a.closed.push_back(close(victim, CloseReason::Evicted, e.t_ms, nullptr));
     }
     it = entries_.emplace(a.key, Entry{open_state(a.key, next_uid_++, e), {}}).first;
     a.opened = true;
@@ -235,12 +235,13 @@ UeTable::Applied UeTable::apply(const UeEvt& e, int64_t seq, DeadlineQueue& dq) 
 // ⑥·⑦ (14_ §7): 이 줄로 망에 받아들여진 항목이 있으면 같은 S-TMSI의 불확실한(loss·mid_join) 옛 열린 항목을
 // superseded로 닫는다 — 해제 줄을 로스로 놓친 유령을 치운다. 불확실하지 않은 옛 항목은 남겨 룰(L3-20)이 본다(14_ §4.2).
 // 받아들여진 순간(또는 받아들여진 뒤 S-TMSI가 바뀐 순간)에만 본다. UEContextReleaseComplete면 그 항목을 released로 닫는다
-std::vector<UeTable::Closed> UeTable::settle(const Applied& a) {
+std::vector<UeTable::Closed> UeTable::settle(const Applied& a, DeadlineQueue& dq) {
   std::vector<Closed> out;
   if (!a.linked) return out;
   auto it = entries_.find(a.key);
   if (it == entries_.end() || it->second.st.uid != a.after.uid) return out;
   const UeState& n = it->second.st;
+  const int64_t t = a.after.last.t_ms;
   if (admitted(n) && n.s_tmsi && (!admitted(a.before) || a.before.s_tmsi != n.s_tmsi)) {
     std::vector<UeKey> ghosts;
     if (auto ix = by_s_tmsi_.find(*n.s_tmsi); ix != by_s_tmsi_.end()) {
@@ -250,15 +251,25 @@ std::vector<UeTable::Closed> UeTable::settle(const Applied& a) {
         if (o.uid < n.uid && (o.mid_join || o.loss)) ghosts.push_back(k);
       }
     }
-    for (const UeKey& k : ghosts) out.push_back(close(entries_.find(k), CloseReason::Superseded));
+    for (const UeKey& k : ghosts) out.push_back(close(entries_.find(k), CloseReason::Superseded, t, &dq));
   }
-  if (a.released) out.push_back(close(entries_.find(a.key), CloseReason::Released));
+  if (a.released) out.push_back(close(entries_.find(a.key), CloseReason::Released, t, &dq));
   return out;
 }
 
-// 상태표 몫 마감 stale_setup (14_ §4.2·§6.1 표): CONNECTED 전인 항목이 stale_setup_ms 동안 새 줄이 없으면 닫는다.
-// t_last가 바뀌었으면 새 마감으로 다시 넣고, CONNECTED가 됐거나 닫힌 항목(uid가 다름)이면 버린다
+// 상태표 몫 마감 (14_ §6.1 표).
+//  - closed_recent: 닫힌 항목 recent 보관이 끝났다 — 그 보관분이 아직 있고 같은 것이면 지운다 (14_ §2.3)
+//  - stale_setup: CONNECTED 전인 항목이 stale_setup_ms 동안 새 줄이 없으면 닫는다(14_ §4.2). t_last가 바뀌었으면
+//    새 마감으로 다시 넣고, CONNECTED가 됐거나 닫힌 항목(uid가 다름)이면 버린다
 std::optional<UeTable::Closed> UeTable::on_deadline(const Deadline& d, DeadlineQueue& dq) {
+  if (d.tag == kKeptTag) {
+    auto k = kept_.find({d.key, d.uid});
+    if (k != kept_.end() && k->second.closed_at == d.t_from) {
+      kept_order_.erase(k->second.order);
+      kept_.erase(k);
+    }
+    return std::nullopt;
+  }
   auto it = entries_.find(d.key);
   if (it == entries_.end() || it->second.st.uid != d.uid) return std::nullopt;
   const UeState& s = it->second.st;
@@ -267,7 +278,7 @@ std::optional<UeTable::Closed> UeTable::on_deadline(const Deadline& d, DeadlineQ
     dq.add(stale_deadline(s));
     return std::nullopt;
   }
-  return close(it, CloseReason::StaleSetup);
+  return close(it, CloseReason::StaleSetup, d.at, &dq);
 }
 
 // 로스 창이 난 셀의 열린 항목에 loss와 마지막 로스 시각 (14_ §4.3, §7 kpm2 ②)
@@ -289,7 +300,7 @@ std::vector<UeTable::Closed> UeTable::close_du(const F1Evt& f) {
   for (auto it = entries_.begin(); it != entries_.end();) {
     Iter cur = it++;
     if (listed(f.cells, cur->first.cell_id) && listed(f.du_ue_ids, cur->first.du_ue_id))
-      out.push_back(close(cur, CloseReason::DuReset));
+      out.push_back(close(cur, CloseReason::DuReset, f.t_ms, nullptr));
   }
   return out;
 }
@@ -300,6 +311,9 @@ void UeTable::clear() {
   by_part1_.clear();
   counts_.clear();
   next_uid_ = 1;
+  kept_.clear();
+  kept_order_.clear();
+  next_kept_ = 0;
 }
 
 const UeState* UeTable::find(const UeKey& key) const {
@@ -316,18 +330,52 @@ const std::deque<RecentLine>* UeTable::recent(const UeKey& key) const {
   return it == entries_.end() ? nullptr : &it->second.recent;
 }
 
+const std::deque<RecentLine>* UeTable::recent(const UeKey& key, int64_t uid) const {
+  if (auto it = entries_.find(key); it != entries_.end() && it->second.st.uid == uid) return &it->second.recent;
+  auto k = kept_.find({key, uid});
+  return k == kept_.end() ? nullptr : &k->second.recent;
+}
+
 UeTable::CellCounts UeTable::counts(int64_t cell) const {
   auto it = counts_.find(cell);
   return it == counts_.end() ? CellCounts{} : it->second;
 }
 
-// 닫기 (14_ §4.2): 색인에서 빼고 표에서 지운 뒤 마지막 상태·최근 메시지를 돌려준다
-UeTable::Closed UeTable::close(Iter it, CloseReason reason) {
-  Closed c{std::move(it->second.st), std::move(it->second.recent), reason};
+// 닫기 (14_ §4.2): 색인에서 빼고 표에서 지운 뒤 마지막 상태를 돌려준다. released·reused·stale_setup·superseded면
+// 최근 메시지를 보관한다 — 경보를 낼 때 걸린 UE가 이미 닫혀 있을 수 있어서다(14_ §2.3). du_reset·evicted는 룰도
+// 대기 표시를 지우므로(15_ §1) 보관하지 않는다
+UeTable::Closed UeTable::close(Iter it, CloseReason reason, int64_t t, DeadlineQueue* dq) {
+  Closed c{std::move(it->second.st), reason};
   if (c.last.s_tmsi) index_erase(by_s_tmsi_, *c.last.s_tmsi, c.last.key);
   if (const std::optional<uint64_t> p1 = part1_of(c.last)) index_erase(by_part1_, *p1, c.last.key);
+  const bool keep = reason == CloseReason::Released || reason == CloseReason::Reused ||
+                    reason == CloseReason::StaleSetup || reason == CloseReason::Superseded;
+  if (keep && dq) keep_recent(c.last, std::move(it->second.recent), t, *dq);
   entries_.erase(it);
   return c;
+}
+
+// 닫힌 항목 recent 보관 (14_ §2.3·§6.1 표 closed_recent): 닫힌 시각 + 보관 시간에 표 몫 마감으로 지우고,
+// 개수 상한 closed_recent_max를 넘으면 오래된 것부터 버린다. 증거에만 쓰고 판정에는 쓰지 않는다
+void UeTable::keep_recent(const UeState& last, std::deque<RecentLine> recent, int64_t t, DeadlineQueue& dq) {
+  if (keep_ms_ <= 0 || cfg_.closed_recent_max == 0 || recent.empty()) return;
+  const UeId id{last.key, last.uid};
+  const uint64_t order = next_kept_++;
+  kept_[id] = Kept{std::move(recent), order, t};
+  kept_order_[order] = id;
+  while (kept_.size() > cfg_.closed_recent_max) {
+    auto oldest = kept_order_.begin();
+    kept_.erase(oldest->second);
+    kept_order_.erase(oldest);
+  }
+  Deadline d;
+  d.at = t + keep_ms_;
+  d.key = last.key;
+  d.uid = last.uid;
+  d.owner = DeadlineQueue::kTableOwner;
+  d.tag = kKeptTag;
+  d.t_from = t;  // 닫힌 시각 — 꺼낼 때 보관분의 closed_at과 대조
+  dq.add(std::move(d));
 }
 
 // 밀어낼 순서 (14_ §4.4): ① rrc가 CONNECTED가 아닌 항목 → ② CONNECTED이지만 불확실한 항목 → ③ 나머지.

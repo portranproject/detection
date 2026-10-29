@@ -64,7 +64,7 @@ RunResult run_scenario(const std::string& path, EvidenceConfig ecfg, std::size_t
   for (const auto& line : read_lines(path)) {
     auto out = engine.feed_line(line);
     r.alerts.insert(r.alerts.end(), out.alerts.begin(), out.alerts.end());
-    auto d = rec.on_feed(engine.series(), out);
+    auto d = rec.on_feed(engine.series(), engine.ue_table(), out);
     r.diags.insert(r.diags.end(), d.begin(), d.end());
   }
   q.close();
@@ -390,7 +390,7 @@ TEST(Evidence, T16SlowConsumerSeesExactInput) {
       got.push_back(x.line);
     }
   });
-  for (const auto& line : lines) rec.on_feed(engine.series(), engine.feed_line(line));
+  for (const auto& line : lines) rec.on_feed(engine.series(), engine.ue_table(), engine.feed_line(line));
   q.close();
   consumer.join();
 
@@ -489,6 +489,7 @@ TEST(Evidence, FinishedCountsAreBounded) {
   ecfg.mode = EvidenceMode::Ref;  // alert만 — pre 스냅샷이 없어 셀 버퍼 없이 돌릴 수 있다
   EvidenceRecorder rec(ecfg, q);
   Series s;
+  UeTable t;
   const std::size_t n = EvidenceRecorder::kFinishedMax + 100;
   for (std::size_t i = 0; i < n; ++i) {
     EngineOutput out;
@@ -501,14 +502,14 @@ TEST(Evidence, FinishedCountsAreBounded) {
     e.kind = AlertEventKind::End;
     e.reason = "session_reset";
     out.alerts.push_back(e);
-    rec.on_feed(s, out);
+    rec.on_feed(s, t, out);
   }
   EXPECT_EQ(rec.finished_count(), EvidenceRecorder::kFinishedMax);
   EXPECT_EQ(q.size(), 2 * n);  // alert 레코드는 버리지 않는다
 }
 
-// UE 단위 경보(unit = "ue")는 kpm2 칸 증거(pre·active·gap·post)를 내지 않고 alert 레코드만 낸다 (14_ §8.4) —
-// UE 증거는 다음 이슈(UE 상태표)에서 붙인다
+// UE 단위 경보(unit = "ue")는 kpm2 칸 증거(pre·active·post)를 내지 않는다. UE 증거는 ues[]에 실린 UE의 최근 메시지라
+// (14_ §8.4, test_ue_evidence.cpp) ues가 빈 이 경보는 alert 레코드만 낸다
 TEST(Evidence, UeUnitAlertHasNoKpm2Evidence) {
   EvidenceQueue q(100000);
   EvidenceRecorder rec({}, q);
@@ -533,7 +534,7 @@ TEST(Evidence, UeUnitAlertHasNoKpm2Evidence) {
         out.alerts.push_back(e);
       }
     }
-    rec.on_feed(engine.series(), out);
+    rec.on_feed(engine.series(), engine.ue_table(), out);
   }
   ASSERT_GT(stored, 60 + 10);  // CLEAR 뒤에도 post_slots(10)칸 넘게 칸이 온다
   q.close();

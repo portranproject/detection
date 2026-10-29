@@ -102,10 +102,9 @@ class UeTable {
  public:
   explicit UeTable(UeTableConfig cfg = {});
 
-  // 닫힌 항목 하나 — 닫히기 직전의 상태·최근 메시지와 이유
+  // 닫힌 항목 하나 — 닫히기 직전의 상태와 이유. 최근 메시지는 상태표가 보관한다(recent(key, uid), 14_ §2.3)
   struct Closed {
     UeState last;
-    std::deque<RecentLine> recent;
     CloseReason reason = CloseReason::Released;
   };
 
@@ -124,8 +123,8 @@ class UeTable {
   // ②~④: 항목 찾기·열기 → 갱신 전 복사 → 전이·횟수·최근 메시지·색인. 새 항목이면 stale_setup 마감을 넣는다
   Applied apply(const UeEvt& e, int64_t seq, DeadlineQueue& dq);
   // ⑥·⑦: 룰이 이 줄을 본 뒤에 부른다 — superseded, UEContextReleaseComplete면 released
-  std::vector<Closed> settle(const Applied& a);
-  // 상태표 몫 마감(stale_setup)을 꺼냈을 때. 닫았으면 그 항목, 아니면 nullopt(필요하면 마감을 다시 넣는다)
+  std::vector<Closed> settle(const Applied& a, DeadlineQueue& dq);
+  // 상태표 몫 마감(stale_setup·closed_recent)을 꺼냈을 때. 항목을 닫았으면 그 항목, 아니면 nullopt
   std::optional<Closed> on_deadline(const Deadline& d, DeadlineQueue& dq);
   // 그 셀에 로스 창이 났다 — 열린 항목에 loss와 마지막 로스 시각 (14_ §4.3)
   void mark_loss(int64_t cell, int64_t t_loss);
@@ -139,7 +138,14 @@ class UeTable {
   std::vector<const UeState*> by_s_tmsi(uint64_t s_tmsi) const;  // 48비트 색인 (14_ §3.1)
   std::vector<const UeState*> by_part1(uint64_t part1) const;    // Part1(하위 39비트) 색인 (14_ §3.1)
   const std::deque<RecentLine>* recent(const UeKey& key) const;
+  // 그 UE (키, uid)의 최근 메시지 — 열린 항목이면 지금 것, 닫혔으면 보관분(14_ §2.3). 없거나 보관이 끝났으면 nullptr
+  const std::deque<RecentLine>* recent(const UeKey& key, int64_t uid) const;
   std::size_t size() const { return entries_.size(); }
+  std::size_t kept_size() const { return kept_.size(); }  // 보관 중인 닫힌 항목 recent 수
+
+  // 닫힌 항목 recent 보관 시간 (14_ §1.1·§2.3) — Engine이 등록된 2단계 룰의 증거 지평 최댓값 + 여유로 정한다. 0이면 보관하지 않는다
+  void set_recent_keep_ms(int64_t ms) { keep_ms_ = ms; }
+  int64_t recent_keep_ms() const { return keep_ms_; }
 
   // 셀별 수 (진단·테스트용)
   struct CellCounts {
@@ -150,15 +156,25 @@ class UeTable {
   CellCounts counts(int64_t cell) const;
 
   static constexpr const char* kStaleTag = "stale_setup";
+  static constexpr const char* kKeptTag = "closed_recent";
 
  private:
   struct Entry {
     UeState st;
     std::deque<RecentLine> recent;
   };
+  // 닫힌 항목의 recent 보관분 (14_ §2.3)
+  struct Kept {
+    std::deque<RecentLine> recent;
+    uint64_t order = 0;     // 넣은 순서 — 상한을 넘으면 오래된 것부터 버린다
+    int64_t closed_at = 0;  // 닫힌 데이터 시각 — 보관 끝 마감과 대조
+  };
   using Iter = std::map<UeKey, Entry>::iterator;
+  using UeId = std::pair<UeKey, int64_t>;  // (키, uid)
 
-  Closed close(Iter it, CloseReason reason);
+  // 닫기. t = 닫힌 데이터 시각, dq가 있으면 보관 대상 이유의 recent를 보관한다
+  Closed close(Iter it, CloseReason reason, int64_t t, DeadlineQueue* dq);
+  void keep_recent(const UeState& last, std::deque<RecentLine> recent, int64_t t, DeadlineQueue& dq);
   Iter pick_victim();
   void reindex(const UeKey& key, std::optional<uint64_t> old_s, std::optional<uint64_t> old_p1, const UeState& s);
   Deadline stale_deadline(const UeState& s) const;
@@ -170,6 +186,10 @@ class UeTable {
   std::map<uint64_t, std::set<UeKey>> by_part1_;   // Part1 → 열린 키
   std::map<int64_t, CellCounts> counts_;
   int64_t next_uid_ = 1;
+  std::map<UeId, Kept> kept_;
+  std::map<uint64_t, UeId> kept_order_;  // 넣은 순서 → (키, uid)
+  uint64_t next_kept_ = 0;
+  int64_t keep_ms_ = 0;
 };
 
 }  // namespace detect

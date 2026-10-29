@@ -76,6 +76,7 @@ class WaitRule : public UeRule {
   }
 
   const char* id() const override { return "TEST-WAIT"; }
+  int64_t evidence_horizon_ms() const override { return kWait; }
 
   void on_ue_event(const UeEvt& e, const UeState&, const UeState& after, const UeRuleCtx& ctx, RuleOutput&) override {
     log.push_back("event " + name(after) + " " + e.msg);

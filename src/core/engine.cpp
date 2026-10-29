@@ -6,6 +6,10 @@
 namespace detect {
 namespace {
 
+// 증거 지평에 더하는 여유 (14_ §2.3). 마감은 그 시각이 든 kpm2 창에서 처리되고 룰이 경보를 on_cell_tick에서 낼 수도
+// 있어, 걸린 UE의 보관분이 경보와 같은 줄에서 먼저 지워지지 않게 1 s(100 ms 칸 10개)를 더한다
+constexpr int64_t kRecentKeepMarginMs = 1000;
+
 void append(RuleOutput& ro, EngineOutput& out) {
   out.diags.insert(out.diags.end(), std::make_move_iterator(ro.diags.begin()), std::make_move_iterator(ro.diags.end()));
   out.alerts.insert(out.alerts.end(), std::make_move_iterator(ro.alerts.begin()),
@@ -19,7 +23,11 @@ Engine::Engine(SeriesConfig cfg, std::size_t max_line_bytes, UeTableConfig ue_cf
 
 void Engine::add_rule(std::unique_ptr<Rule> rule) { rules_.push_back(std::move(rule)); }
 
-void Engine::add_ue_rule(std::unique_ptr<UeRule> rule) { ue_rules_.push_back(std::move(rule)); }
+void Engine::add_ue_rule(std::unique_ptr<UeRule> rule) {
+  const int64_t keep = rule->evidence_horizon_ms() + kRecentKeepMarginMs;
+  if (keep > table_.recent_keep_ms()) table_.set_recent_keep_ms(keep);
+  ue_rules_.push_back(std::move(rule));
+}
 
 // 한 줄 처리 (4_ §3, 14_ §7): series를 먼저 갱신하고, 그 결과를 등록 순서대로 1단계 룰에 넘긴다.
 // 2단계가 켜져 있으면 이어서 줄 유형별로 UE 상태표·마감 목록·2단계 룰에 넘긴다 — kpm2는 1단계 다음이다(14_ §7 kpm2 ①)
@@ -76,13 +84,14 @@ void Engine::on_ue_evt(const UeEvt& e, int64_t seq, EngineOutput& out) {
   UeTable::Applied a = table_.apply(e, seq, deadlines_);
   out.diags.insert(out.diags.end(), a.diags.begin(), a.diags.end());
   if (!a.linked) return;
+  out.ue_line = EngineOutput::UeLine{a.key, a.after.uid, seq, e.raw};
   notify_close(a.closed, e.t_ms, seq, out);
   for (std::size_t i = 0; i < ue_rules_.size(); ++i) {
     RuleOutput ro;
     ue_rules_[i]->on_ue_event(e, a.before, a.after, ctx(i, seq), ro);
     append(ro, out);
   }
-  notify_close(table_.settle(a), e.t_ms, seq, out);
+  notify_close(table_.settle(a, deadlines_), e.t_ms, seq, out);
 }
 
 // f1_evt (14_ §7, 2_ §6.7): 그 셀의 열린 항목(일부 Reset이면 그 UE만)을 du_reset으로 닫는다. 세션·kpm2·1단계 상태는 그대로

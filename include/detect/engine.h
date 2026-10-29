@@ -13,6 +13,7 @@
 #include "detect/ue_table.h"
 
 #include <memory>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -25,6 +26,14 @@ struct EngineOutput {
   FeedOutcome outcome = FeedOutcome::Dropped;
   std::optional<int64_t> cell_id;
   std::optional<GapEvent> gap;
+  // 이번 줄(ue_evt)이 반영된 UE — UE 증거 active용 (14_ §8.4)
+  struct UeLine {
+    UeKey key;
+    int64_t uid = 0;
+    int64_t seq = 0;
+    std::string raw;  // 받은 원본 줄 그대로
+  };
+  std::optional<UeLine> ue_line;
 };
 
 class Engine {
@@ -32,7 +41,8 @@ class Engine {
   explicit Engine(SeriesConfig cfg = {}, std::size_t max_line_bytes = kDefaultMaxLineBytes, UeTableConfig ue_cfg = {});
 
   void add_rule(std::unique_ptr<Rule> rule);
-  // 2단계 이상 룰 (14_ §1.1). hello에 ue_evt 표시가 있을 때만 불린다 (2_ §6.5)
+  // 2단계 이상 룰 (14_ §1.1). hello에 ue_evt 표시가 있을 때만 불린다 (2_ §6.5).
+  // 닫힌 항목 recent 보관 시간을 룰의 증거 지평에 맞춰 늘린다 (14_ §2.3)
   void add_ue_rule(std::unique_ptr<UeRule> rule);
   EngineOutput feed_line(std::string_view line);
 

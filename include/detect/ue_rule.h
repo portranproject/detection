@@ -49,6 +49,9 @@ class UeRule {
  public:
   virtual ~UeRule() = default;
   virtual const char* id() const = 0;
+  // 증거 지평 (14_ §1.1, 10/29 이슈 #25): 닫힌 UE의 recent가 이 룰의 경보 증거로 필요할 수 있는 최대 시간 — 대기 시간 +
+  // 셀 창. 상태표는 등록된 룰의 최댓값만큼 닫힌 항목의 recent를 보관한다(14_ §2.3)
+  virtual int64_t evidence_horizon_ms() const = 0;
   // ue_evt 1줄이 상태표에 반영된 직후 (14_ §7 ⑤). before·after = 갱신 전·후 상태 — '요청 없는 응답'처럼
   // 갱신 전 상태를 봐야 하는 판정을 위해 둘 다 넘긴다(14_ §1)
   virtual void on_ue_event(const UeEvt& evt, const UeState& before, const UeState& after, const UeRuleCtx& ctx,
