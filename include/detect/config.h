@@ -58,6 +58,12 @@ struct AlertConfig {
   std::size_t ue_evidence_max = 50;  // alert.ue_evidence_max — 경보 하나에서 증거를 내는 UE 수 상한 (14_ §8.3)
 };
 
+// 룰 L3-20 Blind DoS (15_ §2.4·§1.2). 설정 파일 키 rules.L3-20.*는 아직 읽지 않고 이 기본값을 쓴다 (4_ §1.2)
+struct BlindDosConfig {
+  int64_t accept_wait_ms = 5000;   // accept_wait_ms — T_acc, 망 수락 대기 (15_ §2.3)
+  int64_t clear_quiet_ms = 60000;  // clear_quiet_ms — 마지막 걸림 뒤 이만큼 새로 걸린 UE가 없으면 해제 (15_ §2.5)
+};
+
 // 설정 파일 전체 (4_ §1.2). rules는 룰 ID → 그 룰의 설정 객체(JSON 문자열)다 — 공통 파서는 넘기기만 하고
 // 룰별 파서(parse_bts_variant_config 등)가 키·범위를 검사한다 (Q-46, 결정 J4)
 struct DetectorConfig {
