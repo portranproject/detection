@@ -25,6 +25,13 @@ const char* to_string(DiagKind kind) {
     case DiagKind::ModeChanged: return "mode_changed";
     case DiagKind::BaselineLow: return "baseline_low";
     case DiagKind::EvidenceDropped: return "evidence_dropped";
+    case DiagKind::EvtBeforeHello: return "evt_before_hello";
+    case DiagKind::UeEvtOff: return "ue_evt_off";
+    case DiagKind::UeLate: return "ue_late";
+    case DiagKind::UeEvicted: return "ue_evicted";
+    case DiagKind::NgapUnlinked: return "ngap_unlinked";
+    case DiagKind::UeEvtLostMissing: return "ue_evt_lost_missing";
+    case DiagKind::DlUnobserved: return "dl_unobserved";
   }
   return "unknown";
 }

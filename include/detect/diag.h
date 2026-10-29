@@ -30,6 +30,14 @@ enum class DiagKind {
   ModeChanged,         // normal ↔ dl_missing 전환 (3_ §4.1·§8)
   BaselineLow,         // 웜업 종료 시 k × base < A_min — C3가 사실상 항상 참 (3_ §5)
   EvidenceDropped,     // 큐가 넘쳐 증거를 버림 — 경보마다 처음 1회, post 구간 몫은 post 끝에 (3_ §7.1, 결정 F3·F7)
+  // 2단계 — UE 상태표·마감 목록 (14_)
+  EvtBeforeHello,      // hello 전 ue_evt·f1_evt (2_ §6.5)
+  UeEvtOff,            // hello에 ue_evt 표시가 없음 — 2단계 이상 룰을 끈다 (2_ §6.5)
+  UeLate,              // 셀 워터마크보다 이른 ue_evt — 이력에는 넣고 판정은 바꾸지 않음 (2_ §6.5, 14_ §4.3)
+  UeEvicted,           // 상태표 상한이 차서 항목을 밀어냄 (14_ §4.4)
+  NgapUnlinked,        // F1AP UE에 잇지 못한 NGAP NAS 줄 — 셀별로 세고 셀마다 처음 1회만 (14_ §7, 2_ §6.6)
+  UeEvtLostMissing,    // ue_evt_lost 없는 kpm2가 한 셀에서 연속 50칸 (14_ §6.2)
+  DlUnobserved,        // ue_evt_lost에 "DL"이 한 셀에서 연속 50칸 (14_ §6.2, 15_ §2.7·§4.7)
 };
 
 const char* to_string(DiagKind kind);

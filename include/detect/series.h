@@ -88,7 +88,8 @@ struct WindowSums {
 enum class FeedOutcome {
   Stored,          // kpm2를 버퍼에 넣음
   Dropped,         // 버림 (형식 오류·ver·hello 전·다른 session·seq 역행·겹침·셀 상한)
-  Ignored,         // 받았지만 쓰지 않음 (모르는 type, ue_evt)
+  Ignored,         // 받았지만 쓰지 않음 (모르는 type)
+  Passed,          // ue_evt·f1_evt — series는 저장하지 않고 Engine이 UE 상태표로 넘긴다 (14_ §7)
   SessionStarted,  // 첫 hello
   SessionReset,    // 이전 상태를 버리고 새로 시작 — 룰은 진행 중 경보를 end(session_reset)로 끝낸다 (3_ §7.1·§8)
   SessionResumed,  // 같은 session·같은 파라미터 hello — 상태 유지

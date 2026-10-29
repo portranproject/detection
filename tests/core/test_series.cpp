@@ -192,18 +192,42 @@ TEST(Series, SeqGapIsLoggedButProcessed) {
   EXPECT_FALSE(r.gap);  // seq 건너뜀만으로는 셀 끊김이 아니다
 }
 
-// 모르는 type·ue_evt·f1_evt도 seq 번호열을 함께 쓰므로 건너뜀으로 잡히면 안 된다. series는 kpm2만 저장한다 (14_ §7)
+namespace {
+std::string ue_evt_line(const std::string& session, int64_t seq) {
+  return R"({"type":"ue_evt","ver":1,"session":")" + session + R"(","seq":)" + std::to_string(seq) +
+         R"(,"t_ms":150,"cell_id":1,"du_ue_id":3,"crnti":1,"dir":"UL","proto":"RRC","msg":"RRCSetupRequest"})";
+}
+}  // namespace
+
+// 모르는 type·ue_evt·f1_evt도 seq 번호열을 함께 쓰므로 건너뜀으로 잡히면 안 된다. series는 kpm2만 저장하고
+// ue_evt·f1_evt는 Passed로 넘긴다 — UE 상태표 몫 (14_ §7)
 TEST(Series, SeqSharedAcrossTypes) {
   Series s;
   feed(s, hello_line("s1", 1));
   feed(s, kpm_line("s1", 2, 1, 0, 1, 1, 0));
-  EXPECT_EQ(feed(s, R"({"type":"ue_evt","ver":1,"session":"s1","seq":3,"t_ms":150,"cell_id":1,"du_ue_id":3,"crnti":1,"dir":"UL","proto":"RRC","msg":"RRCSetupRequest"})").outcome,
-            FeedOutcome::Ignored);
+  EXPECT_EQ(feed(s, ue_evt_line("s1", 3)).outcome, FeedOutcome::Passed);
   EXPECT_EQ(feed(s, R"({"type":"f1_evt","ver":1,"session":"s1","seq":4,"t_ms":160,"msg":"F1SetupRequest","cells":[1]})").outcome,
-            FeedOutcome::Ignored);
+            FeedOutcome::Passed);
   EXPECT_EQ(feed(s, R"({"type":"x_evt","ver":1,"session":"s1","seq":5})").outcome, FeedOutcome::Ignored);
   auto r = feed(s, kpm_line("s1", 6, 1, 1, 1, 1, 0));
   EXPECT_FALSE(has_diag(r, DiagKind::SeqGap));
+  EXPECT_EQ(s.cell(1)->size(), 2u);  // ue_evt·f1_evt는 버퍼에 넣지 않는다
+}
+
+// ue_evt·f1_evt도 hello 전·다른 session·seq 역행이면 kpm2처럼 버리고 진단 (2_ §6.5)
+TEST(Series, UeEvtDroppedLikeKpm2) {
+  Series s;
+  auto before = feed(s, ue_evt_line("s1", 1));
+  EXPECT_EQ(before.outcome, FeedOutcome::Dropped);
+  EXPECT_TRUE(has_diag(before, DiagKind::EvtBeforeHello));
+  feed(s, hello_line("s1", 2));
+  auto foreign = feed(s, ue_evt_line("s0", 3));
+  EXPECT_EQ(foreign.outcome, FeedOutcome::Dropped);
+  EXPECT_TRUE(has_diag(foreign, DiagKind::ForeignSession));
+  EXPECT_EQ(feed(s, ue_evt_line("s1", 3)).outcome, FeedOutcome::Passed);
+  auto dup = feed(s, ue_evt_line("s1", 3));
+  EXPECT_EQ(dup.outcome, FeedOutcome::Dropped);
+  EXPECT_TRUE(has_diag(dup, DiagKind::SeqRegress));
 }
 
 // 결정 D5: seq 중복·역행은 버림
