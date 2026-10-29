@@ -106,7 +106,8 @@ std::vector<int64_t> Series::cell_ids() const {
 }
 
 // 파싱 결과 분기. 형식 오류·ver 불일치는 버리고 진단만 남긴다 (2_ §1·§3, 1_ FR-6).
-// 모르는 type·ue_evt·f1_evt는 series가 쓰지 않지만 같은 session이면 seq는 이어서 본다 — seq는 모든 유형이 함께 쓰는 번호라서 (2_ §2)
+// 모르는 type은 쓰지 않지만 같은 session이면 seq는 이어서 본다 — seq는 모든 유형이 함께 쓰는 번호라서 (2_ §2).
+// ue_evt·f1_evt는 series가 저장하지 않고 Passed로 넘긴다(14_ §7). hello 전·다른 session·seq 역행이면 kpm2처럼 버린다 (2_ §6.5)
 FeedResult Series::feed(const ParseResult& r) {
   FeedResult out;
   const std::optional<int64_t> seq = r.common ? std::optional<int64_t>(r.common->seq) : std::nullopt;
@@ -141,9 +142,26 @@ FeedResult Series::feed(const ParseResult& r) {
     return kr;
   }
 
-  // 모르는 type, ue_evt·f1_evt — series는 kpm2만 저장한다. ue_evt·f1_evt는 UE 상태표 몫 (14_ §7)
-  out.outcome = FeedOutcome::Ignored;
-  if (active() && r.common->session == session_) check_seq(r.common->seq, out);
+  const auto* ue = std::get_if<UeEvt>(&r.msg);
+  if (!ue && !std::holds_alternative<F1Evt>(r.msg)) {
+    // 모르는 type
+    out.outcome = FeedOutcome::Ignored;
+    if (active() && r.common->session == session_) check_seq(r.common->seq, out);
+    return out;
+  }
+  // ue_evt·f1_evt — series는 kpm2만 저장한다. 상태는 UE 상태표 몫 (14_ §7)
+  const std::optional<int64_t> cell = ue ? std::optional<int64_t>(ue->cell_id) : std::nullopt;
+  if (!active()) {
+    out.diags.push_back(diag(DiagKind::EvtBeforeHello, cell, seq, r.common->type + " before hello, dropped"));
+    return out;
+  }
+  if (r.common->session != session_) {
+    out.diags.push_back(diag(DiagKind::ForeignSession, cell, seq,
+                             r.common->type + " session " + r.common->session + " != " + session_ + ", dropped"));
+    return out;
+  }
+  if (!check_seq(r.common->seq, out)) return out;
+  out.outcome = FeedOutcome::Passed;
   return out;
 }
 

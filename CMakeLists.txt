@@ -17,6 +17,8 @@ add_library(detect
   src/core/alert.cpp
   src/core/baseline.cpp
   src/core/engine.cpp
+  src/core/ue_table.cpp
+  src/core/deadline_queue.cpp
   src/core/rules/bts_variant.cpp
   src/core/evidence.cpp
   src/core/evidence_queue.cpp

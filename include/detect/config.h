@@ -43,6 +43,13 @@ struct EvidenceConfig {
   std::string out_path = "evidence.jsonl"; // out_path — 대시보드 전달 방식이 정해지기 전까지 쓰는 파일 (Q-19)
 };
 
+// UE 상태표 (14_ §9 ue_table.*). 설정 파일 키는 아직 읽지 않고 이 기본값을 쓴다 (4_ §1.2)
+struct UeTableConfig {
+  std::size_t max_ues = 4096;      // ue_table.max_ues — 열린 항목 상한 (14_ §4.4)
+  std::size_t recent_n = 16;       // ue_table.recent_n — UE당 최근 메시지 수, 증거용 (14_ §2.3)
+  int64_t stale_setup_ms = 30000;  // ue_table.stale_setup_ms — CONNECTED 전 항목 정리 (14_ §4.2)
+};
+
 // 설정 파일 전체 (4_ §1.2). rules는 룰 ID → 그 룰의 설정 객체(JSON 문자열)다 — 공통 파서는 넘기기만 하고
 // 룰별 파서(parse_bts_variant_config 등)가 키·범위를 검사한다 (Q-46, 결정 J4)
 struct DetectorConfig {

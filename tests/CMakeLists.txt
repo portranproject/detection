@@ -18,6 +18,8 @@ add_executable(detect_tests
   core/test_scenarios.cpp
   core/test_evidence.cpp
   core/test_config.cpp
+  core/test_ue_table.cpp
+  core/test_deadline_queue.cpp
   io/test_uds_server.cpp
   io/test_file_replay.cpp
 )
