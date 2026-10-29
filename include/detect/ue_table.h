@@ -115,14 +115,16 @@ class UeTable {
     CloseReason reason = CloseReason::Released;
   };
 
-  // ue_evt 한 줄의 반영 결과 (14_ §7 ②~④)
+  // ue_evt 한 줄의 반영 결과 (14_ §7 ②~④). 갱신 후 상태(④)는 복사하지 않는다 — 살아 있는 항목 find(key)가 그 값이고,
+  // 룰이 읽는 동안 표는 바뀌지 않으며 settle은 룰 뒤에 돈다(16_ W-20 — 이슈 #54). 갱신 전(③)만 1회 복사한다
   struct Applied {
     bool linked = true;          // false = du_ue_id가 null인 NGAP NAS 줄 — 항목에 붙이지 않았다
     bool opened = false;         // 이 줄로 새 항목을 열었다
     bool released = false;       // UEContextReleaseComplete — settle에서 released로 닫는다
     UeKey key;
+    int64_t uid = 0;             // ④ 갱신된 항목의 uid — settle이 같은 항목인지 대조한다
+    int64_t t_ms = 0;            // 이 줄의 t_ms — settle이 닫는 시각
     UeState before;              // ③ 갱신 전 (새 항목이면 연 직후의 처음 상태)
-    UeState after;               // ④ 갱신 후
     std::vector<Closed> closed;  // ② 열면서 닫은 옛 항목 (reused·evicted)
     std::vector<Diag> diags;
   };

@@ -35,7 +35,7 @@ void Engine::add_ue_rule(std::unique_ptr<UeRule> rule) {
 // 2단계가 켜져 있으면 이어서 줄 유형별로 UE 상태표·마감 목록·2단계 룰에 넘긴다 — kpm2는 1단계 다음이다(14_ §7 kpm2 ①)
 EngineOutput Engine::feed_line(std::string_view line) {
   EngineOutput out;
-  const ParseResult parsed = parse_line(line, max_line_bytes_);
+  ParseResult parsed = parse_line(line, max_line_bytes_);  // ue_evt의 raw는 on_ue_evt가 옮겨 간다
   FeedResult fed = series_.feed(parsed);
   out.diags = std::move(fed.diags);
   out.outcome = fed.outcome;
@@ -59,7 +59,7 @@ EngineOutput Engine::feed_line(std::string_view line) {
       break;
     case FeedOutcome::Passed:
       if (!stage2_) break;
-      if (const auto* e = std::get_if<UeEvt>(&parsed.msg)) on_ue_evt(*e, seq, out);
+      if (auto* e = std::get_if<UeEvt>(&parsed.msg)) on_ue_evt(*e, seq, out);
       if (const auto* f = std::get_if<F1Evt>(&parsed.msg)) on_f1_evt(*f, seq, out);
       break;
     case FeedOutcome::Dropped:
@@ -102,19 +102,22 @@ void Engine::on_hello(FeedOutcome outcome, int64_t seq, EngineOutput& out) {
 }
 
 // ue_evt (14_ §7): ② 항목 찾기·열기 → ③ 갱신 전 복사 → ④ 전이·횟수·최근 메시지·색인 → ⑤ 룰 on_ue_event →
-// ⑥ superseded → ⑦ on_ue_close. 항목을 열면서 닫은 옛 항목(reused·evicted)은 ②의 일이라 새 항목의 ⑤보다 먼저 알린다
-void Engine::on_ue_evt(const UeEvt& e, int64_t seq, EngineOutput& out) {
+// ⑥ superseded → ⑦ on_ue_close. 항목을 열면서 닫은 옛 항목(reused·evicted)은 ②의 일이라 새 항목의 ⑤보다 먼저 알린다.
+// ⑤의 after는 복사본이 아니라 살아 있는 항목이다 — 룰은 표를 읽기만 하고 ⑥은 룰 뒤라 참조가 유효하다(16_ W-20, 이슈 #54).
+// 원본 줄은 ④가 recent에 복사한 뒤이고 룰·⑥은 읽지 않으므로 UE 증거용 ue_line에는 옮겨 담는다(복사 1회 절약)
+void Engine::on_ue_evt(UeEvt& e, int64_t seq, EngineOutput& out) {
   UeTable::Applied a = table_.apply(e, seq, deadlines_);
   out.diags.insert(out.diags.end(), a.diags.begin(), a.diags.end());
   if (!a.linked) return;
-  out.ue_line = EngineOutput::UeLine{a.key, a.after.uid, seq, e.raw};
   notify_close(a.closed, e.t_ms, seq, out);
+  const UeState& after = *table_.find(a.key);  // apply가 방금 넣거나 갱신한 항목 — 항상 있다
   for (std::size_t i = 0; i < ue_rules_.size(); ++i) {
     RuleOutput ro;
-    ue_rules_[i]->on_ue_event(e, a.before, a.after, ctx(i, seq), ro);
+    ue_rules_[i]->on_ue_event(e, a.before, after, ctx(i, seq), ro);
     append(ro, out);
   }
   notify_close(table_.settle(a, deadlines_), e.t_ms, seq, out);
+  out.ue_line = EngineOutput::UeLine{a.key, a.uid, seq, std::move(e.raw)};
 }
 
 // f1_evt (14_ §7, 2_ §6.7): 그 셀의 열린 항목(일부 Reset이면 그 UE만)을 du_reset으로 닫는다. 세션·kpm2·1단계 상태는 그대로
