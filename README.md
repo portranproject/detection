@@ -19,6 +19,16 @@ setarch "$(uname -m)" -R cmake --build build-tsan -j4
 setarch "$(uname -m)" -R ctest --test-dir build-tsan --output-on-failure
 cmake -B build-asan -DCMAKE_BUILD_TYPE=Debug -DDETECT_SANITIZE=address,undefined && cmake --build build-asan -j4
 ctest --test-dir build-asan --output-on-failure
+
+# 퍼즈 (tests/fuzz): 기본 빌드에도 독립 실행 모드로 들어 있어 ctest(fuzz.parse_line·fuzz.uds_lines)가 시드(tests/data)와
+# 고정 시드 변형을 매번 돈다. 더 오래 돌리려면 --mutations·--seed를 바꾼다
+./build-asan/tests/fuzz/fuzz_parse_line --per-line --mutations 200000 --seed 7 tests/data/scenarios tests/data/stage2_green
+./build-asan/tests/fuzz/fuzz_uds_lines --mutations 3000 --seed 7 tests/data/scenarios tests/data/stage2_green
+# libFuzzer 캠페인(커버리지 유도)은 clang이 필요하다
+CC=clang CXX=clang++ cmake -B build-fuzz -DDETECT_LIBFUZZER=ON -DDETECT_SANITIZE=address,undefined && cmake --build build-fuzz -j4
+python3 tools/make_fuzz_corpus.py build-fuzz/corpus
+./build-fuzz/tests/fuzz/fuzz_parse_line build-fuzz/corpus/parse_line -dict=tests/fuzz/input.dict -max_total_time=600
+./build-fuzz/tests/fuzz/fuzz_uds_lines build-fuzz/corpus/uds_lines -dict=tests/fuzz/input.dict -max_len=65536 -max_total_time=600
 ```
 
 ## 실행

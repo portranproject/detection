@@ -52,3 +52,8 @@ add_test(NAME integration.detector
 add_test(NAME tools.ocu_log_to_kpm2
   COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/tools/test_ocu_log_to_kpm2.py
           ${PROJECT_SOURCE_DIR} $<TARGET_FILE:detector> ${CMAKE_CURRENT_BINARY_DIR}/tools)
+
+# 퍼즈 하네스 (4_ §4, 16_ W-19 — 이슈 #52): tests/fuzz/. 기본은 독립 실행 모드(시드 + 결정적 변형)로 ctest에 들어가고,
+# clang이면 -DDETECT_LIBFUZZER=ON으로 libFuzzer 캠페인을 돌릴 수 있다
+option(DETECT_LIBFUZZER "Link fuzz harnesses with libFuzzer (needs clang)" OFF)
+add_subdirectory(fuzz)
