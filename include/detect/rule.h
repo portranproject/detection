@@ -21,6 +21,9 @@ class Rule {
   virtual ~Rule() = default;
   virtual const char* id() const = 0;
   virtual void on_feed(const Series& series, const FeedResult& fed, RuleOutput& out) = 0;
+  // 입력 침묵 (3_ §8 — 10/29 Q-45 해결, 이슈 #50): 실행 파일이 벽시계로 마지막 kpm2 뒤 input_silent_ms 동안 kpm2가 없다고
+  // 알릴 때. 룰은 진행 중 경보를 END(reason=input_silent)로 끝내고 버퍼·기준선은 그대로 둔다. 기본은 아무것도 하지 않음
+  virtual void on_input_silent(RuleOutput&) {}
 };
 
 }  // namespace detect

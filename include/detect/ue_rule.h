@@ -1,7 +1,8 @@
 #pragma once
 // 2단계 이상 룰 인터페이스 (14_ §1.1). 룰은 UE 상태표를 읽기만 하고, 자기 판정용 대기 표시만 따로 가진다(14_ §1·§2.4).
 // Engine이 줄 유형별로 14_ §7 순서에 따라 부른다. 출력(RuleOutput)은 1단계 룰(rule.h)과 같다.
-// on_session_reset은 14_ §1.1의 네 호출에 더한 것이다 — 14_ §7 hello의 '새 세션이면 진행 중 경보를 END'를 룰에 알리는 길
+// on_session_reset·on_input_silent는 14_ §1.1의 네 호출에 더한 것이다 — 14_ §7 hello의 '새 세션이면 진행 중 경보를 END'와
+// 14_ §6.2의 입력 침묵(Q-45)을 룰에 알리는 길
 
 #include "detect/deadline_queue.h"
 #include "detect/message.h"
@@ -67,6 +68,9 @@ class UeRule {
                             RuleOutput& out) = 0;
   // 새 세션이거나 2단계가 꺼질 때 — 진행 중 경보를 END(session_reset)로 끝내고 대기 표시를 모두 버린다 (14_ §7 hello)
   virtual void on_session_reset(const UeRuleCtx& ctx, RuleOutput& out) = 0;
+  // 입력 침묵 (14_ §6.2 — 10/29 Q-45 해결, 이슈 #50): 진행 중 경보(불확실 경보 포함)를 END(reason=input_silent)로 끝낸다.
+  // on_session_reset과 달리 대기 표시·셀 기록은 그대로 둔다 — kpm2가 다시 오면 마감이 평소처럼 판정된다. 기본은 무동작
+  virtual void on_input_silent(const UeRuleCtx&, RuleOutput&) {}
 };
 
 }  // namespace detect

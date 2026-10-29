@@ -99,6 +99,9 @@ struct DetectorConfig {
   std::string socket_path = "/run/ran-detect/kpm.sock";  // socket_path (2_ §1)
   std::size_t max_line_bytes = 65536;                     // max_line_bytes (2_ §1 줄 길이 상한)
   std::size_t max_cells = 64;                             // max_cells — 셀 수 상한 (결정 D7, 16_ W-24로 설정 키)
+  // input_silent_ms — 벽시계로 마지막 kpm2 뒤 이만큼 kpm2가 없으면 진단 input_silent 1회 + 진행 중 경보 전부 END(reason=input_silent).
+  // 기본 10,000 = H_hold와 같은 값(제안값), 1,000~600,000. 소켓 모드만 (3_ §8, 14_ §6.2 — 10/29 Q-45 해결, 이슈 #50)
+  int64_t input_silent_ms = 10000;
   std::map<std::string, std::string> rules;               // rules.<룰 ID> — 설정 객체를 JSON 문자열 그대로
   EvidenceConfig evidence;                                // evidence
   UeTableConfig ue_table;                                 // ue_table — 2단계 UE 상태표 (14_ §9)

@@ -68,6 +68,8 @@ TEST(Config, RepoConfigFileParses) {
   EXPECT_EQ(r.config.ue_table.dl_unobserved_ms, ud.dl_unobserved_ms);
   EXPECT_EQ(r.config.ue_table.recent_keep_margin_ms, ud.recent_keep_margin_ms);
   EXPECT_EQ(r.config.max_cells, d.max_cells);
+  EXPECT_EQ(r.config.input_silent_ms, d.input_silent_ms);  // 입력 침묵 (3_ §8, Q-45 — 이슈 #50)
+  EXPECT_EQ(d.input_silent_ms, 10000);
   EXPECT_EQ(ud.ghost_k, 2);
   EXPECT_EQ(ud.evict_protect_ms, 5000);
   EXPECT_EQ(d.max_cells, 64u);
@@ -117,6 +119,8 @@ TEST(Config, PartialOverride) {
   EXPECT_EQ(r.config.evidence.mode, EvidenceMode::Ref);
   EXPECT_EQ(r.config.evidence.pre_slots, 300u);
   EXPECT_EQ(r.config.socket_path, "/run/ran-detect/kpm.sock");
+  EXPECT_EQ(r.config.input_silent_ms, 10000);
+  EXPECT_EQ(parse_config(R"({"input_silent_ms":1500})").config.input_silent_ms, 1500);
   EXPECT_TRUE(parse_config("{}").ok);
   EXPECT_TRUE(parse_config("{}").config.rules.empty());  // 룰 설정이 없으면 실행 파일이 기본값을 쓴다
 }
@@ -232,6 +236,7 @@ TEST(Config, Stage2RangeBoundaries) {
       {"ue_table", "ghost_margin", 0, 4096},        {"ue_table", "ghost_hold_ms", 0, 600000},
       {"ue_table", "evict_protect_ms", 0, 600000},  {"ue_table", "dl_unobserved_ms", 1000, 600000},
       {"ue_table", "recent_keep_margin_ms", 0, 60000}, {"top", "max_cells", 1, 1024},
+      {"top", "input_silent_ms", 1000, 600000},
       {"alert", "ues_max", 1, 1000},                {"alert", "update_min_ms", 100, 60000},
       {"alert", "ue_evidence_max", 0, 1000},        {"L3-20", "accept_wait_ms", 100, 60000},
       {"L3-20", "clear_quiet_ms", 1000, 3600000},   {"L3-01-O", "auth_wait_ms", 100, 60000},
@@ -248,7 +253,7 @@ TEST(Config, Stage2RangeBoundaries) {
       ConfigResult c = parse_config("{\"" + r.section + "\":" + obj + "}");
       ok = c.ok;
       err = c.error;
-    } else if (r.section == "top") {  // 최상위 키 (max_cells)
+    } else if (r.section == "top") {  // 최상위 키 (max_cells·input_silent_ms)
       ConfigResult c = parse_config(obj);
       ok = c.ok;
       err = c.error;
@@ -296,6 +301,9 @@ TEST(Config, Stage2TypeErrors) {
   EXPECT_FALSE(parse_config(R"({"ue_table":{"ghost_margin":1.5}})").ok);
   EXPECT_FALSE(parse_config(R"({"max_cells":"64"}})").ok);
   EXPECT_FALSE(parse_config(R"({"max_cells":0})").ok);
+  EXPECT_FALSE(parse_config(R"({"input_silent_ms":"10000"})").ok);
+  EXPECT_FALSE(parse_config(R"({"input_silent_ms":10000.0})").ok);
+  EXPECT_FALSE(parse_config(R"({"input_silent_ms":null})").ok);
   EXPECT_FALSE(parse_blind_dos_config(R"({"accept_wait_ms":5000.0})").ok);
   EXPECT_FALSE(parse_auth_stall_config(R"({"max_conn":0})").ok);
   EXPECT_FALSE(parse_auth_stall_config(R"({"max_conn":"96"})").ok);

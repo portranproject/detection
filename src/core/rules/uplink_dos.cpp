@@ -428,4 +428,13 @@ void UplinkDosRule::on_session_reset(const UeRuleCtx&, RuleOutput& out) {
   cells_.clear();
 }
 
+// 입력 침묵 (14_ §6.2 — 10/29 Q-45 해결, 이슈 #50): 진행 중 공격 경보(갈래 표시 포함)·불확실 경보를 END(input_silent)로 끝낸다 —
+// END t는 각 경보가 마지막으로 본 칸. 대기 표시·연결 기록·셀 기록은 그대로 — kpm2가 다시 오면 마감이 평소처럼 판정된다
+void UplinkDosRule::on_input_silent(const UeRuleCtx&, RuleOutput& out) {
+  const std::size_t from = out.alerts.size();
+  book_.end_all("input_silent", out.alerts);
+  decorate(from, out);
+  held_book_.end_all("input_silent", out.alerts);  // 불확실 경보는 갈래가 없어 decorate 밖에서
+}
+
 }  // namespace detect

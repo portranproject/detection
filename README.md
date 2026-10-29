@@ -36,6 +36,7 @@ python3 tools/mock_producer.py --socket /run/ran-detect/kpm.sock --file tests/da
 ```
 
 - 경보(`ALERT …`)는 stdout, 진단·기동 정보는 stderr로 나온다.
+- 소켓 모드에서 마지막 `kpm2` 뒤 `input_silent_ms`(기본 10 s) 동안 `kpm2`가 없으면 진단 `input_silent`를 내고 진행 중 경보를 `END reason=input_silent`로 끝낸다. 버퍼·기준선·UE 상태표는 그대로라 다시 오면 이어 간다. 재생 모드에서는 하지 않는다. 시험은 `mock_producer.py --pause-after N --pause-sec S`.
 - 증거 레코드는 설정 `evidence.out_path`(기본 `evidence.jsonl`)에 이어 쓴다.
 - SIGINT·SIGTERM을 받으면 남은 증거를 다 쓰고 소켓 파일을 지운 뒤 끝낸다.
 - 종료 코드: 0 정상, 1 기동·설정 오류, 2 사용법 오류.

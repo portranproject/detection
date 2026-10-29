@@ -69,6 +69,27 @@ EngineOutput Engine::feed_line(std::string_view line) {
   return out;
 }
 
+// 입력 침묵 (3_ §8, 14_ §6.2 — Q-45 해결, 이슈 #50): 진단 1회 → 1단계 룰 → 2단계 룰(켜져 있을 때만). 줄을 처리한 것이
+// 아니므로 outcome은 Dropped — 증거 기록기는 out.alerts의 END만 보고 경보 track을 끝낸다(3_ §7.1). seq는 0 — END는
+// alert_id를 새로 만들지 않는다. 반복(다시 kpm2가 올 때까지 1회)은 실행 파일이 막는다
+EngineOutput Engine::on_input_silent(int64_t silent_ms) {
+  EngineOutput out;
+  out.diags.push_back(Diag{DiagKind::InputSilent, std::nullopt, std::nullopt,
+                           "no kpm2 for " + std::to_string(silent_ms) + " ms: ending open alerts"});
+  for (auto& rule : rules_) {
+    RuleOutput ro;
+    rule->on_input_silent(ro);
+    append(ro, out);
+  }
+  if (!stage2_) return out;
+  for (std::size_t i = 0; i < ue_rules_.size(); ++i) {
+    RuleOutput ro;
+    ue_rules_[i]->on_input_silent(ctx(i, 0), ro);
+    append(ro, out);
+  }
+  return out;
+}
+
 // hello (14_ §7, 2_ §6.5): 새 세션이거나 2단계가 꺼지면 2단계 룰의 진행 중 경보를 END(session_reset)로 끝내고
 // 상태표·마감 목록을 비운다. hello에 ue_evt 표시가 없으면 2단계 이상 룰을 끄고 진단을 1회 남긴다 —
 // 이벤트를 안 보내는 것과 사건이 없어 안 오는 것을 가르기 위해서다

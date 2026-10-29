@@ -1,4 +1,4 @@
-// L3-01-V 룰 단위 테스트 (3_ §3·§4·§4.1·§5·§6.1 다·§7·§8). 시간 흐름 전체는 test_scenarios에서 본다
+// L3-01-V 룰 단위 테스트 (3_ §3·§4·§4.1·§5·§6.1 다·§7·§8, 입력 침묵 이슈 #50). 시간 흐름 전체는 test_scenarios에서 본다
 #include "detect/engine.h"
 #include "detect/rules/bts_variant.h"
 
@@ -48,6 +48,14 @@ class Harness {
 
   EngineOutput feed(const std::string& line) {
     EngineOutput o = engine_->feed_line(line);
+    alerts.insert(alerts.end(), o.alerts.begin(), o.alerts.end());
+    diags.insert(diags.end(), o.diags.begin(), o.diags.end());
+    return o;
+  }
+
+  // 입력 침묵 — 실행 파일이 벽시계로 알리는 것을 흉내 낸다 (3_ §8, 이슈 #50)
+  EngineOutput silent(int64_t ms = 10000) {
+    EngineOutput o = engine_->on_input_silent(ms);
     alerts.insert(alerts.end(), o.alerts.begin(), o.alerts.end());
     diags.insert(diags.end(), o.diags.begin(), o.diags.end());
     return o;
@@ -130,6 +138,49 @@ TEST(BtsVariant, RaiseWithShiftedWindowsAndLogValues) {
   EXPECT_EQ(e.params.dump(), R"({"k":3.0,"theta":0.5,"f_abs":10})");
   EXPECT_TRUE(e.refs.contains("a"));
   EXPECT_TRUE(e.refs.contains("f"));
+}
+
+// 입력 침묵 (3_ §8 — 10/29 Q-45 해결, 이슈 #50): 경보 중 실행 파일이 침묵을 알리면 END(reason=input_silent, t = 그 셀 마지막 칸)와
+// 진단 1회. 버퍼·기준선·모드는 그대로라 칸을 이어 넣으면 다시 M칸 성립에서 새 RAISE(상태기계는 초기화됨). 경보가 없으면 진단만.
+// hello 전에도 안전하다
+TEST(BtsVariant, EndOnInputSilent) {
+  Harness h;
+  h.slots(10, {0, 0, 0});
+  h.slots(10, {3, 0, 0});
+  h.slots(4, {3, 0, 3});  // 칸 23(t = 2400)에서 RAISE
+  ASSERT_EQ(h.alerts.size(), 1u);
+  const std::optional<double> base = h.rule_->base(1);
+  EngineOutput o = h.silent(10000);
+  ASSERT_EQ(o.alerts.size(), 1u);
+  EXPECT_EQ(o.alerts[0].kind, AlertEventKind::End);
+  EXPECT_EQ(o.alerts[0].reason, "input_silent");
+  EXPECT_EQ(o.alerts[0].alert_id, h.alerts[0].alert_id);
+  EXPECT_EQ(h.t_rel(o.alerts[0]), 2400);
+  EXPECT_EQ(o.alerts[0].duration_ms, 0);
+  EXPECT_EQ(format_log_line(o.alerts[0]),
+            "ALERT END rule=L3-01-V cell=1 t=" + std::to_string(kT0 + 2400) + " duration_ms=0 reason=input_silent");
+  ASSERT_EQ(o.diags.size(), 1u);
+  EXPECT_EQ(o.diags[0].kind, DiagKind::InputSilent);
+  EXPECT_EQ(o.outcome, FeedOutcome::Dropped);
+  EXPECT_FALSE(h.rule_->alert_active(1));
+  EXPECT_EQ(h.rule_->base(1), base);  // 기준선 유지
+  EXPECT_EQ(h.rule_->mode(1), AlertMode::Normal);
+  // 경보가 없으면 진단만 — 다시 kpm2가 올 때까지 1회로 막는 것은 실행 파일의 몫
+  o = h.silent(10000);
+  EXPECT_TRUE(o.alerts.empty());
+  EXPECT_EQ(o.diags.size(), 1u);
+  // 이어서 공격 칸: 버퍼가 그대로라 보류 없이 바로 판정, 상태기계는 초기화됐으니 M = 3칸 성립 뒤 칸 26(t = 2700)에서 새 RAISE
+  h.slots(3, {3, 0, 3});
+  ASSERT_EQ(h.alerts.size(), 3u);
+  EXPECT_EQ(h.alerts[2].kind, AlertEventKind::Raise);
+  EXPECT_EQ(h.t_rel(h.alerts[2]), 2700);
+  EXPECT_NE(h.alerts[2].alert_id, h.alerts[0].alert_id);
+
+  Engine bare;  // hello 전 — 룰은 셀이 없어 진단만
+  bare.add_rule(std::make_unique<BtsVariantRule>());
+  EngineOutput b = bare.on_input_silent(10000);
+  EXPECT_TRUE(b.alerts.empty());
+  EXPECT_EQ(b.diags.size(), 1u);
 }
 
 // T_nr = 500이면 D = 5칸 — 시차가 hello 값을 따른다 (3_ §3)

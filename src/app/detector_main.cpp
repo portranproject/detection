@@ -2,6 +2,7 @@
 //   detector --socket PATH [--config FILE]                  분석 엔진의 KPM을 Unix 소켓으로 받는다 (2_ §1)
 //   detector --replay FILE [--speed max|N] [--config FILE]  .jsonl을 재생한다 (1_ FR-2)
 // 스레드 A(이 main): 입력 → 엔진(파싱·저장·판정) → 경보 로그 → 증거 레코드를 큐에 넣기
+// 소켓 모드는 벽시계로 입력 침묵도 감시한다 — 마지막 kpm2 뒤 input_silent_ms 동안 kpm2가 없으면 진행 중 경보 END (3_ §8, 이슈 #50)
 // 스레드 B(EvidenceSink): 큐에서 꺼내 증거 파일에 쓰기 (3_ §7.1 동시성 모델)
 #include "detect/config.h"
 #include "detect/engine.h"
@@ -24,6 +25,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <string>
 
@@ -190,12 +192,23 @@ int main(int argc, char** argv) {
   std::signal(SIGINT, on_signal);
   std::signal(SIGTERM, on_signal);
 
-  // 줄 하나 처리 (스레드 A): 엔진 → 경보는 stdout에 3_ §7 형식 그대로, 진단은 stderr (결정 G1) → 증거 기록
-  auto handle = [&](std::string_view line) {
-    EngineOutput out = engine.feed_line(line);
+  // 엔진 출력 내보내기 (스레드 A): 경보는 stdout에 3_ §7 형식 그대로, 진단은 stderr (결정 G1) → 증거 기록
+  auto emit = [&](const EngineOutput& out) {
     for (const auto& d : out.diags) log_diag(d);
     for (const auto& a : out.alerts) std::cout << format_log_line(a) << std::endl;
     for (const auto& d : recorder.on_feed(engine.series(), engine.ue_table(), out)) log_diag(d);
+  };
+  // 입력 침묵 감시용 — 마지막으로 저장된 kpm2(어느 셀이든)의 벽시계 시각과 '이미 알렸음' 표시 (3_ §8, 이슈 #50). 소켓 모드만 본다
+  std::optional<std::chrono::steady_clock::time_point> last_kpm2;
+  bool silent_flagged = false;
+  // 줄 하나 처리: 엔진 → 내보내기. kpm2가 저장되면 침묵 시계를 되감고 표시를 내린다
+  auto handle = [&](std::string_view line) {
+    EngineOutput out = engine.feed_line(line);
+    if (out.outcome == FeedOutcome::Stored) {
+      last_kpm2 = std::chrono::steady_clock::now();
+      silent_flagged = false;
+    }
+    emit(out);
   };
 
   int rc = 0;
@@ -235,6 +248,18 @@ int main(int argc, char** argv) {
           break;
         }
         for (const auto& e : server.take_events()) log_err("INFO", e);
+        // 입력 침묵 (3_ §8, 14_ §6.2 — 10/29 Q-45 해결, 이슈 #50): 벽시계로 마지막 저장 kpm2 뒤 input_silent_ms 동안 kpm2가 없으면
+        // 진단 input_silent 1회와 1·2단계 진행 중 경보 END(reason=input_silent). 셀 시계·버퍼·기준선·상태표는 그대로 두고, 다시
+        // kpm2가 저장될 때까지 반복하지 않는다. 첫 kpm2 전에는 감시하지 않고, 재생 모드에서는 하지 않는다(결정성)
+        if (last_kpm2 && !silent_flagged) {
+          const int64_t elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                      std::chrono::steady_clock::now() - *last_kpm2)
+                                      .count();
+          if (elapsed >= cfg.input_silent_ms) {
+            silent_flagged = true;
+            emit(engine.on_input_silent(elapsed));
+          }
+        }
       }
       server.close();  // 소켓 파일 삭제
       log_err("INFO", "socket closed");

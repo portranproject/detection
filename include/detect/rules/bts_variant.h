@@ -22,6 +22,7 @@ class BtsVariantRule : public Rule {
 
   const char* id() const override { return kId; }
   void on_feed(const Series& series, const FeedResult& fed, RuleOutput& out) override;
+  void on_input_silent(RuleOutput& out) override;
 
   // 테스트용: 셀의 현재 상태
   bool alert_active(int64_t cell_id) const;

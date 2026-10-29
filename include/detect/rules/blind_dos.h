@@ -34,6 +34,7 @@ class BlindDosRule : public UeRule {
   void on_cell_tick(int64_t cell, const Kpm2& k, const CellLoss& loss, bool input_lost, const UeRuleCtx& ctx,
                     RuleOutput& out) override;
   void on_session_reset(const UeRuleCtx& ctx, RuleOutput& out) override;
+  void on_input_silent(const UeRuleCtx& ctx, RuleOutput& out) override;
 
   std::size_t waiting() const { return marks_.size(); }  // 테스트용: 기다리는 대기 표시 수
 

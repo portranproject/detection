@@ -355,6 +355,13 @@ int64_t AuthStallRule::evicted_window(CellState& c, int64_t now) const {
   return static_cast<int64_t>(c.evict_times.size());
 }
 
+// 입력 침묵 (14_ §6.2 — 10/29 Q-45 해결, 이슈 #50): 진행 중 공격·불확실 경보를 END(input_silent)로 끝낸다 — END t는 각 경보가
+// 마지막으로 본 칸. 대기 표시·요청 기록·셀 기록은 그대로 — kpm2가 다시 오면 남은 마감이 평소처럼 판정된다(on_session_reset과 다르다)
+void AuthStallRule::on_input_silent(const UeRuleCtx&, RuleOutput& out) {
+  book_.end_all("input_silent", out.alerts);
+  held_book_.end_all("input_silent", out.alerts);
+}
+
 // 새 세션 (14_ §7 hello): 진행 중 경보를 END(session_reset)로 끝내고 대기 표시·셀 기록을 모두 버린다
 void AuthStallRule::on_session_reset(const UeRuleCtx&, RuleOutput& out) {
   book_.end_all("session_reset", out.alerts);

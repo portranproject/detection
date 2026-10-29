@@ -8,6 +8,9 @@
 4) 사용법 오류 → 2, 설정 오류 → 1, 이미 떠 있는 엔진이 있으면 → 1
 5) 2단계 설정 (10/29 이슈 #33): 저장소 설정 파일(2단계 키는 기본값)이면 WARN 없이 기본값과 같은 결과, 2단계 키가
    허용 범위를 벗어나면 → 1
+6) 입력 침묵 T25·U-T31 (3_ §8·§9, 14_ §6.2·§10 — 10/29 Q-45 해결, 이슈 #50): input_silent_ms 1,000(하한)으로 띄운 소켓 모드에
+   mock_producer가 RAISE 칸까지 보낸 뒤 2 s 멈추면 진단 input_silent 1회와 END reason=input_silent(t = 마지막 칸), 재개 뒤 세션 유지
+   (session_reset·foreign_session 없음)와 이어지는 판정. 같은 파일을 --replay로 돌리면 END 없음. 1단계(T05)·2단계(L3-01-O) 각 1회
 """
 
 import json
@@ -19,6 +22,7 @@ import time
 
 DET, REPO, TMP = sys.argv[1], sys.argv[2], sys.argv[3]
 SCN = os.path.join(REPO, "tests", "data", "scenarios")
+SCN2 = os.path.join(REPO, "tests", "data", "stage2_green")
 MOCK = os.path.join(REPO, "tools", "mock_producer.py")
 os.makedirs(TMP, exist_ok=True)
 failures = []
@@ -125,6 +129,61 @@ for name, text, key in [("bad_l3_21", '{"rules":{"L3-21":{"reg_repeat":1}}}', "r
     r = subprocess.run([DET, "--replay", os.path.join(SCN, "T03_공격.jsonl"), "--config", p],
                        capture_output=True, text=True)
     check(r.returncode == 1 and key + ": out of range" in r.stderr, f"{name}: exit {r.returncode} {r.stderr}")
+
+# 6) 입력 침묵 — 소켓 모드 T25(1단계)·U-T31(2단계)와 재생 모드 대조
+def silent_case(tag, scenario_path, rule):
+    cfg_path = os.path.join(TMP, tag + "_silent.json")
+    with open(cfg_path, "w") as f:
+        json.dump({"input_silent_ms": 1000, "evidence": {"mode": "off"}}, f)
+    # 재생: 같은 설정·같은 입력으로 END 없음 (벽시계 감시는 소켓 모드만). 첫 RAISE 시각을 여기서 읽는다
+    rep = subprocess.run([DET, "--replay", scenario_path, "--config", cfg_path], capture_output=True, text=True, timeout=120)
+    ra = [l for l in alerts(rep.stdout) if l.startswith("ALERT RAISE rule=" + rule + " ")]
+    check(rep.returncode == 0 and ra, f"{tag}: replay RAISE {rep.returncode} {rep.stderr}")
+    check(not any("reason=input_silent" in l for l in alerts(rep.stdout)) and "input_silent" not in rep.stderr,
+          f"{tag}: replay must not watch silence: {alerts(rep.stdout)}")
+    if not ra:
+        return
+    raise_t = int(ra[0].split(" t=")[1].split()[0])
+    cell = int(ra[0].split(" cell=")[1].split()[0])
+    with open(scenario_path, encoding="utf-8") as f:
+        lines = f.read().splitlines()
+    # RAISE가 난 kpm2 줄(그 셀, t_end_ms = RAISE t)까지 보내고 멈춘다
+    n_pause = next(i + 1 for i, l in enumerate(lines)
+                   if l.startswith('{"type":"kpm2"') and json.loads(l).get("cell_id") == cell
+                   and json.loads(l).get("t_end_ms") == raise_t)
+    sock = os.path.join(TMP, tag + "_silent.sock")
+    if os.path.exists(sock):
+        os.remove(sock)
+    det = subprocess.Popen([DET, "--socket", sock, "--config", cfg_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                           text=True)
+    for _ in range(50):
+        if os.path.exists(sock):
+            break
+        time.sleep(0.05)
+    m = subprocess.run([sys.executable, MOCK, "--socket", sock, "--file", scenario_path,
+                        "--pause-after", str(n_pause), "--pause-sec", "2"], capture_output=True, text=True, timeout=60)
+    check(m.returncode == 0, f"{tag}: mock_producer: {m.stderr}")
+    time.sleep(0.5)
+    det.send_signal(signal.SIGTERM)
+    out, err = det.communicate(timeout=10)
+    check(det.returncode == 0, f"{tag}: socket detector exit {det.returncode}: {err}")
+    a = alerts(out)
+    ends = [l for l in a if "reason=input_silent" in l]
+    check(len(ends) == 1 and ends[0].startswith(f"ALERT END rule={rule} cell={cell} t={raise_t} "), f"{tag}: END {ends} all={a}")
+    check(err.count("DIAG input_silent") == 1, f"{tag}: input_silent diag count: {err}")
+    check("session_reset" not in err and "foreign_session" not in err and "input_lost" not in out,
+          f"{tag}: state must survive the pause: {err} {a}")
+    check(a and a[0] == ra[0] and a[1] == ends[0], f"{tag}: RAISE then END expected: {a}")
+    return a, alerts(rep.stdout), raise_t
+
+
+r6 = silent_case("t25", os.path.join(SCN, "T05_공격종료.jsonl"), "L3-01-V")
+if r6:
+    a, ra, raise_t = r6
+    # 재개 뒤 버퍼·기준선이 그대로라 보류 없이 M = 3칸 성립에서 다시 RAISE(+300 ms), CLEAR는 재생과 같은 시각 (3_ §8)
+    check(len(a) == 4 and a[2].startswith(f"ALERT RAISE rule=L3-01-V cell=1 t={raise_t + 300} ")
+          and a[3].split(" duration_ms=")[0] == ra[-1].split(" duration_ms=")[0], f"T25 after resume: {a}")
+silent_case("ut31", os.path.join(SCN2, "S01_L3-01-O_고착5_RAISE.jsonl"), "L3-01-O")
 
 print("OK" if not failures else f"{len(failures)} failure(s)")
 sys.exit(1 if failures else 0)
