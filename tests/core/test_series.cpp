@@ -192,13 +192,17 @@ TEST(Series, SeqGapIsLoggedButProcessed) {
   EXPECT_FALSE(r.gap);  // seq 건너뜀만으로는 셀 끊김이 아니다
 }
 
-// 모르는 type·ue_evt도 seq 번호열을 함께 쓰므로 건너뜀으로 잡히면 안 된다
+// 모르는 type·ue_evt·f1_evt도 seq 번호열을 함께 쓰므로 건너뜀으로 잡히면 안 된다. series는 kpm2만 저장한다 (14_ §7)
 TEST(Series, SeqSharedAcrossTypes) {
   Series s;
   feed(s, hello_line("s1", 1));
   feed(s, kpm_line("s1", 2, 1, 0, 1, 1, 0));
-  EXPECT_EQ(feed(s, R"({"type":"ue_evt","ver":1,"session":"s1","seq":3})").outcome, FeedOutcome::Ignored);
-  auto r = feed(s, kpm_line("s1", 4, 1, 1, 1, 1, 0));
+  EXPECT_EQ(feed(s, R"({"type":"ue_evt","ver":1,"session":"s1","seq":3,"t_ms":150,"cell_id":1,"du_ue_id":3,"crnti":1,"dir":"UL","proto":"RRC","msg":"RRCSetupRequest"})").outcome,
+            FeedOutcome::Ignored);
+  EXPECT_EQ(feed(s, R"({"type":"f1_evt","ver":1,"session":"s1","seq":4,"t_ms":160,"msg":"F1SetupRequest","cells":[1]})").outcome,
+            FeedOutcome::Ignored);
+  EXPECT_EQ(feed(s, R"({"type":"x_evt","ver":1,"session":"s1","seq":5})").outcome, FeedOutcome::Ignored);
+  auto r = feed(s, kpm_line("s1", 6, 1, 1, 1, 1, 0));
   EXPECT_FALSE(has_diag(r, DiagKind::SeqGap));
 }
 
