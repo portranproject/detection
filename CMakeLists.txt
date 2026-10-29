@@ -24,6 +24,7 @@ add_library(detect
   src/core/rules/bts_variant.cpp
   src/core/rules/blind_dos.cpp
   src/core/rules/auth_stall.cpp
+  src/core/rules/uplink_dos.cpp
   src/core/evidence.cpp
   src/core/evidence_queue.cpp
   src/core/config.cpp

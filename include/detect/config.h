@@ -74,6 +74,16 @@ struct AuthStallConfig {
                                          // hello cells[].max_conn이 우선 (15_ §4.3, 1단계 3_ §4와 같음)
 };
 
+// 룰 L3-21 상향 DoS (15_ §5.4·§1.2). 설정 파일 키 rules.L3-21.*는 아직 읽지 않고 이 기본값을 쓴다 (4_ §1.2)
+struct UplinkDosConfig {
+  int64_t window_ms = 10000;            // window_ms — W, 셀 실패 UE 수를 세는 창 (갈래 ①)
+  int64_t n_fail = 5;                   // n_fail — N, 창 안 실패 UE 수 문턱 (갈래 ①)
+  int64_t fail_accept_wait_ms = 5000;   // fail_accept_wait_ms — T_fa, 실패 뒤 망 수락 대기 (15_ §5.3)
+  int64_t reg_repeat = 3;               // reg_repeat — R, 한 연결 안 RegistrationRequest 수 문턱 (갈래 ②)
+  int64_t clear_quiet_ms = 60000;       // clear_quiet_ms — 마지막 성립·걸림 뒤 이만큼 조용하면 해제 (15_ §5.5)
+  std::vector<int64_t> ignore_causes;   // ignore_causes — 실패로 세지 않을 Reject의 5GMM 원인값. 기본 끔 (15_ §5.2)
+};
+
 // 설정 파일 전체 (4_ §1.2). rules는 룰 ID → 그 룰의 설정 객체(JSON 문자열)다 — 공통 파서는 넘기기만 하고
 // 룰별 파서(parse_bts_variant_config 등)가 키·범위를 검사한다 (Q-46, 결정 J4)
 struct DetectorConfig {
