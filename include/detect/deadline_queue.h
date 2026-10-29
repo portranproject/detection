@@ -81,8 +81,8 @@ class DeadlineQueue {
     std::optional<int64_t> clock;
     std::optional<int64_t> loss_end_ul;
     std::optional<int64_t> loss_end_dl;
-    int missing_streak = 0;  // ue_evt_lost가 없는 칸 연속 수
-    int dl_streak = 0;       // ue_evt_lost에 "DL"이 든 칸 연속 수
+    bool missing_flagged = false;  // ue_evt_lost 없음 진단을 냈고 아직 필드가 돌아오지 않음 (14_ §6.2, 이슈 #48)
+    int dl_streak = 0;             // ue_evt_lost에 "DL"이 든 칸 연속 수
     std::priority_queue<Deadline, std::vector<Deadline>, Later> due;
   };
 

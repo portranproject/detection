@@ -74,6 +74,10 @@ class AuthStallRule : public UeRule {
     int64_t evicted_seen = 0;
     int64_t evicted_open = 0;
     std::deque<int64_t> evict_times;
+    // 불확실 경보 (14_ §6.2 — Q-58 해결, 이슈 #48): 창 W 안 보류 수가 N이면 kind anomaly
+    std::vector<AlertUe> fresh_held;            // 이번 kpm2의 마감 처리에서 보류된 UE
+    std::deque<AlertUe> held_ues;               // 마지막 보류 시각 기준 (t − W, t] 안의 보류 UE
+    int64_t t_last_held = 0;
   };
 
   void start(const UeId& id, const UeEvt& evt, const UeRuleCtx& ctx);
@@ -81,12 +85,17 @@ class AuthStallRule : public UeRule {
                 RuleOutput& out);
   int64_t auth_req_w(const CellState& c) const;
   int64_t held_window(CellState& c, int64_t now) const;
+  AlertUe held_ue(const UeState& n, int64_t t_hit) const;
+  void held_tick(int64_t cell, CellState& c, int64_t t, bool input_lost, const UeRuleCtx& ctx, RuleOutput& out);
+  void close_held(int64_t cell, int64_t t, RuleOutput& out);
+  void decorate_held(std::size_t from, RuleOutput& out);
   int64_t evicted_window(CellState& c, int64_t now) const;
   void note_evictions(CellState& c, int64_t cell, int64_t t, const UeRuleCtx& ctx);
 
   AuthStallConfig cfg_;
   AlertConfig alert_;
-  UeAlertBook book_;
+  UeAlertBook book_;       // 공격 경보 (kind attack)
+  UeAlertBook held_book_;  // 불확실 경보 (kind anomaly, 14_ §6.2 — 이슈 #48)
   std::map<UeId, Mark> marks_;
   std::map<UeId, Request> requests_;  // UE별 마지막 요청 — 닫히면 지운다
   std::set<UeId> stalled_;            // 고착으로 세고 아직 응답이 없는 열린 UE — 응답 전까지 다시 세지 않는다

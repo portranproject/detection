@@ -84,6 +84,10 @@ class UplinkDosRule : public UeRule {
     int64_t evicted_seen = 0;
     int64_t evicted_open = 0;
     std::deque<int64_t> evict_times;
+    // 불확실 경보 (14_ §6.2 — Q-58 해결, 이슈 #48): 갈래 ① 대기가 창 W 안에서 N건 보류되면 kind anomaly. 갈래 없음
+    std::vector<AlertUe> fresh_held;
+    std::deque<AlertUe> held_ues;
+    int64_t t_last_held = 0;
   };
 
   bool is_failure(const UeEvt& evt) const;
@@ -95,12 +99,17 @@ class UplinkDosRule : public UeRule {
   void decorate(std::size_t from, RuleOutput& out);
   int64_t in_window(const CellState& c, bool msgs) const;
   int64_t held_window(CellState& c, int64_t now) const;
+  AlertUe held_ue(const UeState& n, int64_t t_hit) const;
+  void held_tick(int64_t cell, CellState& c, int64_t t, bool input_lost, const UeRuleCtx& ctx, RuleOutput& out);
+  void close_held(int64_t cell, int64_t t, RuleOutput& out);
+  void decorate_held(std::size_t from, RuleOutput& out);
   int64_t evicted_window(CellState& c, int64_t now) const;
   void note_evictions(CellState& c, int64_t cell, int64_t t, const UeRuleCtx& ctx);
 
   UplinkDosConfig cfg_;
   AlertConfig alert_;
-  UeAlertBook book_;
+  UeAlertBook book_;       // 공격 경보 (kind attack)
+  UeAlertBook held_book_;  // 불확실 경보 (kind anomaly, 14_ §6.2 — 이슈 #48)
   std::map<UeId, Mark> marks_;
   std::map<UeId, Conn> conns_;  // 실패·등록 요청을 본 열린 연결 — 닫히면 지운다
   std::map<int64_t, CellState> cells_;

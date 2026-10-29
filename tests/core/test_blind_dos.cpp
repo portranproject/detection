@@ -309,8 +309,8 @@ TEST(BlindDos, T10NasCipheredAcceptedBySmc) {
   EXPECT_TRUE(h.alerts.empty());
 }
 
-// L20-T11~T13: 대기 구간의 로스 (14_ §6.2) — ["UL","DL"]이면 보류, ["UL"]만이면 DL 대기라 보류 안 함,
-// 카운터 null(DL 미관측 모드)은 2단계가 보지 않아 보류 안 함
+// L20-T11~T13: 대기 구간의 로스 (14_ §6.2) — ["UL","DL"]이면 보류(공격 경보 없음 — 이슈 #48부터는 보류 1건으로 불확실 경보),
+// ["UL"]만이면 DL 대기라 보류 안 함, 카운터 null(DL 미관측 모드)은 2단계가 보지 않아 보류 안 함
 TEST(BlindDos, T11T12T13LossDuringWait) {
   auto run = [](const std::string& lost, const std::string& cc) {
     Harness h;
@@ -321,11 +321,73 @@ TEST(BlindDos, T11T12T13LossDuringWait) {
     h.tick_to(3000);
     h.kpm(3000, lost);
     h.tick_to(6100);
-    return h.alerts.size();
+    EXPECT_EQ(h.alerts.size(), 1u);
+    return h.alerts.empty() ? std::string() : h.alerts[0].alert_kind;
   };
-  EXPECT_EQ(run(R"(["UL","DL"])", kCc), 0u);
-  EXPECT_EQ(run(R"(["UL"])", kCc), 1u);
-  EXPECT_EQ(run("[]", kCcDlMissing), 1u);
+  EXPECT_EQ(run(R"(["UL","DL"])", kCc), "anomaly");
+  EXPECT_EQ(run(R"(["UL"])", kCc), "attack");
+  EXPECT_EQ(run("[]", kCcDlMissing), "attack");
+}
+
+// L20-T29 (14_ §6.2 불확실 경보 — Q-58 해결, 이슈 #48): 짝 대기 중 DL 로스 한 칸으로 보류 1건, 공격 경보 없음 → 마감 처리 칸에서
+// 불확실 경보 RAISE(kind anomaly, held_w 1, candidates L3-20, ues[] cond held·uncertain loss). 그 뒤 로스 없이 걸림 → 같은 줄에서
+// 불확실 CLEAR 뒤 공격 RAISE(alert_id 다름). 60 s 조용하면 불확실 경보도 CLEAR
+TEST(BlindDos, T29HeldAlert) {
+  {
+    Harness h;
+    h.victim(3, kS, 0);
+    h.tick_to(1000);
+    h.attack(7, kS, 1000);  // t₀ 1050 → 마감 6050
+    h.tick_to(1500);
+    h.kpm(1500, R"(["DL"])");  // loss_end[DL] 1600 > 1050 → 보류
+    h.tick_to(6000);
+    EXPECT_TRUE(h.alerts.empty());
+    h.tick_to(6100);
+    ASSERT_EQ(h.alerts.size(), 1u);
+    const AlertEvent e = h.alerts[0];  // 복사 — 뒤에 alerts가 늘어난다
+    EXPECT_EQ(e.kind, AlertEventKind::Raise);
+    EXPECT_EQ(e.alert_kind, "anomaly");
+    EXPECT_EQ(e.t, kT0 + 6100);
+    EXPECT_EQ(e.severity, Severity::Medium);
+    EXPECT_EQ(e.cond, (std::vector<std::string>{"held_count"}));
+    EXPECT_EQ(e.candidates, (std::vector<std::string>{"L3-20"}));
+    EXPECT_EQ(e.values.dump(), R"({"held_w":1})");
+    EXPECT_EQ(e.params.dump(), R"({"accept_wait_ms":5000,"clear_quiet_ms":60000})");
+    ASSERT_EQ(e.ues.size(), 1u);
+    EXPECT_EQ(e.ues[0].du_ue_id, 7);
+    EXPECT_EQ(e.ues[0].cond, (std::vector<std::string>{"held"}));
+    EXPECT_EQ(e.ues[0].t_hit, kT0 + 6050);
+    EXPECT_EQ(e.ues[0].uncertain, (std::vector<std::string>{"loss"}));
+    EXPECT_EQ(e.ues[0].values.dump(), R"({"wait_ms":5000,"dir":"DL"})");
+    EXPECT_EQ(h.logs[0], "ALERT RAISE rule=L3-20 cell=1 t=" + std::to_string(kT0 + 6100) +
+                             " kind=anomaly held_w=1 wait_ms=5000 severity=medium mode=normal candidates=L3-20");
+    // 그 뒤 로스 없이 공격 연결 8 → 마감 12050 → 12100에서 불확실 CLEAR 다음 공격 RAISE
+    h.attack(8, kS, 7000);
+    h.tick_to(12100);
+    ASSERT_EQ(h.alerts.size(), 3u);
+    EXPECT_EQ(h.alerts[1].kind, AlertEventKind::Clear);
+    EXPECT_EQ(h.alerts[1].alert_kind, "anomaly");
+    EXPECT_EQ(h.alerts[1].alert_id, e.alert_id);
+    EXPECT_EQ(h.alerts[1].t, kT0 + 12100);
+    EXPECT_EQ(h.alerts[2].kind, AlertEventKind::Raise);
+    EXPECT_EQ(h.alerts[2].alert_kind, "attack");
+    EXPECT_NE(h.alerts[2].alert_id, e.alert_id);
+    EXPECT_EQ(h.alerts[2].values.at("held"), 1);  // 직전 60 s 보류 1건
+  }
+  {
+    Harness h;  // 60 s 조용하면 불확실 경보 CLEAR
+    h.victim(3, kS, 0);
+    h.tick_to(1000);
+    h.attack(7, kS, 1000);
+    h.tick_to(1500);
+    h.kpm(1500, R"(["DL"])");
+    h.tick_to(66000);
+    ASSERT_EQ(h.alerts.size(), 1u);
+    h.tick_to(66100);  // 마지막 보류 6050 + 60 s
+    ASSERT_EQ(h.alerts.size(), 2u);
+    EXPECT_EQ(h.alerts[1].kind, AlertEventKind::Clear);
+    EXPECT_EQ(h.alerts[1].t, kT0 + 66100);
+  }
 }
 
 // L20-T14: 짝이 loss 불확실(로스 뒤 줄 없음 — 유령일 수 있음) — peer_uncertain, medium

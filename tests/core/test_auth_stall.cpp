@@ -30,6 +30,7 @@ struct Opt {
   AuthStallConfig cfg;
   SeriesConfig scfg;
   UeTableConfig ue_cfg;  // 상태표 상한 등 (포화 시험, 이슈 #42)
+  AlertConfig alert;     // 불확실 경보 켜기 등 (이슈 #48)
   bool record = false;  // 증거 기록기도 돌린다
   bool stage1 = false;  // 1단계 L3-01-V도 함께 (L01-T15)
   std::string cells = kCells;
@@ -49,7 +50,7 @@ class Harness {
       : engine(o.scfg, kDefaultMaxLineBytes, o.ue_cfg), queue(100000), rec(EvidenceConfig{}, queue),
         record_(o.record), cells_(o.cells) {
     if (o.stage1) engine.add_rule(std::make_unique<BtsVariantRule>());
-    auto r = std::make_unique<AuthStallRule>(o.cfg);
+    auto r = std::make_unique<AuthStallRule>(o.cfg, o.alert);
     rule = r.get();
     engine.add_ue_rule(std::move(r));
     hello("S");
@@ -723,6 +724,94 @@ TEST(AuthStall, T21LateUntil) {
   EXPECT_EQ(h.alerts[0].t, kT0 + 19100);
   ASSERT_EQ(h.alerts[0].ues.size(), 5u);
   for (const AlertUe& u : h.alerts[0].ues) EXPECT_EQ(u.uncertain, (std::vector<std::string>{"late"}));
+}
+
+// L01-T20·U-T30 (14_ §6.2·§8.2 불확실 경보 — Q-58 해결, 이슈 #48): 고착 대기 5건이 UL 로스 한 칸으로 모두 보류, 공격 경보 없음
+// → 5번째 보류 칸에서 불확실 경보 RAISE(kind anomaly, held_w 5, candidates L3-01-O, ues[] cond held·uncertain loss). 그 뒤 보류
+// 없이 고착 5건 → 같은 줄에서 불확실 CLEAR 뒤 공격 RAISE. 증거 기록기도 같은 순서로 alert 레코드를 낸다. 60 s 조용하면 CLEAR.
+// alert.held_alert가 false면 불확실 경보 없음(보류 수는 그대로)
+TEST(AuthStall, T20HeldAlert) {
+  {
+    Opt o;
+    o.record = true;
+    Harness h(o);
+    h.lost(2500, R"(["UL"])");  // loss_end[UL] 2600 > t₀ 1000~2332 — 다섯 모두 보류(마감 3000~4332는 그 뒤)
+    attack(h, 5);               // 마감 3000·3333·3666·3999·4332
+    h.tick_to(4300);
+    EXPECT_TRUE(h.alerts.empty());
+    h.tick_to(4400);
+    EXPECT_EQ(h.rule->held(), 5);
+    EXPECT_EQ(h.rule->stalls(), 0);
+    ASSERT_EQ(h.alerts.size(), 1u);
+    const AlertEvent e = h.alerts[0];  // 복사 — 뒤에 alerts가 늘어난다
+    EXPECT_EQ(e.kind, AlertEventKind::Raise);
+    EXPECT_EQ(e.alert_kind, "anomaly");
+    EXPECT_EQ(e.rule, "L3-01-O");
+    EXPECT_EQ(e.t, kT0 + 4400);
+    EXPECT_EQ(e.severity, Severity::Medium);
+    EXPECT_EQ(e.cond, (std::vector<std::string>{"held_count"}));
+    EXPECT_EQ(e.candidates, (std::vector<std::string>{"L3-01-O"}));
+    EXPECT_EQ(e.values.dump(), R"({"held_w":5})");
+    EXPECT_EQ(e.params.dump(), R"({"auth_wait_ms":2000,"window_ms":10000,"n_stall":5,"clear_quiet_ms":60000})");
+    ASSERT_EQ(e.ues.size(), 5u);
+    const int64_t t_hit[] = {3000, 3333, 3666, 3999, 4332};
+    for (std::size_t i = 0; i < 5; ++i) {
+      EXPECT_EQ(e.ues[i].du_ue_id, static_cast<int64_t>(10 + i));
+      EXPECT_EQ(e.ues[i].cond, (std::vector<std::string>{"held"}));
+      EXPECT_EQ(e.ues[i].t_hit, kT0 + t_hit[i]);
+      EXPECT_EQ(e.ues[i].uncertain, (std::vector<std::string>{"loss"}));
+      EXPECT_EQ(e.ues[i].values.dump(), R"({"wait_ms":2000,"dir":"UL"})");
+    }
+    EXPECT_EQ(h.logs[0], "ALERT RAISE rule=L3-01-O cell=1 t=" + t_str(4400) +
+                             " kind=anomaly held_w=5 n_stall=5 window_ms=10000 auth_wait_ms=2000 severity=medium "
+                             "mode=normal candidates=L3-01-O");
+    // U-T30: 그 뒤 로스 없이 고착 5건(t₀ 6000~7332, 마감 8000~9332) → 9400에서 불확실 CLEAR 다음 공격 RAISE
+    for (int i = 0; i < 5; ++i) h.stall_ue(6000 + 333 * i, 20 + i);
+    h.tick_to(9300);
+    EXPECT_EQ(h.alerts.size(), 1u);
+    h.tick_to(9400);
+    ASSERT_EQ(h.alerts.size(), 3u);
+    EXPECT_EQ(h.alerts[1].kind, AlertEventKind::Clear);
+    EXPECT_EQ(h.alerts[1].alert_kind, "anomaly");
+    EXPECT_EQ(h.alerts[1].alert_id, e.alert_id);
+    EXPECT_EQ(h.alerts[1].t, kT0 + 9400);
+    EXPECT_EQ(h.logs[1], "ALERT CLEAR rule=L3-01-O cell=1 t=" + t_str(9400) + " duration_ms=5000 ues_total=5");
+    EXPECT_EQ(h.alerts[2].kind, AlertEventKind::Raise);
+    EXPECT_EQ(h.alerts[2].alert_kind, "attack");
+    EXPECT_NE(h.alerts[2].alert_id, e.alert_id);
+    EXPECT_EQ(h.alerts[2].values.at("held"), 5);  // 직전 60 s의 보류
+    EXPECT_EQ(h.alerts[2].values.at("stalls_w"), 5);
+    // 증거 레코드: alert raise(anomaly) → pre … → alert clear(anomaly) → alert raise(attack) 순
+    std::vector<std::string> kinds;
+    for (const std::string& line : h.drain())
+      if (line.rfind(R"({"type":"alert")", 0) == 0) kinds.push_back(line);
+    ASSERT_EQ(kinds.size(), 3u);
+    EXPECT_NE(kinds[0].find(R"("event":"raise","rule":"L3-01-O","stage":2,"unit":"ue","kind":"anomaly")"), std::string::npos);
+    EXPECT_NE(kinds[1].find(R"("event":"clear","rule":"L3-01-O","stage":2,"unit":"ue","kind":"anomaly")"), std::string::npos);
+    EXPECT_NE(kinds[2].find(R"("event":"raise","rule":"L3-01-O","stage":2,"unit":"ue","kind":"attack")"), std::string::npos);
+  }
+  {
+    Harness h;  // 60 s 조용하면 CLEAR — 마지막 보류 4332 + 60 s → 64400
+    h.lost(2500, R"(["UL"])");
+    attack(h, 5);
+    h.tick_to(64300);
+    ASSERT_EQ(h.alerts.size(), 1u);
+    h.tick_to(64400);
+    ASSERT_EQ(h.alerts.size(), 2u);
+    EXPECT_EQ(h.alerts[1].kind, AlertEventKind::Clear);
+    EXPECT_EQ(h.alerts[1].alert_kind, "anomaly");
+    EXPECT_EQ(h.alerts[1].t, kT0 + 64400);
+  }
+  {
+    Opt o;
+    o.alert.held_alert = false;
+    Harness h(o);
+    h.lost(2500, R"(["UL"])");
+    attack(h, 5);
+    h.tick_to(10000);
+    EXPECT_EQ(h.rule->held(), 5);
+    EXPECT_TRUE(h.alerts.empty());
+  }
 }
 
 // 증거 지평 (14_ §1.1): 응답 대기 + 셀 창 + UPDATE 모음 지연. 상태표는 여기에 여유 1 s를 더해 닫힌 항목의 recent를 보관한다

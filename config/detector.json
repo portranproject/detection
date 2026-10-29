@@ -23,7 +23,7 @@
   "ue_table": { "max_ues": 4096, "recent_n": 16, "stale_setup_ms": 30000, "closed_recent_max": 1024,
                 "ghost_k": 2, "ghost_margin": 16, "ghost_hold_ms": 5000, "evict_protect_ms": 5000,
                 "dl_unobserved_ms": 5000, "recent_keep_margin_ms": 1000 },
-  "alert": { "ues_max": 50, "update_min_ms": 1000, "ue_evidence_max": 50 },
+  "alert": { "ues_max": 50, "update_min_ms": 1000, "ue_evidence_max": 50, "held_alert": true },
   "evidence": {
     "mode": "full", "pre_slots": null, "post_slots": 10,
     "queue_max": 4096, "out_path": "evidence.jsonl"

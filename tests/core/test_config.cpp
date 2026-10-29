@@ -75,6 +75,8 @@ TEST(Config, RepoConfigFileParses) {
   EXPECT_EQ(r.config.alert.ues_max, ad.ues_max);
   EXPECT_EQ(r.config.alert.update_min_ms, ad.update_min_ms);
   EXPECT_EQ(r.config.alert.ue_evidence_max, ad.ue_evidence_max);
+  EXPECT_EQ(r.config.alert.held_alert, ad.held_alert);  // 불확실 경보 (14_ §9, 이슈 #48)
+  EXPECT_TRUE(ad.held_alert);
   auto bl = parse_blind_dos_config(r.config.rules.at("L3-20"));
   ASSERT_TRUE(bl.ok) << bl.error;
   EXPECT_TRUE(bl.warnings.empty());
@@ -189,6 +191,9 @@ TEST(Config, Stage2KeysRead) {
   EXPECT_EQ(g.config.ue_table.dl_unobserved_ms, 2000);
   EXPECT_EQ(g.config.ue_table.recent_keep_margin_ms, 0);
   EXPECT_DOUBLE_EQ(parse_config(R"({"ue_table":{"ghost_k":3}})").config.ue_table.ghost_k, 3.0);  // 정수도 받는다
+  EXPECT_FALSE(parse_config(R"({"alert":{"held_alert":false}})").config.alert.held_alert);
+  EXPECT_FALSE(parse_config(R"({"alert":{"held_alert":1}})").ok);  // 불리언만
+  EXPECT_FALSE(parse_config(R"({"alert":{"held_alert":"true"}})").ok);
 
   auto bl = parse_blind_dos_config(R"({"accept_wait_ms":3000,"clear_quiet_ms":30000})");
   ASSERT_TRUE(bl.ok) << bl.error;

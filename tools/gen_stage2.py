@@ -202,9 +202,11 @@ class Scenario:
         self.session_changes[tick] = name
 
     # 기대 경보 하나(명세 식으로 손 계산). kind·rule·cell·t_rel_ms는 늘, mode·severity·branch·reason은 있으면 비교(14_ §8.3)
-    def alert(self, kind, t_rel, rule, cell=1, mode=None, severity=None, branch=None, reason=None):
+    def alert(self, kind, t_rel, rule, cell=1, mode=None, severity=None, branch=None, reason=None, alert_kind=None):
+        # alert_kind: "attack" | "anomaly"(불확실 경보, 14_ §6.2 — 이슈 #48). 적으면 시험이 비교한다
         a = {"kind": kind, "rule": rule, "cell": cell, "t_rel_ms": t_rel}
-        for key, val in (("mode", mode), ("severity", severity), ("branch", branch), ("reason", reason)):
+        for key, val in (("mode", mode), ("severity", severity), ("branch", branch), ("reason", reason),
+                         ("alert_kind", alert_kind)):
             if val is not None:
                 a[key] = val
         self.expect.append(a)
@@ -346,12 +348,32 @@ def s01_resp_boundary_late():
 
 
 def s01_hold():
-    # L01-T9: 대기 구간에 UL 로스 창 → 고착 보류(14_ §6.2). 5대 모두 보류 → 경보 없음(오탐 방지)
-    sc = Scenario("S01_L3-01-O_로스보류_무경보", "인증 무응답 5대지만 대기 구간 UL 로스 → 모두 보류, 경보 없음 (L01-T9)", 4000)
+    # L01-T9: 대기 구간에 UL 로스 창 → 고착 보류(14_ §6.2). 5대 모두 보류 → 공격 경보 없음(오탐 방지).
+    # 이슈 #48(Q-58, 14_ §6.2): 보류가 창 안 N=5건이면 불확실 경보(kind anomaly) — 5번째 보류 마감 2905 → RAISE 3000
+    sc = Scenario("S01_L3-01-O_로스보류_불확실RAISE",
+                  "인증 무응답 5대지만 대기 구간 UL 로스 → 모두 보류, 공격 경보 없이 불확실 경보 RAISE (L01-T9·L01-T20)", 4000)
     for i, t in enumerate([0, 200, 400, 600, 800]):
         sc.ue(i + 1).auth_stall(t)
     for tick in range(10, 31):   # t=1000~3000 UL 로스 — 마감 처리 때 loss_end[UL] > t_from → 보류
         sc.set_loss(1, tick, ["UL"])
+    sc.alert("RAISE", 3000, "L3-01-O", severity="medium", mode="normal", alert_kind="anomaly")
+    return sc
+
+
+def s01_held_then_attack():
+    # U-T30·L01-T20 재생판 (이슈 #48): 보류 5건으로 불확실 RAISE(3000) 뒤 로스 없이 고착 5건 — 5번째 마감 6905 → 같은 칸 7000에서
+    # 불확실 CLEAR → 공격 RAISE (14_ §8.2 '같은 줄에서 먼저 CLEAR')
+    sc = Scenario("S01_L3-01-O_불확실뒤공격_CLEAR-RAISE",
+                  "UL 로스로 5건 보류 → 불확실 RAISE, 그 뒤 로스 없이 고착 5건 → 같은 칸에서 불확실 CLEAR·공격 RAISE (U-T30·L01-T20)", 7200)
+    for i, t in enumerate([0, 200, 400, 600, 800]):
+        sc.ue(i + 1).auth_stall(t)
+    for tick in range(10, 31):
+        sc.set_loss(1, tick, ["UL"])
+    for i, t in enumerate([4000, 4200, 4400, 4600, 4800]):   # 인증 요청 t+105, 마감 t+2105: 6105…6905 — 로스 창(≤3100) 뒤
+        sc.ue(11 + i).auth_stall(t)
+    sc.alert("RAISE", 3000, "L3-01-O", severity="medium", mode="normal", alert_kind="anomaly")
+    sc.alert("CLEAR", 7000, "L3-01-O", alert_kind="anomaly")
+    sc.alert("RAISE", 7000, "L3-01-O", severity="medium", mode="normal", alert_kind="attack")
     return sc
 
 
@@ -408,24 +430,25 @@ def s01_late_all():
 
 def s01_ul_loss_one():
     # 16_ E2c: t=1500 한 칸(100 ms)만 UL 로스 — 대기 구간 [t₀, t₀+2000)이 모두 그 칸과 겹쳐 5건 전부 보류(14_ §6.2).
-    # 기존 '로스보류_무경보'는 20칸이고, 여기서는 한 칸이면 충분함을 고정한다. 4_ §6.1 #8(불확실 경보)에서 RAISE로 바뀐다
-    sc = Scenario("S01_L3-01-O_UL로스1칸_무경보",
-                  "인증 무응답 5대, t=1.5 s에 UL 로스 한 칸(100 ms) — 겹치는 5건 모두 보류, 경보 없음 (16_ E2c, 현재 동작 고정)", 4000)
+    # 기존 '로스보류'는 20칸이고, 여기서는 한 칸이면 충분하다. 이슈 #48: 보류 5건 → 불확실 경보 RAISE 3000(공격 경보는 없음)
+    sc = Scenario("S01_L3-01-O_UL로스1칸_불확실RAISE",
+                  "인증 무응답 5대, t=1.5 s에 UL 로스 한 칸(100 ms) — 겹치는 5건 모두 보류 → 불확실 경보 RAISE (16_ E2c, L01-T20)", 4000)
     for du, t in _stall5():
         sc.ue(du).auth_stall(t)
     sc.set_loss(1, 15, ["UL"])
+    sc.alert("RAISE", 3000, "L3-01-O", severity="medium", mode="normal", alert_kind="anomaly")
     return sc
 
 
 def s01_lost_missing():
-    # 16_ E2: kpm2에 ue_evt_lost 키가 없음 — 알 수 없으므로 양방향 로스(14_ §6.2) → 전부 보류, 경보 없음.
-    # 진단 ue_evt_lost_missing은 연속 50칸(5 s) 뒤라 이 4 s 시나리오에서는 나오지 않는다(시험은 경보만 비교).
-    # 4_ §6.1 #8(첫 칸 진단·불확실 경보)에서 바뀐다
-    sc = Scenario("S01_L3-01-O_ue_evt_lost누락_무경보",
-                  "인증 무응답 5대, 모든 kpm2에 ue_evt_lost 키 없음 — 양방향 로스로 보아 전부 보류, 경보 없음 (16_ E2, 현재 동작 고정)", 4000)
+    # 16_ E2: kpm2에 ue_evt_lost 키가 없음 — 알 수 없으므로 양방향 로스(14_ §6.2) → 전부 보류. 이슈 #48: 첫 칸에서 진단
+    # ue_evt_lost_missing(시험은 경보만 비교), 보류 5건 → 불확실 경보 RAISE 3000
+    sc = Scenario("S01_L3-01-O_ue_evt_lost누락_불확실RAISE",
+                  "인증 무응답 5대, 모든 kpm2에 ue_evt_lost 키 없음 — 양방향 로스로 보아 전부 보류 → 불확실 경보 RAISE (16_ E2)", 4000)
     for du, t in _stall5():
         sc.ue(du).auth_stall(t)
     sc.drop_lost = True
+    sc.alert("RAISE", 3000, "L3-01-O", severity="medium", mode="normal", alert_kind="anomaly")
     return sc
 
 
@@ -625,13 +648,16 @@ def s21_sec_reject():
 
 
 def s21_hold():
-    # L21-T10: 갈래① 대기 구간에 DL 로스 창 → 실패 UE 보류(14_ §6.2). 5대 모두 보류 → 경보 없음
-    sc = Scenario("S21_L3-21_로스보류_무경보", "무효 등록 5대 거절이지만 대기 구간 DL 로스 → 모두 보류, 경보 없음 (L21-T10)", 6500)
+    # L21-T10: 갈래 ① 대기 구간에 DL 로스 창 → 실패 UE 보류(14_ §6.2). 5대 모두 보류 → 공격 경보 없음.
+    # 이슈 #48(L21-T22): 보류 5건 → 불확실 경보(갈래 없음) — 5번째 마감 5905 → RAISE 6000
+    sc = Scenario("S21_L3-21_로스보류_불확실RAISE",
+                  "무효 등록 5대 거절이지만 대기 구간 DL 로스 → 모두 보류, 공격 경보 없이 불확실 경보 RAISE (L21-T10·L21-T22)", 6500)
     for i, t in enumerate([0, 200, 400, 600, 800]):
         u = sc.ue(i + 1)
         u.setup_req(t).setup(t + 1).setup_complete(t + 90).reg_req(t + 91).reg_reject(t + 105)
     for tick in range(10, 62):   # t=1000~6100 DL 로스 — 마감 처리 때 loss_end[DL] > t_from → 보류
         sc.set_loss(1, tick, ["DL"])
+    sc.alert("RAISE", 6000, "L3-21", severity="medium", mode="normal", alert_kind="anomaly")
     return sc
 
 
@@ -658,6 +684,8 @@ SCENARIOS = [
     s01_late_one, s01_late_all, s01_ul_loss_one, s01_lost_missing,
     # late_until 만료 뒤 판정 (이슈 #46)
     s01_late_one_expired,
+    # 불확실 경보 뒤 공격 경보 (이슈 #48)
+    s01_held_then_attack,
 ]
 
 

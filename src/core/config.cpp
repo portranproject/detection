@@ -69,6 +69,13 @@ void read_real(const json& obj, const char* key, double& out, double min_exclusi
   out = x;
 }
 
+void read_bool(const json& obj, const char* key, bool& out, const std::string& where) {
+  const json* v = find(obj, key);
+  if (!v) return;
+  if (!v->is_boolean()) throw ConfigErr(where + key + ": not a boolean");
+  out = v->get<bool>();
+}
+
 void read_string(const json& obj, const char* key, std::string& out, const std::string& where) {
   const json* v = find(obj, key);
   if (!v) return;
@@ -182,10 +189,11 @@ void parse_ue_table(const json& e, UeTableConfig& c, std::vector<std::string>& w
 void parse_alert(const json& e, AlertConfig& c, std::vector<std::string>& warnings) {
   const std::string w = "alert.";
   if (!e.is_object()) throw ConfigErr("alert: not an object");
-  warn_unknown(e, {"ues_max", "update_min_ms", "ue_evidence_max"}, w, warnings);
+  warn_unknown(e, {"ues_max", "update_min_ms", "ue_evidence_max", "held_alert"}, w, warnings);
   read_int_in(e, "ues_max", c.ues_max, 1, 1000, w);
   read_int_in(e, "update_min_ms", c.update_min_ms, 100, 60000, w);
   read_int_in(e, "ue_evidence_max", c.ue_evidence_max, 0, 1000, w);
+  read_bool(e, "held_alert", c.held_alert, w);  // 불확실 경보 켜기 (14_ §9, 이슈 #48)
 }
 
 // 룰 설정 객체 하나를 그 룰의 파서로 해석한다 (Q-46, 결정 J4)

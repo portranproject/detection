@@ -53,7 +53,8 @@ std::string hex48(uint64_t v) {
 
 }  // namespace
 
-BlindDosRule::BlindDosRule(BlindDosConfig cfg, AlertConfig alert) : cfg_(cfg), alert_(alert), book_(kId, alert) {}
+BlindDosRule::BlindDosRule(BlindDosConfig cfg, AlertConfig alert)
+    : cfg_(cfg), alert_(alert), book_(kId, alert), held_book_(kId, alert, "anomaly") {}
 
 // 증거 지평 (14_ §1.1): 수락 대기 + UPDATE 모음 지연 — 마감 전에 닫힌 n이 걸려 UPDATE로 실릴 때까지 recent가 남게
 int64_t BlindDosRule::evidence_horizon_ms() const { return cfg_.accept_wait_ms + alert_.update_min_ms; }
@@ -146,14 +147,16 @@ void BlindDosRule::on_deadline(const Deadline& d, const UeRuleCtx& ctx, RuleOutp
   drop(id);
   const int64_t cell = d.key.cell_id;
   const int64_t now = ctx.deadlines.clock(cell).value_or(d.at);
+  const UeState* n = ctx.table.find(d.key);
+  if (!n || n->uid != d.uid) n = m.closed ? &*m.closed : nullptr;
   if (ctx.deadlines.held(cell, Dir::DL, m.t_from)) {
+    // 보류 (14_ §6.2): 공격 경보 중이면 values.held로만, 아니면 불확실 경보용으로 적어 둔다(판정은 held_tick) — 이슈 #48
     CellState& c = cells_[cell];
     c.held_times.push_back(now);
     if (book_.open(cell)) ++c.held_open;
+    else if (alert_.held_alert && n) c.fresh_held.push_back(held_ue(*n, d.at));
     return;
   }
-  const UeState* n = ctx.table.find(d.key);
-  if (!n || n->uid != d.uid) n = m.closed ? &*m.closed : nullptr;
   if (!n || n->mid_join || n->late_blocks(d.at)) return;
   hit(m, *n, d.at, now, ctx, out);
 }
@@ -165,7 +168,8 @@ void BlindDosRule::hit(const Mark& m, const UeState& n, int64_t t_hit, int64_t n
                        RuleOutput& out) {
   const int64_t cell = n.key.cell_id;
   CellState& c = cells_[cell];
-  if (!book_.open(cell)) {  // 새 경보 — 누적값을 처음부터 센다
+  if (!book_.open(cell)) {  // 새 경보 — 누적값을 처음부터 센다. 열린 불확실 경보는 같은 줄에서 먼저 CLEAR (14_ §8.2)
+    close_held(cell, now, out);
     c.concurrent = 0;
     c.peer_uncertain = 0;
     c.victims.clear();
@@ -256,6 +260,76 @@ void BlindDosRule::on_cell_tick(int64_t cell, const Kpm2& k, const CellLoss&, bo
     book_.clear(cell, t, out.alerts);
   decorate(from, out);
   held_window(c, t);
+  held_tick(cell, c, t, input_lost, ctx, out);
+}
+
+// 보류된 UE 한 칸 (14_ §6.2 불확실 경보의 ues[]): cond held, t_hit = 마감, uncertain에 loss, 기다린 시간·방향
+AlertUe BlindDosRule::held_ue(const UeState& n, int64_t t_hit) const {
+  AlertUe u = alert_ue(n);
+  u.cond = {"held"};
+  u.t_hit = t_hit;
+  if (std::find(u.uncertain.begin(), u.uncertain.end(), "loss") == u.uncertain.end()) u.uncertain.emplace_back("loss");
+  u.values["wait_ms"] = cfg_.accept_wait_ms;
+  u.values["dir"] = "DL";
+  return u;
+}
+
+// 불확실 경보 (14_ §6.2 — Q-58 ② 해결, 이슈 #48): 이번 마감 처리에서 보류된 UE마다 창(이 룰은 clear_quiet_ms) 안 보류 수
+// H_W를 세고, 공격 경보가 없으면 H_W ≥ 1에서 창 안 보류 UE로 RAISE(kind anomaly), 경보 중이면 UPDATE로 모은다. 공격 경보가
+// 이 칸에서 열렸으면 values.held로만 센다. 마지막 보류 뒤 clear_quiet_ms면 CLEAR, input_lost면 END
+void BlindDosRule::held_tick(int64_t cell, CellState& c, int64_t t, bool input_lost, const UeRuleCtx& ctx,
+                             RuleOutput& out) {
+  std::size_t from = out.alerts.size();
+  if (input_lost) held_book_.end(cell, t, "input_lost", out.alerts);
+  for (AlertUe& u : c.fresh_held) {
+    c.held_ues.push_back(u);
+    while (c.held_ues.front().t_hit <= u.t_hit - cfg_.clear_quiet_ms) c.held_ues.pop_front();
+    c.t_last_held = u.t_hit;
+    if (book_.open(cell)) {
+      ++c.held_open;
+      continue;
+    }
+    std::vector<AlertUe> ues;
+    if (held_book_.open(cell)) ues.push_back(u);
+    else ues.assign(c.held_ues.begin(), c.held_ues.end());
+    held_book_.add(cell, std::move(ues), Severity::Medium, t, ctx.session, ctx.seq, out.alerts);
+  }
+  c.fresh_held.clear();
+  held_book_.flush(cell, t, out.alerts);
+  if (held_book_.open(cell) && t - c.t_last_held >= cfg_.clear_quiet_ms) held_book_.clear(cell, t, out.alerts);
+  decorate_held(from, out);
+  if (!held_book_.open(cell))
+    while (!c.held_ues.empty() && c.held_ues.front().t_hit <= t - cfg_.clear_quiet_ms) c.held_ues.pop_front();
+}
+
+// 공격 경보가 RAISE되기 직전 — 열린 불확실 경보를 같은 줄에서 먼저 CLEAR한다 (14_ §8.2)
+void BlindDosRule::close_held(int64_t cell, int64_t t, RuleOutput& out) {
+  if (!held_book_.open(cell)) return;
+  const std::size_t from = out.alerts.size();
+  held_book_.clear(cell, t, out.alerts);
+  decorate_held(from, out);
+}
+
+// 불확실 경보 값 채우기 (14_ §6.2): raise·update에 values.held_w(창 안 보류 수), raise에 cond held_count·candidates(이 룰)·
+// params·로그 필드(맨 앞 kind=anomaly). update 로그에는 kind=anomaly만
+void BlindDosRule::decorate_held(std::size_t from, RuleOutput& out) {
+  for (std::size_t i = from; i < out.alerts.size(); ++i) {
+    AlertEvent& e = out.alerts[i];
+    if (e.kind != AlertEventKind::Raise && e.kind != AlertEventKind::Update) continue;
+    const CellState& c = cells_[e.cell_id];
+    e.values["held_w"] = static_cast<int64_t>(c.held_ues.size());
+    if (e.kind != AlertEventKind::Raise) {
+      e.log_fields = {{"kind", "anomaly"}};
+      continue;
+    }
+    e.cond = {"held_count"};
+    e.candidates = {kId};
+    e.params["accept_wait_ms"] = cfg_.accept_wait_ms;
+    e.params["clear_quiet_ms"] = cfg_.clear_quiet_ms;
+    e.log_fields = {{"kind", "anomaly"},
+                    {"held_w", std::to_string(c.held_ues.size())},
+                    {"wait_ms", std::to_string(cfg_.accept_wait_ms)}};
+  }
 }
 
 // 상태표 셀별 누적 evicted(14_ §6.3)의 증가분을 이 칸 시각으로 적는다 — 경보가 열려 있으면 evicted_open도
@@ -276,6 +350,7 @@ int64_t BlindDosRule::evicted_window(CellState& c, int64_t now) const {
 // 새 세션 (14_ §7 hello): 진행 중 경보를 END(session_reset)로 끝내고 대기 표시·누적값을 모두 버린다
 void BlindDosRule::on_session_reset(const UeRuleCtx&, RuleOutput& out) {
   book_.end_all("session_reset", out.alerts);
+  held_book_.end_all("session_reset", out.alerts);
   marks_.clear();
   by_peer_.clear();
   cells_.clear();

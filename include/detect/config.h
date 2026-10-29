@@ -64,6 +64,7 @@ struct AlertConfig {
   std::size_t ues_max = 50;          // alert.ues_max — 레코드 하나의 ues 칸 수 (14_ §8.3)
   int64_t update_min_ms = 1000;      // alert.update_min_ms — 새 UE로 내는 update 최소 간격 (14_ §8.2)
   std::size_t ue_evidence_max = 50;  // alert.ue_evidence_max — 경보 하나에서 증거를 내는 UE 수 상한 (14_ §8.3)
+  bool held_alert = true;            // alert.held_alert — 보류가 개수 문턱만큼 쌓이면 불확실 경보(kind anomaly) (14_ §6.2, Q-58 해결 — 이슈 #48)
 };
 
 // 룰 L3-20 Blind DoS (15_ §2.4·§1.2). 설정 파일 rules.L3-20에 키가 없으면 이 기본값을 쓴다 (4_ §1.2)
