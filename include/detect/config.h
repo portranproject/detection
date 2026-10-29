@@ -64,6 +64,16 @@ struct BlindDosConfig {
   int64_t clear_quiet_ms = 60000;  // clear_quiet_ms — 마지막 걸림 뒤 이만큼 새로 걸린 UE가 없으면 해제 (15_ §2.5)
 };
 
+// 룰 L3-01-O 인증 단계 고착 (15_ §4.4·§1.2). 설정 파일 키 rules.L3-01-O.*는 아직 읽지 않고 이 기본값을 쓴다 (4_ §1.2)
+struct AuthStallConfig {
+  int64_t auth_wait_ms = 2000;           // auth_wait_ms — T_auth, AuthenticationRequest 응답 대기 (15_ §4.3)
+  int64_t window_ms = 10000;             // window_ms — W, 셀 고착 수를 세는 창
+  int64_t n_stall = 5;                   // n_stall — N, 창 안 고착 수 문턱
+  int64_t clear_quiet_ms = 60000;        // clear_quiet_ms — 마지막 성립 뒤 이만큼 성립이 없으면 해제 (15_ §4.5)
+  std::optional<int64_t> max_conn = 96;  // max_conn — 심각도 high 문턱 0.9 × max_conn. null이면 high를 쓰지 않음,
+                                         // hello cells[].max_conn이 우선 (15_ §4.3, 1단계 3_ §4와 같음)
+};
+
 // 설정 파일 전체 (4_ §1.2). rules는 룰 ID → 그 룰의 설정 객체(JSON 문자열)다 — 공통 파서는 넘기기만 하고
 // 룰별 파서(parse_bts_variant_config 등)가 키·범위를 검사한다 (Q-46, 결정 J4)
 struct DetectorConfig {

@@ -51,14 +51,6 @@ std::string hex48(uint64_t v) {
   return buf;
 }
 
-std::vector<std::string> uncertain_reasons(const UeState& s) {
-  std::vector<std::string> r;
-  if (s.mid_join) r.emplace_back("mid_join");
-  if (s.loss) r.emplace_back("loss");
-  if (s.late) r.emplace_back("late");
-  return r;
-}
-
 }  // namespace
 
 BlindDosRule::BlindDosRule(BlindDosConfig cfg, AlertConfig alert) : cfg_(cfg), alert_(alert), book_(kId, alert) {}
@@ -182,12 +174,7 @@ void BlindDosRule::hit(const Mark& m, const UeState& n, int64_t t_hit, int64_t n
   const int64_t repeat = ++c.victims[m.s_tmsi];
   c.t_hit_last = t_hit;
 
-  AlertUe u;
-  u.cell = cell;
-  u.du_ue_id = n.key.du_ue_id;
-  u.uid = n.uid;
-  u.cu_ue_id = n.cu_ue_id;
-  u.crnti = n.crnti;
+  AlertUe u = alert_ue(n);
   u.s_tmsi = m.s_tmsi;
   u.cond = {"same_stmsi", m.concurrent ? "concurrent" : "peer_uncertain", "not_accepted"};
   u.t_hit = t_hit;
@@ -198,7 +185,6 @@ void BlindDosRule::hit(const Mark& m, const UeState& n, int64_t t_hit, int64_t n
   u.values["closed_ms"] = m.closed_at ? ojson(*m.closed_at - m.t_from) : ojson(nullptr);
   u.values["victim_released"] = m.victim_released;
   u.values["repeat"] = repeat;
-  u.uncertain = uncertain_reasons(n);
   for (const UeId& p : m.peers) u.peers.push_back({p.first.cell_id, p.first.du_ue_id, p.second});
 
   const Severity sev = m.concurrent && m.victim_released ? Severity::High : Severity::Medium;

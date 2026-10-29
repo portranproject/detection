@@ -5,6 +5,20 @@
 
 namespace detect {
 
+AlertUe alert_ue(const UeState& s) {
+  AlertUe u;
+  u.cell = s.key.cell_id;
+  u.du_ue_id = s.key.du_ue_id;
+  u.uid = s.uid;
+  u.cu_ue_id = s.cu_ue_id;
+  u.crnti = s.crnti;
+  u.s_tmsi = s.s_tmsi;
+  if (s.mid_join) u.uncertain.emplace_back("mid_join");
+  if (s.loss) u.uncertain.emplace_back("loss");
+  if (s.late) u.uncertain.emplace_back("late");
+  return u;
+}
+
 UeAlertBook::UeAlertBook(std::string rule, AlertConfig cfg) : rule_(std::move(rule)), cfg_(cfg) {}
 
 std::optional<Severity> UeAlertBook::severity(int64_t cell) const {
