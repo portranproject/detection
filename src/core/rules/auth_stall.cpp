@@ -82,7 +82,8 @@ void AuthStallRule::start(const UeId& id, const UeEvt& evt, const UeRuleCtx& ctx
 
 // 항목이 닫힘 (15_ §1·§4.3-5, 14_ §2.4): n이 마감 전에 released·reused·stale_setup으로 닫히면 표시를 남기고 닫힐 때
 // 상태를 복사한다 — 판정을 마감까지 미루는 것은 닫힌 줄이 든 창의 로스 여부가 그 창 kpm2가 와야 정해지기 때문이다
-// (L3-20과 같은 이유). du_reset·evicted·superseded·session_reset이면 표시를 지운다. 앞선 요청·고착 표시는 지운다
+// (L3-20과 같은 이유). du_reset·evicted·ghost_purge·superseded·session_reset이면 표시를 지운다(ghost_purge는 이슈 #44).
+// 앞선 요청·고착 표시는 지운다
 void AuthStallRule::on_ue_close(const UeState& last, CloseReason reason, int64_t t, const UeRuleCtx&, RuleOutput&) {
   const UeId id{last.key, last.uid};
   requests_.erase(id);
@@ -147,6 +148,7 @@ void AuthStallRule::on_cell_tick(int64_t cell, const Kpm2& k, const CellLoss&, b
                                  RuleOutput& out) {
   const int64_t t = k.t_end_ms;
   CellState& c = cells_[cell];
+  note_evictions(c, cell, t, ctx);
   if (input_lost) book_.end(cell, t, "input_lost", out.alerts);
 
   c.uectx.emplace_back(t, k.ue_ctx_max);
@@ -172,6 +174,7 @@ void AuthStallRule::on_cell_tick(int64_t cell, const Kpm2& k, const CellLoss&, b
       book_.add(cell, std::move(one), sev, t, ctx.session, ctx.seq, out.alerts);
     } else if (sat) {
       c.held_open = 0;  // 새 경보 — 누적값을 처음부터 센다
+      c.evicted_open = 0;
       book_.add(cell, std::vector<AlertUe>(c.stalls.begin(), c.stalls.end()), sev, t, ctx.session, ctx.seq,
                 out.alerts);
     }
@@ -182,7 +185,9 @@ void AuthStallRule::on_cell_tick(int64_t cell, const Kpm2& k, const CellLoss&, b
   const std::size_t from = out.alerts.size();
   if (high && book_.severity(cell) == Severity::Medium) book_.update(cell, Severity::High, t, out.alerts);
   book_.flush(cell, t, out.alerts);
-  if (book_.open(cell) && t - c.t_sat >= cfg_.clear_quiet_ms) book_.clear(cell, t, out.alerts);
+  // 6) 직전 clear_quiet_ms 동안 그 셀에 상태표 밀어내기가 있었으면 풀지 않는다 (15_ §4.5, Q-56 해결 — 이슈 #44)
+  if (book_.open(cell) && t - c.t_sat >= cfg_.clear_quiet_ms && evicted_window(c, t) == 0)
+    book_.clear(cell, t, out.alerts);
   decorate(cell, from, cx, max_conn, out);
 
   // 창 밖 기록 정리. 경보 중에는 값의 기준이 마지막 고착 시각이고, 경보가 없으면 다음 기준은 앞으로의 고착(> t)이다
@@ -207,6 +212,7 @@ void AuthStallRule::decorate(int64_t cell, std::size_t from, std::optional<int64
     e.values["stalls_total"] = e.ues_total;
     e.values["auth_req_w"] = auth_req_w(c);
     e.values["held"] = raise ? held_window(c, e.t) : c.held_open;
+    e.values["evicted"] = raise ? evicted_window(c, e.t) : c.evicted_open;  // 15_ §4.6 (이슈 #44)
     e.values["uectx"] = cx ? ojson(*cx) : ojson(nullptr);
     // 로그의 uectx (15_ §4.6): Cx/max_conn, max_conn이 null이면 Cx. RAISE는 늘 적고(없으면 null) UPDATE는 있을 때만
     const std::string uectx =
@@ -248,6 +254,21 @@ int64_t AuthStallRule::auth_req_w(const CellState& c) const {
 int64_t AuthStallRule::held_window(CellState& c, int64_t now) const {
   while (!c.held_times.empty() && c.held_times.front() <= now - cfg_.clear_quiet_ms) c.held_times.pop_front();
   return static_cast<int64_t>(c.held_times.size());
+}
+
+// 상태표 셀별 누적 evicted(14_ §6.3)의 증가분을 이 칸 시각으로 적는다 — 경보가 열려 있으면 evicted_open도 (이슈 #44)
+void AuthStallRule::note_evictions(CellState& c, int64_t cell, int64_t t, const UeRuleCtx& ctx) {
+  const int64_t total = ctx.table.counts(cell).evicted;
+  for (; c.evicted_seen < total; ++c.evicted_seen) {
+    c.evict_times.push_back(t);
+    if (book_.open(cell)) ++c.evicted_open;
+  }
+}
+
+// 직전 clear_quiet_ms 동안의 밀어내기 수 (이동 창) — raise의 values.evicted와 해제 보류 기준
+int64_t AuthStallRule::evicted_window(CellState& c, int64_t now) const {
+  while (!c.evict_times.empty() && c.evict_times.front() <= now - cfg_.clear_quiet_ms) c.evict_times.pop_front();
+  return static_cast<int64_t>(c.evict_times.size());
 }
 
 // 새 세션 (14_ §7 hello): 진행 중 경보를 END(session_reset)로 끝내고 대기 표시·셀 기록을 모두 버린다

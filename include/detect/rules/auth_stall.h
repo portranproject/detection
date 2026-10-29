@@ -70,6 +70,10 @@ class AuthStallRule : public UeRule {
     std::deque<std::pair<int64_t, UeId>> auth_reqs;                // AuthenticationRequest (t_ms, UE) — auth_req_w
     int64_t held_open = 0;                      // 경보가 열린 뒤 보류된 판정 수
     std::deque<int64_t> held_times;             // 보류 시각 — raise의 held는 직전 clear_quiet_ms 동안 (이동 창)
+    // 상태표 밀어내기 (15_ §4.5·§4.6, 14_ §6.3 — Q-56 해결, 이슈 #44): 직전 clear_quiet_ms 동안 밀어내기가 있으면 풀지 않는다
+    int64_t evicted_seen = 0;
+    int64_t evicted_open = 0;
+    std::deque<int64_t> evict_times;
   };
 
   void start(const UeId& id, const UeEvt& evt, const UeRuleCtx& ctx);
@@ -77,6 +81,8 @@ class AuthStallRule : public UeRule {
                 RuleOutput& out);
   int64_t auth_req_w(const CellState& c) const;
   int64_t held_window(CellState& c, int64_t now) const;
+  int64_t evicted_window(CellState& c, int64_t now) const;
+  void note_evictions(CellState& c, int64_t cell, int64_t t, const UeRuleCtx& ctx);
 
   AuthStallConfig cfg_;
   AlertConfig alert_;

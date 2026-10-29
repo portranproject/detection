@@ -1,4 +1,4 @@
-// 룰 L3-01-O 인증 단계 고착 테스트 — 15_ §4.8 L01-T1~T19, 상태표 포화 현재 동작(이슈 #42). 합성 ue_evt·kpm2 줄로 한다(데이터 파일은 설정 키·데이터 이슈).
+// 룰 L3-01-O 인증 단계 고착 테스트 — 15_ §4.8 L01-T1~T19, 상태표 포화(이슈 #42 → #44). 합성 ue_evt·kpm2 줄로 한다(데이터 파일은 설정 키·데이터 이슈).
 // 시각은 kT0 기준 ms. k번째 고착은 그 UE의 t₀ + auth_wait_ms, 경보는 그 시각 이상인 첫 kpm2(최대 100 ms 뒤)에서 나온다
 #include "detect/engine.h"
 #include "detect/evidence.h"
@@ -211,7 +211,7 @@ TEST(AuthStall, T03FloodRaises) {
   EXPECT_EQ(e.cond, (std::vector<std::string>{"stall_count"}));
   EXPECT_EQ(e.candidates, (std::vector<std::string>{"AN-01"}));
   EXPECT_EQ(e.alert_id.rfind("S-L3-01-O-1-", 0), 0u);
-  EXPECT_EQ(e.values.dump(), R"({"stalls_w":5,"stalls_total":5,"auth_req_w":5,"held":0,"uectx":null})");
+  EXPECT_EQ(e.values.dump(), R"({"stalls_w":5,"stalls_total":5,"auth_req_w":5,"held":0,"evicted":0,"uectx":null})");
   EXPECT_EQ(e.params.dump(),
             R"({"auth_wait_ms":2000,"window_ms":10000,"n_stall":5,"clear_quiet_ms":60000,"max_conn":96})");
   EXPECT_EQ(e.ues_total, 5);
@@ -249,7 +249,7 @@ TEST(AuthStall, T03LaterStallsUpdate) {
   ASSERT_EQ(e.ues.size(), 3u);
   EXPECT_EQ(e.ues[0].du_ue_id, 15);
   EXPECT_EQ(e.ues_total, 8);
-  EXPECT_EQ(e.values.dump(), R"({"stalls_w":8,"stalls_total":8,"auth_req_w":8,"held":0,"uectx":null})");
+  EXPECT_EQ(e.values.dump(), R"({"stalls_w":8,"stalls_total":8,"auth_req_w":8,"held":0,"evicted":0,"uectx":null})");
   EXPECT_TRUE(e.params.is_null());
   EXPECT_EQ(h.logs[1], "ALERT UPDATE rule=L3-01-O cell=1 t=" + t_str(5400) + " ues_new=3 ues_total=8 severity=medium");
 }
@@ -379,7 +379,7 @@ TEST(AuthStall, T09LossHoldsSomeStalls) {
   ASSERT_EQ(h.alerts.size(), 1u);
   EXPECT_EQ(h.rule->held(), 2);
   // auth_req_w는 창 안에 AuthenticationRequest를 받은 UE 수 — 보류된 둘도 받았다 (참고용)
-  EXPECT_EQ(h.alerts[0].values.dump(), R"({"stalls_w":5,"stalls_total":5,"auth_req_w":7,"held":2,"uectx":null})");
+  EXPECT_EQ(h.alerts[0].values.dump(), R"({"stalls_w":5,"stalls_total":5,"auth_req_w":7,"held":2,"evicted":0,"uectx":null})");
   EXPECT_EQ(h.alerts[0].ues[0].du_ue_id, 12);
 }
 
@@ -622,12 +622,12 @@ TEST(AuthStall, EndOnInputLostAndSessionReset) {
   }
 }
 
-// 상태표 포화 — 현재 동작 고정 (이슈 #42 W-17, 16_ §3.1-1 실험 F. 4_ §6.1 #6 Q-56 반영 때 U-T26·U-T27·L01-T22로 뒤집힌다).
-// 고착 공격 20/s(50 ms 간격, 해제 줄 없음)로 상한 100이 CONNECTED 고착 연결로 차면, 그 뒤 새 UE의 RRCSetupRequest마다
-// 밀어내기 순위 ①(CONNECTED 아님)에 드는 것은 직전 UE의 SETUP 항목뿐이라 그것이 밀려나고, 그 UE의 RRCSetupComplete는
-// mid_join으로 다시 열려 판정 대상에서 빠진다(14_ §4.3·§4.4). 그래서 고착은 더 세어지지 않고, 밀어내기 수는 UE 수를 넘으며,
-// 공격이 이어지는데도 마지막 성립 + clear_quiet_ms에 CLEAR가 난다. 줄은 UE끼리 섞이도록 시각 순으로 넣는다
-TEST(AuthStall, SaturationStopsVerdicts_CurrentBehavior) {
+// 상태표 포화 (이슈 #44 — 14_ §4.4 보호 무리, 16_ §3.1-1 실험 F; 이슈 #42의 '현재 동작 고정'을 뒤집은 것).
+// 고착 공격 20/s(50 ms 간격, 해제 줄 없음)로 상한 100이 CONNECTED 고착 연결로 차도, 새 항목(최근 줄)·대기 표시가 걸린 항목은
+// 보호 무리라 밀리지 않고 보호 밖의 오래된 고착 항목이 밀린다. 보호 무리만 남은 포화 직후에도 예비 순서(마감 없는 것 중 가장
+// 오래된 것)가 막 연 항목을 지켜 판정이 이어진다. kpm2에 si가 없어 유령 정리는 돌지 않는다. 밀어내기가 이어지는 동안 CLEAR는
+// 나지 않는다(15_ §4.5 — 해제 보류는 이슈 #44 커밋 ③). 줄은 UE끼리 섞이도록 시각 순으로 넣는다
+TEST(AuthStall, SaturationKeepsVerdicts) {
   Opt o;
   o.ue_cfg.max_ues = 100;
   Harness h(o);
@@ -659,18 +659,48 @@ TEST(AuthStall, SaturationStopsVerdicts_CurrentBehavior) {
     }
   }
   h.tick_to(72000);
-  // 표는 UE 99의 RRCSetupRequest(5950)에 100으로 찬다. UE 100(6000)부터 직전 SETUP 항목이 밀려나므로 판정되는 것은
-  // UE 0~98의 99건뿐 — 마지막 고착은 UE 98: 1000 + 4900 + 105 + 2000 = 8005
-  EXPECT_EQ(h.rule->stalls(), 99);
-  EXPECT_GT(h.engine.ue_table().counts(1).evicted, 1400);  // 밀려난 UE의 다음 줄이 다시 열려 또 밀려남 — UE 수보다 많다
+  // 표는 UE 99의 RRCSetupRequest(5950)에 100으로 찬다. 그 뒤 새 UE마다 가장 오래된 고착 항목이 하나씩 밀리고 새 UE는 판정된다
+  // (이슈 #42 때는 99건에서 멈추고 68.1 s에 CLEAR). 마지막 UE 1399의 마감 72055는 72000 밖이라 1,400에 조금 못 미친다
+  EXPECT_GE(h.rule->stalls(), 1370);
+  EXPECT_LE(h.rule->stalls(), 1400);
+  EXPECT_GE(h.engine.ue_table().counts(1).evicted, 1000);  // 상한 100 뒤 UE마다 하나씩
+  EXPECT_LT(h.engine.ue_table().counts(1).evicted, 1400);  // 연쇄(밀린 UE가 다시 열려 또 밀림)가 없다
   ASSERT_GE(h.alerts.size(), 3u);
   EXPECT_EQ(h.alerts.front().kind, AlertEventKind::Raise);
   EXPECT_EQ(h.alerts.front().t, kT0 + 3400);  // 5번째 고착 UE 4: 1000 + 200 + 105 + 2000 = 3305 → 다음 칸 3400
   const AlertEvent& last = h.alerts.back();
-  EXPECT_EQ(last.kind, AlertEventKind::Clear);  // 공격은 70 s까지 이어지는데 8005 + 60 s에 풀린다
-  EXPECT_EQ(last.t, kT0 + 68100);
-  EXPECT_EQ(last.ues_total, 99);
-  for (std::size_t i = 1; i + 1 < h.alerts.size(); ++i) EXPECT_EQ(h.alerts[i].kind, AlertEventKind::Update);
+  EXPECT_EQ(last.kind, AlertEventKind::Update);  // 72 s까지 CLEAR 없음 — 밀어내기가 이어지는 동안은 풀지 않는다 (15_ §4.5)
+  EXPECT_GE(last.t, kT0 + 71000);
+  EXPECT_GE(last.ues_total, 1360);
+  EXPECT_GT(last.values.at("evicted").get<int64_t>(), 0);
+  for (std::size_t i = 1; i < h.alerts.size(); ++i) EXPECT_EQ(h.alerts[i].kind, AlertEventKind::Update);
+}
+
+// L01-T22 (15_ §4.5·§4.6 — Q-56 해결, 이슈 #44): 경보 중 그 셀에 상태표 밀어내기가 있으면 직전 clear_quiet_ms 동안
+// 밀어내기가 0건이 될 때까지 CLEAR하지 않고, update의 values.evicted에 경보가 열린 뒤의 밀어내기 수를 싣는다
+TEST(AuthStall, T22EvictionHoldsClear) {
+  Opt o;
+  o.ue_cfg.max_ues = 100;
+  Harness h(o);
+  attack(h, 5);  // RAISE 4400, t_sat 4332
+  h.tick_to(30000);
+  ASSERT_EQ(h.alerts.size(), 1u);
+  EXPECT_EQ(h.alerts[0].values.at("evicted"), 0);
+  // 정상 연결 101대(인증 전) — 5 + 101 > 100이라 96번째부터 밀어내기 6회(공격 항목 5 + 정상 1). 시각은 그 칸 kpm2의 t_end
+  for (int64_t i = 0; i < 101; ++i) h.connect(30000 + 10 * i, 1000 + i);
+  h.stall_ue(32000, 20);  // 연결(31970)에서 밀어내기 7번째, 고착 34000 → UPDATE 34000
+  h.tick_to(34000);
+  ASSERT_EQ(h.alerts.size(), 2u);
+  EXPECT_EQ(h.alerts[1].kind, AlertEventKind::Update);
+  EXPECT_EQ(h.alerts[1].t, kT0 + 34000);
+  EXPECT_EQ(h.alerts[1].values.at("evicted"), 7);
+  EXPECT_EQ(h.engine.ue_table().counts(1).evicted, 7);
+  h.tick_to(91900);  // 보류가 없었다면 4332 + 60 s → 64400에 CLEAR. 마지막 밀어내기는 32000 칸에서 셈 → 92000까지 보류
+  EXPECT_EQ(h.alerts.size(), 2u);
+  h.tick_to(92000);
+  ASSERT_EQ(h.alerts.size(), 3u);
+  EXPECT_EQ(h.alerts[2].kind, AlertEventKind::Clear);
+  EXPECT_EQ(h.alerts[2].t, kT0 + 92000);
 }
 
 // 증거 지평 (14_ §1.1): 응답 대기 + 셀 창 + UPDATE 모음 지연. 상태표는 여기에 여유 1 s를 더해 닫힌 항목의 recent를 보관한다

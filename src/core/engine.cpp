@@ -6,10 +6,6 @@
 namespace detect {
 namespace {
 
-// 증거 지평에 더하는 여유 (14_ §2.3). 마감은 그 시각이 든 kpm2 창에서 처리되고 룰이 경보를 on_cell_tick에서 낼 수도
-// 있어, 걸린 UE의 보관분이 경보와 같은 줄에서 먼저 지워지지 않게 1 s(100 ms 칸 10개)를 더한다
-constexpr int64_t kRecentKeepMarginMs = 1000;
-
 void append(RuleOutput& ro, EngineOutput& out) {
   out.diags.insert(out.diags.end(), std::make_move_iterator(ro.diags.begin()), std::make_move_iterator(ro.diags.end()));
   out.alerts.insert(out.alerts.end(), std::make_move_iterator(ro.alerts.begin()),
@@ -19,12 +15,16 @@ void append(RuleOutput& ro, EngineOutput& out) {
 }  // namespace
 
 Engine::Engine(SeriesConfig cfg, std::size_t max_line_bytes, UeTableConfig ue_cfg)
-    : series_(std::move(cfg)), max_line_bytes_(max_line_bytes), table_(ue_cfg) {}
+    : series_(std::move(cfg)), max_line_bytes_(max_line_bytes), table_(ue_cfg) {
+  deadlines_.set_diag_streak_ms(ue_cfg.dl_unobserved_ms);  // 14_ §6.2 진단 연속 시간 (16_ W-24)
+}
 
 void Engine::add_rule(std::unique_ptr<Rule> rule) { rules_.push_back(std::move(rule)); }
 
+// 증거 지평에 더하는 여유 ue_table.recent_keep_margin_ms (14_ §2.3, 기본 1 s). 마감은 그 시각이 든 kpm2 창에서
+// 처리되고 룰이 경보를 on_cell_tick에서 낼 수도 있어, 걸린 UE의 보관분이 경보와 같은 줄에서 먼저 지워지지 않게 더한다
 void Engine::add_ue_rule(std::unique_ptr<UeRule> rule) {
-  const int64_t keep = rule->evidence_horizon_ms() + kRecentKeepMarginMs;
+  const int64_t keep = rule->evidence_horizon_ms() + table_.config().recent_keep_margin_ms;
   if (keep > table_.recent_keep_ms()) table_.set_recent_keep_ms(keep);
   ue_rules_.push_back(std::move(rule));
 }
@@ -98,7 +98,7 @@ void Engine::on_ue_evt(const UeEvt& e, int64_t seq, EngineOutput& out) {
 void Engine::on_f1_evt(const F1Evt& f, int64_t seq, EngineOutput& out) { notify_close(table_.close_du(f), f.t_ms, seq, out); }
 
 // kpm2 (14_ §7): ① series·1단계 룰은 이미 지났다 → ② 로스 기록과 그 셀 열린 항목의 loss 표시 — 마감 처리보다 먼저다.
-// 마감이 든 창이 로스 창이면 그 창에서 꺼낸 마감도 보류돼야 하기 때문이다(14_ §6.2) → ③ 셀 시계를 t_end_ms로 올리고
+// 마감이 든 창이 로스 창이면 그 창에서 꺼낸 마감도 보류돼야 하기 때문이다(14_ §6.2) → ②′ 유령 정리 → ③ 셀 시계를 t_end_ms로 올리고
 // 마감이 지난 것을 넣은 순서대로 주인(상태표·룰)에게 넘긴다 → ④ 2단계 룰 on_cell_tick
 void Engine::on_kpm2(const FeedResult& fed, int64_t seq, EngineOutput& out) {
   const int64_t cell = *fed.cell_id;
@@ -106,6 +106,11 @@ void Engine::on_kpm2(const FeedResult& fed, int64_t seq, EngineOutput& out) {
   DeadlineQueue::LossResult lr = deadlines_.record_loss(k, fed.gap.has_value(), seq);
   out.diags.insert(out.diags.end(), lr.diags.begin(), lr.diags.end());
   if (lr.loss.any()) table_.mark_loss(cell, k.t_end_ms);
+
+  // ②′ 유령 정리 (14_ §4.2 ghost_purge — 10/29 Q-56 해결, 이슈 #44): 로스 기록 뒤·마감 처리 앞. 닫힌 항목은 룰에 알린다
+  UeTable::Purged purged = table_.purge_ghosts(k, seq, deadlines_);
+  out.diags.insert(out.diags.end(), purged.diags.begin(), purged.diags.end());
+  notify_close(purged.closed, k.t_end_ms, seq, out);
 
   deadlines_.set_clock(cell, k.t_end_ms);
   while (std::optional<Deadline> d = deadlines_.pop_due(cell)) {

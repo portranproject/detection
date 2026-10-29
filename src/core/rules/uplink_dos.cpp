@@ -131,12 +131,13 @@ void UplinkDosRule::new_alert(CellState& c) const {
   c.branch1_ues = 0;
   c.branch2_ues = 0;
   c.held_open = 0;
+  c.evicted_open = 0;
 }
 
 // 항목이 닫힘 (15_ §1·§5.3-3, 14_ §2.4): 갈래 ① 대기 중인 n이 released·reused·stale_setup으로 닫히면 표시를 남기고
 // 닫힐 때 상태와 연결 기록을 복사한다 — 마감 전에 닫혔다는 것은 수락 없이 끝났다는 뜻이고, 판정을 마감까지 미루는 것은
-// 닫힌 줄이 든 창의 로스 여부가 그 창 kpm2가 와야 정해지기 때문이다(L3-20과 같은 이유). du_reset·evicted·superseded·
-// session_reset이면 표시를 지운다. 연결 기록은 지운다
+// 닫힌 줄이 든 창의 로스 여부가 그 창 kpm2가 와야 정해지기 때문이다(L3-20과 같은 이유). du_reset·evicted·ghost_purge·
+// superseded·session_reset이면 표시를 지운다(ghost_purge는 이슈 #44). 연결 기록은 지운다
 void UplinkDosRule::on_ue_close(const UeState& last, CloseReason reason, int64_t t, const UeRuleCtx&, RuleOutput&) {
   const UeId id{last.key, last.uid};
   auto c = conns_.find(id);
@@ -199,6 +200,7 @@ void UplinkDosRule::on_cell_tick(int64_t cell, const Kpm2& k, const CellLoss&, b
                                  RuleOutput& out) {
   const int64_t t = k.t_end_ms;
   CellState& cs = cells_[cell];
+  note_evictions(cs, cell, t, ctx);
   std::size_t from = out.alerts.size();
   if (input_lost) book_.end(cell, t, "input_lost", out.alerts);
   decorate(from, out);
@@ -235,7 +237,9 @@ void UplinkDosRule::on_cell_tick(int64_t cell, const Kpm2& k, const CellLoss&, b
 
   from = out.alerts.size();
   book_.flush(cell, t, out.alerts);
-  if (book_.open(cell) && t - cs.t_active >= cfg_.clear_quiet_ms) book_.clear(cell, t, out.alerts);
+  // 직전 clear_quiet_ms 동안 그 셀에 상태표 밀어내기가 있었으면 풀지 않는다 (15_ §5.5, Q-56 해결 — 이슈 #44)
+  if (book_.open(cell) && t - cs.t_active >= cfg_.clear_quiet_ms && evicted_window(cs, t) == 0)
+    book_.clear(cell, t, out.alerts);
   decorate(from, out);
 
   // 창 밖 기록 정리. 경보 중에는 값의 기준이 가장 최근 걸림이고, 경보가 없으면 다음 기준은 앞으로의 걸림(≥ t)이다
@@ -260,6 +264,7 @@ void UplinkDosRule::decorate(std::size_t from, RuleOutput& out) {
     e.values["branch1_ues"] = cs.branch1_ues;
     e.values["branch2_ues"] = cs.branch2_ues;
     e.values["held"] = raise ? held_window(cs, e.t) : cs.held_open;
+    e.values["evicted"] = raise ? evicted_window(cs, e.t) : cs.evicted_open;  // 15_ §5.6 (이슈 #44)
     e.values["fail_msgs_w"] = in_window(cs, true);
     if (!raise) continue;
     e.cond = cs.sat1 ? std::vector<std::string>{"fail_count"} : std::vector<std::string>{"reg_repeat", "fail"};
@@ -307,6 +312,21 @@ int64_t UplinkDosRule::in_window(const CellState& c, bool msgs) const {
 int64_t UplinkDosRule::held_window(CellState& c, int64_t now) const {
   while (!c.held_times.empty() && c.held_times.front() <= now - cfg_.clear_quiet_ms) c.held_times.pop_front();
   return static_cast<int64_t>(c.held_times.size());
+}
+
+// 상태표 셀별 누적 evicted(14_ §6.3)의 증가분을 이 칸 시각으로 적는다 — 경보가 열려 있으면 evicted_open도 (이슈 #44)
+void UplinkDosRule::note_evictions(CellState& c, int64_t cell, int64_t t, const UeRuleCtx& ctx) {
+  const int64_t total = ctx.table.counts(cell).evicted;
+  for (; c.evicted_seen < total; ++c.evicted_seen) {
+    c.evict_times.push_back(t);
+    if (book_.open(cell)) ++c.evicted_open;
+  }
+}
+
+// 직전 clear_quiet_ms 동안의 밀어내기 수 (이동 창) — raise의 values.evicted와 해제 보류 기준
+int64_t UplinkDosRule::evicted_window(CellState& c, int64_t now) const {
+  while (!c.evict_times.empty() && c.evict_times.front() <= now - cfg_.clear_quiet_ms) c.evict_times.pop_front();
+  return static_cast<int64_t>(c.evict_times.size());
 }
 
 // 새 세션 (14_ §7 hello): 진행 중 경보를 END(session_reset)로 끝내고 대기 표시·연결 기록·셀 기록을 모두 버린다

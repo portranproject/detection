@@ -13,6 +13,7 @@
 #include <optional>
 #include <queue>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace detect {
@@ -39,7 +40,10 @@ struct CellLoss {
 class DeadlineQueue {
  public:
   static constexpr int kTableOwner = -1;        // 상태표 몫 마감 (14_ §6.1 표)
-  static constexpr int kDiagStreakSlots = 50;   // 진단을 내는 연속 칸 수 — 100 ms 칸으로 5 s (14_ §6.2)
+
+  // 진단을 내는 연속 시간 (14_ §6.2 — ue_table.dl_unobserved_ms, 기본 5 s = 100 ms 칸 50개). 칸 수는 kpm2 칸 길이로 나눠
+  // 정한다 (16_ W-24: 상수 50칸에서 설정 키로, 이슈 #44)
+  void set_diag_streak_ms(int64_t ms) { diag_streak_ms_ = ms; }
 
   // 마감을 넣는다 (14_ §6.1-1). order는 여기서 매긴다
   void add(Deadline d);
@@ -60,6 +64,10 @@ class DeadlineQueue {
   std::optional<int64_t> loss_end(int64_t cell, Dir dir) const;
 
   std::size_t size() const;
+  // 룰 몫 마감 색인 (14_ §4.4 보호 무리·§4.2 유령 정리 — Q-56 해결, 이슈 #44): (키, uid)에 룰 몫 마감이 걸려 있는지.
+  // 응답이 와서 룰이 표시를 지운 뒤에도 마감 자체는 꺼낼 때까지 목록에 남아 그동안 '보호'로 본다 — 보호 길이가
+  // 그 룰의 대기 시간을 넘지 않으므로 허용한다
+  bool has_rule_deadline(const UeKey& key, int64_t uid) const;
   // 새 세션 — 마감·시계·로스 기록을 모두 비운다 (14_ §6.2 끝, §7 hello)
   void clear();
 
@@ -79,7 +87,9 @@ class DeadlineQueue {
   };
 
   std::map<int64_t, CellTime> cells_;
+  std::map<std::pair<UeKey, int64_t>, int> rule_waits_;  // (키, uid) → 걸려 있는 룰 몫 마감 수
   uint64_t next_order_ = 0;
+  int64_t diag_streak_ms_ = 5000;
 };
 
 }  // namespace detect

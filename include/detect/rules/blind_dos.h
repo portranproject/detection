@@ -59,6 +59,11 @@ class BlindDosRule : public UeRule {
     std::map<uint64_t, int64_t> victims;     // 피해 S-TMSI → 이 경보에서 걸린 연결 수 (repeat)
     int64_t held_open = 0;                   // 경보가 열린 뒤 보류된 판정 수
     std::deque<int64_t> held_times;          // 보류 시각 — raise의 held는 직전 clear_quiet_ms 동안 (이동 창)
+    // 상태표 밀어내기 (15_ §2.5·§2.6, 14_ §6.3 — Q-56 해결, 이슈 #44): 밀려난 UE는 판정되지 않아 조용해 보이므로
+    // 직전 clear_quiet_ms 동안 밀어내기가 있으면 풀지 않는다. 시각은 그것을 본 kpm2의 t_end_ms
+    int64_t evicted_seen = 0;                // 상태표 셀별 누적 evicted 중 이미 적은 수
+    int64_t evicted_open = 0;                // 경보가 열린 뒤 밀어내기 수 — update의 values.evicted
+    std::deque<int64_t> evict_times;         // 밀어내기 시각 — raise의 values.evicted·해제 보류 (이동 창)
   };
 
   void start(const UeState& n, int64_t t0, const UeRuleCtx& ctx);
@@ -67,6 +72,8 @@ class BlindDosRule : public UeRule {
   void hit(const Mark& m, const UeState& n, int64_t t_hit, int64_t now, const UeRuleCtx& ctx, RuleOutput& out);
   void decorate(std::size_t from, RuleOutput& out);
   int64_t held_window(CellState& c, int64_t now) const;
+  int64_t evicted_window(CellState& c, int64_t now) const;
+  void note_evictions(CellState& c, int64_t cell, int64_t t, const UeRuleCtx& ctx);
 
   BlindDosConfig cfg_;
   AlertConfig alert_;

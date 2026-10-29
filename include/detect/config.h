@@ -49,6 +49,14 @@ struct UeTableConfig {
   std::size_t recent_n = 16;       // ue_table.recent_n — UE당 최근 메시지 수, 증거용 (14_ §2.3)
   int64_t stale_setup_ms = 30000;  // ue_table.stale_setup_ms — CONNECTED 전 항목 정리 (14_ §4.2)
   std::size_t closed_recent_max = 1024;  // ue_table.closed_recent_max — 닫힌 항목 recent 보관 상한 (14_ §2.3)
+  // 유령 정리·밀어내기 보호 무리 (14_ §4.2·§4.4·§9 — 10/29 Q-56 해결, 이슈 #44). 값은 제안값(16_ W-27 실측 뒤 조정)
+  double ghost_k = 2;               // ue_table.ghost_k — CONNECTED 수 > k × ConnMax + margin이면 유령 정리
+  int64_t ghost_margin = 16;        // ue_table.ghost_margin — 유령 정리 여유(ConnMax 표본 뒤 붙은 UE·해제 대기)
+  int64_t ghost_hold_ms = 5000;     // ue_table.ghost_hold_ms — 초과가 이만큼 이어져야 정리. 0이면 바로
+  int64_t evict_protect_ms = 5000;  // ue_table.evict_protect_ms — 마지막 줄이 이 안인 항목은 밀어내기 맨 뒤
+  // 상수에서 설정 키로 (16_ §3.2-1 W-24, 이슈 #44)
+  int64_t dl_unobserved_ms = 5000;       // ue_table.dl_unobserved_ms — 진단 dl_unobserved·ue_evt_lost_missing 연속 시간 (14_ §6.2)
+  int64_t recent_keep_margin_ms = 1000;  // ue_table.recent_keep_margin_ms — 닫힌 항목 recent 보관 여유 (14_ §2.3·§1.1)
 };
 
 // UE 단위 경보 (14_ §9 alert.*). 설정 파일에 키가 없으면 이 기본값을 쓴다 (4_ §1.2)
@@ -89,6 +97,7 @@ struct UplinkDosConfig {
 struct DetectorConfig {
   std::string socket_path = "/run/ran-detect/kpm.sock";  // socket_path (2_ §1)
   std::size_t max_line_bytes = 65536;                     // max_line_bytes (2_ §1 줄 길이 상한)
+  std::size_t max_cells = 64;                             // max_cells — 셀 수 상한 (결정 D7, 16_ W-24로 설정 키)
   std::map<std::string, std::string> rules;               // rules.<룰 ID> — 설정 객체를 JSON 문자열 그대로
   EvidenceConfig evidence;                                // evidence
   UeTableConfig ue_table;                                 // ue_table — 2단계 UE 상태표 (14_ §9)

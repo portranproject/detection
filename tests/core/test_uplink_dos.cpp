@@ -27,6 +27,7 @@ const std::string kSuci = R"("reg_type":"initial","id_type":"SUCI")";
 struct Opt {
   UplinkDosConfig cfg;
   SeriesConfig scfg;
+  UeTableConfig ue_cfg;     // 상태표 상한 등 (밀어내기 시험 L21-T23, 이슈 #44)
   bool record = false;      // 증거 기록기도 돌린다
   bool auth_stall = false;  // L3-01-O도 함께 (L01-T18)
 };
@@ -42,7 +43,7 @@ std::string stmsi(uint64_t v) {
 class Harness {
  public:
   explicit Harness(Opt o = {})
-      : engine(o.scfg, kDefaultMaxLineBytes, UeTableConfig{}), queue(100000), rec(EvidenceConfig{}, queue),
+      : engine(o.scfg, kDefaultMaxLineBytes, o.ue_cfg), queue(100000), rec(EvidenceConfig{}, queue),
         record_(o.record) {
     if (o.auth_stall) engine.add_ue_rule(std::make_unique<AuthStallRule>());
     auto r = std::make_unique<UplinkDosRule>(o.cfg);
@@ -231,7 +232,7 @@ TEST(UplinkDos, T04FloodRaisesBranch1) {
   EXPECT_EQ(e.cond, (std::vector<std::string>{"fail_count"}));
   EXPECT_EQ(e.candidates, (std::vector<std::string>{"AN-01"}));
   EXPECT_EQ(e.alert_id.rfind("S-L3-21-1-", 0), 0u);
-  EXPECT_EQ(e.values.dump(), R"({"fails_w":5,"branch1_ues":5,"branch2_ues":0,"held":0,"fail_msgs_w":5})");
+  EXPECT_EQ(e.values.dump(), R"({"fails_w":5,"branch1_ues":5,"branch2_ues":0,"held":0,"evicted":0,"fail_msgs_w":5})");
   EXPECT_EQ(e.params.dump(),
             R"({"window_ms":10000,"n_fail":5,"fail_accept_wait_ms":5000,"reg_repeat":3,"clear_quiet_ms":60000,"ignore_causes":[]})");
   ASSERT_EQ(e.ues.size(), 5u);
@@ -278,7 +279,7 @@ TEST(UplinkDos, T06RepeatRaisesBranch2) {
   EXPECT_EQ(e.alert_id, "S-L3-21-1-" + std::to_string(h.seq()));
   EXPECT_EQ(e.branch, "2");
   EXPECT_EQ(e.cond, (std::vector<std::string>{"reg_repeat", "fail"}));
-  EXPECT_EQ(e.values.dump(), R"({"fails_w":0,"branch1_ues":0,"branch2_ues":1,"held":0,"fail_msgs_w":1})");
+  EXPECT_EQ(e.values.dump(), R"({"fails_w":0,"branch1_ues":0,"branch2_ues":1,"held":0,"evicted":0,"fail_msgs_w":1})");
   ASSERT_EQ(e.ues.size(), 1u);
   EXPECT_EQ(e.ues[0].t_hit, kT0 + 2000);
   EXPECT_EQ(e.ues[0].cond, (std::vector<std::string>{"reg_repeat", "fail"}));
@@ -345,7 +346,7 @@ TEST(UplinkDos, T10LossHolds) {
   h.tick_to(11000);
   ASSERT_EQ(h.alerts.size(), 1u);
   EXPECT_EQ(h.rule->held(), 1);
-  EXPECT_EQ(h.alerts[0].values.dump(), R"({"fails_w":5,"branch1_ues":5,"branch2_ues":0,"held":1,"fail_msgs_w":6})");
+  EXPECT_EQ(h.alerts[0].values.dump(), R"({"fails_w":5,"branch1_ues":5,"branch2_ues":0,"held":1,"evicted":0,"fail_msgs_w":6})");
   EXPECT_EQ(h.alerts[0].ues[0].du_ue_id, 11);
 }
 
@@ -363,7 +364,7 @@ TEST(UplinkDos, T11Branch2DuringBranch1High) {
   EXPECT_EQ(e.severity, Severity::High);
   EXPECT_EQ(e.branch, "1");
   EXPECT_EQ(dus(e), (std::vector<int64_t>{20}));
-  EXPECT_EQ(e.values.dump(), R"({"fails_w":5,"branch1_ues":5,"branch2_ues":1,"held":0,"fail_msgs_w":3})");
+  EXPECT_EQ(e.values.dump(), R"({"fails_w":5,"branch1_ues":5,"branch2_ues":1,"held":0,"evicted":0,"fail_msgs_w":3})");
   EXPECT_EQ(h.logs[1], "ALERT UPDATE rule=L3-21 cell=1 t=" + t_str(13000) + " ues_new=1 ues_total=6 branch=1 severity=high");
 }
 
@@ -629,6 +630,28 @@ TEST(UplinkDos, EndOnInputLostAndSessionReset) {
     EXPECT_EQ(h.alerts[1].branch, "2");
     EXPECT_EQ(h.rule->waiting(), 0u);
   }
+}
+
+// L21-T23 (15_ §5.5 — Q-56 해결, 이슈 #44): 갈래 ① RAISE 뒤 그 셀에 상태표 밀어내기가 있으면 마지막 성립 + clear_quiet_ms가
+// 지나도 CLEAR하지 않고, 직전 clear_quiet_ms 동안 밀어내기가 0건이 된 칸에서 푼다
+TEST(UplinkDos, T23EvictionHoldsClear) {
+  Opt o;
+  o.ue_cfg.max_ues = 100;
+  Harness h(o);
+  for (int i = 0; i < 5; ++i) h.fail_conn(1000 + 200 * i, 10 + i);  // 실패 UE 5개: 마지막 t_f 1800 + 5 s = 6800 → RAISE 6800
+  h.tick_to(30000);
+  ASSERT_EQ(h.alerts.size(), 1u);
+  EXPECT_EQ(h.alerts[0].kind, AlertEventKind::Raise);
+  EXPECT_EQ(h.alerts[0].t, kT0 + 6800);
+  EXPECT_EQ(h.alerts[0].values.at("evicted"), 0);
+  for (int64_t i = 0; i < 101; ++i) h.connect(30000 + 10 * i, 1000 + i);  // 실패 연결은 해제됐으므로 101번째(31000)에서 밀어내기 1회
+  h.tick_to(66900);  // 보류가 없었다면 6800 + 60 s → 66800에 CLEAR
+  EXPECT_EQ(h.engine.ue_table().counts(1).evicted, 1);
+  EXPECT_EQ(h.alerts.size(), 1u);
+  h.tick_to(91100);  // 밀어내기를 본 칸 31100 + 60 s
+  ASSERT_EQ(h.alerts.size(), 2u);
+  EXPECT_EQ(h.alerts[1].kind, AlertEventKind::Clear);
+  EXPECT_EQ(h.alerts[1].t, kT0 + 91100);
 }
 
 // 증거 지평 (14_ §1.1): 실패 뒤 수락 대기 + 셀 창 + UPDATE 모음 지연. 상태표는 여기에 여유 1 s를 더해 닫힌 항목의 recent를 보관한다
