@@ -236,7 +236,8 @@ UeTable::Applied UeTable::apply(const UeEvt& e, int64_t seq, DeadlineQueue& dq) 
   }
   reindex(a.key, old_s, old_p1, s);
   a.released = is(e, Proto::F1AP, Dir::UL, "UEContextReleaseComplete");
-  a.after = s;
+  a.uid = s.uid;  // ④ 갱신 후 상태는 복사하지 않는다 — find(key)가 그 값 (16_ W-20, 이슈 #54)
+  a.t_ms = e.t_ms;
   return a;
 }
 
@@ -247,9 +248,9 @@ std::vector<UeTable::Closed> UeTable::settle(const Applied& a, DeadlineQueue& dq
   std::vector<Closed> out;
   if (!a.linked) return out;
   auto it = entries_.find(a.key);
-  if (it == entries_.end() || it->second.st.uid != a.after.uid) return out;
+  if (it == entries_.end() || it->second.st.uid != a.uid) return out;
   const UeState& n = it->second.st;
-  const int64_t t = a.after.last.t_ms;
+  const int64_t t = a.t_ms;
   if (admitted(n) && n.s_tmsi && (!admitted(a.before) || a.before.s_tmsi != n.s_tmsi)) {
     std::vector<UeKey> ghosts;
     if (auto ix = by_s_tmsi_.find(*n.s_tmsi); ix != by_s_tmsi_.end()) {

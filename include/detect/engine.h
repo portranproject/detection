@@ -57,7 +57,7 @@ class Engine {
 
  private:
   void on_hello(FeedOutcome outcome, int64_t seq, EngineOutput& out);
-  void on_ue_evt(const UeEvt& e, int64_t seq, EngineOutput& out);
+  void on_ue_evt(UeEvt& e, int64_t seq, EngineOutput& out);  // e의 raw를 ue_line으로 옮겨 쓴다 (이슈 #54)
   void on_f1_evt(const F1Evt& f, int64_t seq, EngineOutput& out);
   void on_kpm2(const FeedResult& fed, int64_t seq, EngineOutput& out);
   void reset_stage2(int64_t seq, EngineOutput& out);
