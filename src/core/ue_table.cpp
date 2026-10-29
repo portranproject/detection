@@ -211,9 +211,12 @@ UeTable::Applied UeTable::apply(const UeEvt& e, int64_t seq, DeadlineQueue& dq) 
   const std::optional<uint64_t> old_p1 = a.opened ? std::nullopt : part1_of(s);
   if (!a.opened) rank_erase(s);  // 밀어내기 색인 — 상태·t_last가 바뀌므로 갱신 뒤 다시 넣는다 (14_ §4.4)
 
-  // ④ 늦은 줄 (2_ §6.5, 14_ §4.3): 그 셀 워터마크(시계)보다 이른 t_ms — 이력에는 넣고, 이미 내린 판정은 룰이 바꾸지 않는다
+  // ④ 늦은 줄 (2_ §6.5, 14_ §4.3): 그 셀 워터마크(시계)보다 이른 t_ms — 이력에는 넣고, 이미 내린 판정은 룰이 바꾸지 않는다.
+  // '없음' 판정 제외는 late_until = 이 줄 t_ms + 2단계 룰 증거 지평 최댓값까지만(10/29 Q-57 해결 — 이슈 #46). 그전에는 영구
+  // 제외라 줄 하나의 순서 역전으로 그 UE가 끝까지 판정에서 빠졌다(16_ §3.1-2)
   if (const std::optional<int64_t> clock = dq.clock(e.cell_id); clock && e.t_ms < *clock) {
     s.late = true;
+    s.late_until = std::max(s.late_until.value_or(0), e.t_ms + late_horizon_ms_);
     const int64_t n = ++counts_[e.cell_id].late;
     a.diags.push_back(Diag{DiagKind::UeLate, e.cell_id, seq,
                            "ue_evt " + e.msg + " t_ms=" + std::to_string(e.t_ms) + " < watermark " +

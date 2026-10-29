@@ -154,8 +154,8 @@ void UplinkDosRule::on_ue_close(const UeState& last, CloseReason reason, int64_t
 }
 
 // 갈래 ① 마감 처리 (15_ §5.3-4): 표시가 그대로(uid·t_from)이고 마감 전 수락이 없고(있었으면 표시를 지웠다), 대기 구간에
-// DL 로스가 없고(있으면 보류 — 수락 근거가 DL이라 그 로스로 수락을 놓쳤을 수 있다, 14_ §6.2), n이 mid_join·late가
-// 아니면(14_ §4.3) 실패 UE다. t_hit = 마감. 여기서는 기록만 하고 셀 단위 성립·RAISE는 같은 kpm2의 on_cell_tick에서 본다
+// DL 로스가 없고(있으면 보류 — 수락 근거가 DL이라 그 로스로 수락을 놓쳤을 수 있다, 14_ §6.2), n이 mid_join이 아니고
+// 늦은 줄 제외 기간(late_until)이 지났으면(14_ §4.3, 이슈 #46) 실패 UE다. t_hit = 마감. 여기서는 기록만 하고 셀 단위 성립·RAISE는 같은 kpm2의 on_cell_tick에서 본다
 // (L3-01-O와 같음, 10/29 이슈 #31). 실패 UE로 센 열린 연결은 새 수락이 올 때까지 다시 세지 않는다(15_ §5.3-1)
 void UplinkDosRule::on_deadline(const Deadline& d, const UeRuleCtx& ctx, RuleOutput&) {
   const UeId id{d.key, d.uid};
@@ -180,7 +180,7 @@ void UplinkDosRule::on_deadline(const Deadline& d, const UeRuleCtx& ctx, RuleOut
     n = m.closed ? &*m.closed : nullptr;
     c = m.closed_conn ? &*m.closed_conn : nullptr;
   }
-  if (!n || n->mid_join || n->late) return;
+  if (!n || n->mid_join || n->late_blocks(d.at)) return;
   ++failed_n_;
   if (live && !m.accepted_late) live->counted = true;
   const std::optional<int64_t> closed_ms =

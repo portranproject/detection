@@ -632,6 +632,30 @@ TEST(UplinkDos, EndOnInputLostAndSessionReset) {
   }
 }
 
+// late_until (14_ §4.3 — Q-57 해결, 이슈 #46): 연결·거부 줄이 늦게 온 UE의 갈래 ① 마감(t_f + 5 s)이 늦은 줄 + 16 s 안이면
+// 실패 UE로 세지 않고, 그 뒤의 새 실패(마감이 late_until 뒤)는 센다 — n_fail 1로 RAISE까지, ues[].uncertain에 late
+TEST(UplinkDos, LateUntil) {
+  Opt o;
+  o.cfg.n_fail = 1;
+  Harness h(o);
+  h.tick_to(1100);          // 워터마크 1100
+  h.connect(1000, 10);      // 1000·1010 늦음
+  h.reject(1020, 10);       // 늦음 → late_until 17020, t_f 1020 → 마감 6020 < 17020 → 판정 없음
+  EXPECT_EQ(h.rule->waiting(), 1u);
+  h.tick_to(7000);
+  EXPECT_EQ(h.rule->failed_ues(), 0);
+  EXPECT_EQ(h.rule->waiting(), 0u);
+  EXPECT_TRUE(h.alerts.empty());
+  h.reject(17100, 10);      // 늦지 않은 새 실패 → 마감 22100 ≥ 17020 → 실패 UE → RAISE 22100
+  h.tick_to(22100);
+  EXPECT_EQ(h.rule->failed_ues(), 1);
+  ASSERT_EQ(h.alerts.size(), 1u);
+  EXPECT_EQ(h.alerts[0].t, kT0 + 22100);
+  EXPECT_EQ(h.alerts[0].branch, "1");
+  ASSERT_EQ(h.alerts[0].ues.size(), 1u);
+  EXPECT_EQ(h.alerts[0].ues[0].uncertain, (std::vector<std::string>{"late"}));
+}
+
 // L21-T23 (15_ §5.5 — Q-56 해결, 이슈 #44): 갈래 ① RAISE 뒤 그 셀에 상태표 밀어내기가 있으면 마지막 성립 + clear_quiet_ms가
 // 지나도 CLEAR하지 않고, 직전 clear_quiet_ms 동안 밀어내기가 0건이 된 칸에서 푼다
 TEST(UplinkDos, T23EvictionHoldsClear) {
