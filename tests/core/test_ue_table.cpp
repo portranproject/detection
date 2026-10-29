@@ -1,4 +1,4 @@
-// UE 상태표·마감 목록·2단계 분배 테스트 — 14_ §10 공통 테스트 U-T1~U-T28(U-T26·U-T27은 이슈 #44 유령 정리·보호 무리, U-T28은 이슈 #46 late_until).
+// UE 상태표·마감 목록·2단계 분배 테스트 — 14_ §10 공통 테스트 U-T1~U-T29(U-T26·U-T27은 이슈 #44 유령 정리·보호 무리, U-T28은 이슈 #46 late_until, U-T29는 이슈 #48 진단).
 // U-T13(1단계 alert 형식 이전)은 이슈 #17에서 확인했고, U-T20(경보당 증거 UE 상한)은 UE 증거 이슈에서 한다.
 // 닫힌 S-TMSI 기억(U-T1·U-T11의 기억 표 부분)은 보류다(14_ §3.2).
 // 대기 표시가 필요한 시험은 15_ 룰의 대기 규칙(14_ §2.4·§6)을 그대로 따르는 테스트용 룰(WaitRule)로 한다
@@ -785,22 +785,27 @@ TEST(UeTable, Stage2OffWithoutHelloFlag) {
   EXPECT_EQ(h.count(DiagKind::UeEvtOff), 2);
 }
 
-// 진단 (14_ §6.2): ue_evt_lost 없는 kpm2·"DL"이 든 kpm2가 한 셀에서 연속 50칸이면 각각 1회
-TEST(UeTable, LostFieldDiagnostics) {
+// 진단 (14_ §6.2) — U-T29 (10/29 Q-58 ③ 해결, 이슈 #48): ue_evt_lost 없는 kpm2는 그 첫 칸에서 셀마다 1회, 필드가 돌아왔다
+// 또 빠지면 다시 1회(그전 '연속 50칸'). "DL"이 든 kpm2는 연속 dl_unobserved_ms(5 s = 50칸)에 1회 — 그대로
+TEST(UeTable, UT29LostFieldDiagnostics) {
   Harness h;
   int64_t t = 0;
-  for (int i = 0; i < 49; ++i, t += 100) h.kpm(t, "");
-  EXPECT_EQ(h.count(DiagKind::UeEvtLostMissing), 0);
   h.kpm(t, "");
   t += 100;
-  EXPECT_EQ(h.count(DiagKind::UeEvtLostMissing), 1);
+  EXPECT_EQ(h.count(DiagKind::UeEvtLostMissing), 1);  // 첫 칸
   for (int i = 0; i < 60; ++i, t += 100) h.kpm(t, "");
-  EXPECT_EQ(h.count(DiagKind::UeEvtLostMissing), 1);  // 같은 연속 구간에서는 1회
-  h.kpm(t, "[]");
+  EXPECT_EQ(h.count(DiagKind::UeEvtLostMissing), 1);  // 돌아오기 전에는 다시 내지 않는다
+  for (int i = 0; i < 10; ++i, t += 100) h.kpm(t, "[]");
+  EXPECT_EQ(h.count(DiagKind::UeEvtLostMissing), 1);
+  h.kpm(t, "");
   t += 100;
-  for (int i = 0; i < 50; ++i, t += 100) h.kpm(t, "");
-  EXPECT_EQ(h.count(DiagKind::UeEvtLostMissing), 2);
-  for (int i = 0; i < 50; ++i, t += 100) h.kpm(t, R"(["DL"])");
+  EXPECT_EQ(h.count(DiagKind::UeEvtLostMissing), 2);  // 또 빠짐
+  h.kpm(t, "[]", 2);  // 다른 셀은 따로
+  h.kpm(t + 100, "", 2);
+  EXPECT_EQ(h.count(DiagKind::UeEvtLostMissing), 3);
+  for (int i = 0; i < 49; ++i, t += 100) h.kpm(t, R"(["DL"])");
+  EXPECT_EQ(h.count(DiagKind::DlUnobserved), 0);
+  h.kpm(t, R"(["DL"])");
   EXPECT_EQ(h.count(DiagKind::DlUnobserved), 1);
 }
 
