@@ -10,6 +10,15 @@ ctest --test-dir build --output-on-failure
 
 # 배포 빌드 (GoogleTest를 받지 않음)
 cmake -B build-rel -DCMAKE_BUILD_TYPE=Release -DDETECT_BUILD_TESTS=OFF && cmake --build build-rel -j2
+
+# Sanitizer 빌드 — thread(증거 큐 두 스레드) 또는 address,undefined. address와 thread는 함께 못 씀.
+# thread는 최근 커널(WSL2 6.x 등)에서 ASLR 때문에 "unexpected memory mapping"으로 기동하지 못하므로
+# 빌드(테스트 목록을 모으며 바이너리를 실행)와 ctest 모두 setarch -R(ASLR 끔)을 앞에 붙인다
+cmake -B build-tsan -DCMAKE_BUILD_TYPE=Debug -DDETECT_SANITIZE=thread
+setarch "$(uname -m)" -R cmake --build build-tsan -j4
+setarch "$(uname -m)" -R ctest --test-dir build-tsan --output-on-failure
+cmake -B build-asan -DCMAKE_BUILD_TYPE=Debug -DDETECT_SANITIZE=address,undefined && cmake --build build-asan -j4
+ctest --test-dir build-asan --output-on-failure
 ```
 
 ## 실행

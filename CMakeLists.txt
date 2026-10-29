@@ -9,6 +9,16 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # 배포 빌드는 -DDETECT_BUILD_TESTS=OFF — 박스에서 GoogleTest를 받지 않게 (4_ §1·§5)
 option(DETECT_BUILD_TESTS "Build unit tests (fetches GoogleTest)" ON)
 
+# Sanitizer 빌드 (4_ §4, 16_ W-18 — 이슈 #42): -DDETECT_SANITIZE=address|thread|undefined, 쉼표로 묶을 수 있다
+# (address,undefined). address와 thread는 함께 쓰지 못한다. 증거 큐의 두 스레드(3_ §7.1)는 thread로 본다.
+# 모든 타깃(FetchContent로 받는 GoogleTest 포함)에 걸리도록 타깃 정의보다 앞에서 디렉터리 옵션으로 건다.
+# thread는 최근 커널의 ASLR과 부딪혀 기동하지 못할 수 있다 — 그때는 빌드·ctest를 setarch -R로 감싼다(README)
+set(DETECT_SANITIZE "" CACHE STRING "Sanitizers to enable: address, thread, undefined (comma-separated); empty = off")
+if(DETECT_SANITIZE)
+  add_compile_options(-fsanitize=${DETECT_SANITIZE} -fno-omit-frame-pointer -g)
+  add_link_options(-fsanitize=${DETECT_SANITIZE})
+endif()
+
 # libdetect: I/O 없는 순수 로직 (4_ §2 'core는 I/O를 모른다')
 add_library(detect
   src/core/diag.cpp
