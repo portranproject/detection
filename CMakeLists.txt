@@ -25,7 +25,7 @@ add_library(detect
 find_package(Threads REQUIRED)
 target_include_directories(detect
   PUBLIC include
-  PRIVATE third_party   # nlohmann/json 동봉본 3.11.3 (4_ §1)
+  PUBLIC third_party   # nlohmann/json 동봉본 3.11.3 (4_ §1) — 공개 헤더 alert.h의 values·params가 ordered_json (4_ §6.1 #5)
 )
 target_link_libraries(detect PUBLIC Threads::Threads)  # 증거 큐 (3_ §7.1)
 target_compile_options(detect PRIVATE -Wall -Wextra -Wpedantic)

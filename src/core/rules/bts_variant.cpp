@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <utility>
 
 namespace detect {
@@ -10,6 +11,17 @@ namespace {
 Diag diag(DiagKind kind, int64_t cell, std::string msg) { return Diag{kind, cell, std::nullopt, std::move(msg)}; }
 
 const char* mode_name(AlertMode m) { return m == AlertMode::Normal ? "normal" : "dl_missing"; }
+
+// 로그 줄의 숫자 형식 (3_ §7 예: ratio=0.94 base=3.1 k=3)
+std::string fmt(const char* f, double v) {
+  char buf[64];
+  std::snprintf(buf, sizeof(buf), f, v);
+  return buf;
+}
+
+nlohmann::ordered_json seq_pair(const std::pair<int64_t, int64_t>& p) {
+  return nlohmann::ordered_json::array({p.first, p.second});
+}
 
 // C4의 max_conn: hello cells[].max_conn이 있으면 그 값, 없으면 설정 값 (3_ §4 max_conn 행)
 std::optional<int64_t> max_conn_for(const Hello& h, int64_t cell_id, const BtsVariantConfig& cfg) {
@@ -160,7 +172,8 @@ void BtsVariantRule::update_baseline(CellState& st, const Ctx& c, AlertMode mode
 }
 
 // 경보 이벤트 (3_ §7): RAISE는 근거 값·severity·mode·candidates·seq 범위, CLEAR는 duration,
-// 경보 중 C4가 처음 참이 되면 severity high로 올리고 UPDATE 1회 (3_ §6.1 다, 결정 E2)
+// 경보 중 C4가 처음 참이 되면 severity high로 올리고 UPDATE 1회 (3_ §6.1 다, 결정 E2).
+// 근거 값은 공통 경보 형식의 values·params·refs(14_ §8.5 옮김 표)와 로그 줄 필드 log_fields(3_ §7 순서)에 함께 넣는다
 void BtsVariantRule::emit(CellState& st, const Ctx& c, AlertMode mode, const WindowSums& w, const Verdict& v,
                           AlertMachine::Step step, RuleOutput& out) {
   // C4 (보조, 3_ §4): Cx ≥ 0.9 × max_conn이면 severity high. Cx나 max_conn이 없으면 끔 (결정 E4)
@@ -181,11 +194,15 @@ void BtsVariantRule::emit(CellState& st, const Ctx& c, AlertMode mode, const Win
     e.t = c.t;
     e.mode = mode;
     e.severity = st.severity;
-    if (max_conn && c.k.ue_ctx_max) {
-      e.uectx = c.k.ue_ctx_max;
-      e.max_conn = max_conn;
-    }
     return e;
+  };
+  // C4 값(Cx·max_conn)은 있을 때만, 다른 값을 다 넣은 뒤 values 끝에 붙인다 — 어느 이벤트든 (결정 J5).
+  // 로그 줄에는 RAISE·UPDATE만 uectx=Cx/max_conn (3_ §7, 결정 E2)
+  auto add_uectx = [&](AlertEvent& e, bool to_log) {
+    if (!max_conn || !c.k.ue_ctx_max) return;
+    e.values["uectx"] = *c.k.ue_ctx_max;
+    e.values["max_conn"] = *max_conn;
+    if (to_log) e.log_fields.emplace_back("uectx", std::to_string(*c.k.ue_ctx_max) + "/" + std::to_string(*max_conn));
   };
 
   if (step == AlertMachine::Step::Raise) {
@@ -193,32 +210,52 @@ void BtsVariantRule::emit(CellState& st, const Ctx& c, AlertMode mode, const Win
     st.alert_id = c.session + "-" + kId + "-" + std::to_string(c.cell_id) + "-" + std::to_string(c.slot.seq);
     st.severity = c4 ? Severity::High : Severity::Medium;
     AlertEvent e = make_event(AlertEventKind::Raise);
-    // 근거 구간의 seq 범위 (3_ §7.1). dl_missing이면 A′ 윈도우만 (결정 F5)
+    // 근거 값: normal이면 A_w·F_w·ratio, dl_missing이면 A_w(= A′_w)·U (결정 E5).
+    // 근거 구간의 seq 범위 refs (3_ §7.1). dl_missing이면 A′ 윈도우만 (결정 F5)
+    std::optional<std::pair<int64_t, int64_t>> a_seq;
+    std::optional<std::pair<int64_t, int64_t>> f_seq;
     if (mode == AlertMode::Normal) {
-      e.a_w = *w.a_w;
-      e.f_w = w.f_w;
-      e.ratio = v.ratio;
-      e.a_seq = c.cs.seq_range(c.t - c.W - c.D * c.P, c.t - c.D * c.P);
-      e.f_seq = c.cs.seq_range(c.t - c.W, c.t);
-      e.f_abs = cfg_.f_abs;  // normal 모드만 (3_ §7)
+      e.values["a_w"] = *w.a_w;
+      if (w.f_w) e.values["f_w"] = *w.f_w;
+      if (v.ratio) e.values["ratio"] = *v.ratio;
+      e.log_fields = {{"A_w", std::to_string(*w.a_w)},
+                      {"F_w", std::to_string(w.f_w.value_or(0))},
+                      {"ratio", fmt("%.2f", v.ratio.value_or(0))}};
+      a_seq = c.cs.seq_range(c.t - c.W - c.D * c.P, c.t - c.D * c.P);
+      f_seq = c.cs.seq_range(c.t - c.W, c.t);
     } else {
-      e.a_w = *w.a2_w;
-      e.u = v.u;
-      e.a_seq = c.cs.seq_range(c.t - c.W, c.t);
+      e.values["a_w"] = *w.a2_w;
+      if (v.u) e.values["u"] = *v.u;
+      e.log_fields = {{"A_w", std::to_string(*w.a2_w)}, {"U", fmt("%.2f", v.u.value_or(0))}};
+      a_seq = c.cs.seq_range(c.t - c.W, c.t);
     }
-    e.base = v.base_used;
-    e.k = cfg_.k;
-    e.theta = cfg_.theta;
+    e.values["base"] = v.base_used;
+    e.params["k"] = cfg_.k;
+    e.params["theta"] = cfg_.theta;
+    e.log_fields.emplace_back("base", fmt("%.1f", v.base_used));
+    e.log_fields.emplace_back("k", fmt("%g", cfg_.k));
+    e.log_fields.emplace_back("theta", fmt("%g", cfg_.theta));
+    if (mode == AlertMode::Normal) {  // C2a 문턱은 normal 모드만 (3_ §7, 10/27 Q-41)
+      e.params["f_abs"] = cfg_.f_abs;
+      e.log_fields.emplace_back("f_abs", std::to_string(cfg_.f_abs));
+    }
+    e.refs = nlohmann::ordered_json::object();
+    if (a_seq) e.refs["a"] = seq_pair(*a_seq);
+    if (f_seq) e.refs["f"] = seq_pair(*f_seq);
+    add_uectx(e, true);
     e.candidates = {"L3-11"};  // 같은 표 II 모양인 #11 중간자 변형 (3_ §7)
     e.cond = v.cond;
     out.alerts.push_back(std::move(e));
   } else if (step == AlertMachine::Step::Clear) {
     AlertEvent e = make_event(AlertEventKind::Clear);
     e.duration_ms = c.t - st.machine.raised_at();
+    add_uectx(e, false);
     out.alerts.push_back(std::move(e));
   } else if (now_active && c4 && st.severity == Severity::Medium) {
     st.severity = Severity::High;
-    out.alerts.push_back(make_event(AlertEventKind::Update));
+    AlertEvent e = make_event(AlertEventKind::Update);
+    add_uectx(e, true);
+    out.alerts.push_back(std::move(e));
   }
 }
 

@@ -58,22 +58,15 @@ TEST(AlertMachine, ResetClearsCounters) {
   EXPECT_EQ(m.on_slot(true, 400), Step::Raise);
 }
 
-// 3_ §7 예시와 같은 형식
+// 3_ §7 예시와 같은 형식 — 룰별 필드(log_fields)는 severity 앞에, 골격은 공통 (4_ §6.1 #5)
 TEST(AlertLog, RaiseLineMatchesSpecExample) {
   AlertEvent e;
   e.kind = AlertEventKind::Raise;
   e.rule = "L3-01-V";
   e.cell_id = 1;
   e.t = 1792209001200;
-  e.a_w = 48;
-  e.f_w = 45;
-  e.ratio = 45.0 / 48.0;
-  e.base = 3.1;
-  e.k = 3;
-  e.theta = 0.5;
-  e.f_abs = 10;
-  e.uectx = 93;
-  e.max_conn = 96;
+  e.log_fields = {{"A_w", "48"}, {"F_w", "45"}, {"ratio", "0.94"}, {"base", "3.1"}, {"k", "3"},
+                  {"theta", "0.5"}, {"f_abs", "10"}, {"uectx", "93/96"}};
   e.severity = Severity::High;
   e.mode = AlertMode::Normal;
   e.candidates = {"L3-11"};
@@ -98,8 +91,7 @@ TEST(AlertLog, ClearEndUpdateAndDlMissing) {
 
   e.kind = AlertEventKind::Update;
   e.severity = Severity::High;
-  e.uectx = 90;
-  e.max_conn = 96;
+  e.log_fields = {{"uectx", "90/96"}};  // UPDATE의 룰별 필드는 severity 뒤 (결정 E2)
   EXPECT_EQ(format_log_line(e), "ALERT UPDATE rule=L3-01-V cell=1 t=1792209009200 severity=high uectx=90/96");
 
   AlertEvent d;
@@ -107,14 +99,56 @@ TEST(AlertLog, ClearEndUpdateAndDlMissing) {
   d.rule = "L3-01-V";
   d.cell_id = 2;
   d.t = 5;
-  d.a_w = 7;
-  d.u = 6.0 / 7.0;
-  d.base = 0;
-  d.k = 3;
-  d.theta = 0.5;
+  d.log_fields = {{"A_w", "7"}, {"U", "0.86"}, {"base", "0.0"}, {"k", "3"}, {"theta", "0.5"}};
   d.mode = AlertMode::DlMissing;
   d.candidates = {"L3-11"};
   EXPECT_EQ(format_log_line(d),
             "ALERT RAISE rule=L3-01-V cell=2 t=5 A_w=7 U=0.86 base=0.0 k=3 theta=0.5 severity=medium "
             "mode=dl_missing candidates=L3-11");
+}
+
+// UE 단위 경보(unit = "ue")의 줄 모양 — 15_ §2.6 L3-20 예. candidates가 비어도 'candidates='를 찍는다
+TEST(AlertLog, UeUnitLinesMatchStage2Examples) {
+  AlertEvent e;
+  e.rule = "L3-20";
+  e.stage = 2;
+  e.unit = "ue";
+  e.cell_id = 1;
+  e.t = 1793005265500;
+  e.kind = AlertEventKind::Raise;
+  e.severity = Severity::High;
+  e.log_fields = {{"peer", "concurrent"}, {"ue", "1/7/58"}, {"s_tmsi", "0x0123456789ab"}, {"peers", "1/3/41"},
+                  {"nas", "ServiceRequest"}, {"wait_ms", "5000"}, {"victim_released", "1"}};
+  EXPECT_EQ(format_log_line(e),
+            "ALERT RAISE rule=L3-20 cell=1 t=1793005265500 peer=concurrent ue=1/7/58 s_tmsi=0x0123456789ab "
+            "peers=1/3/41 nas=ServiceRequest wait_ms=5000 victim_released=1 severity=high mode=normal candidates=");
+
+  // UPDATE: 새로 걸린 UE 수(ues 크기)와 누적 수 (14_ §8.2)
+  e.kind = AlertEventKind::Update;
+  e.log_fields.clear();
+  e.ues.resize(2);
+  e.ues_total = 3;
+  EXPECT_EQ(format_log_line(e), "ALERT UPDATE rule=L3-20 cell=1 t=1793005265500 ues_new=2 ues_total=3 severity=high");
+
+  e.kind = AlertEventKind::Clear;
+  e.duration_ms = 60000;
+  EXPECT_EQ(format_log_line(e), "ALERT CLEAR rule=L3-20 cell=1 t=1793005265500 duration_ms=60000 ues_total=3");
+
+  // 갈래가 있는 룰은 UPDATE에 branch (15_ §5.6 L3-21 예)
+  AlertEvent b = e;
+  b.rule = "L3-21";
+  b.kind = AlertEventKind::Update;
+  b.branch = "1";
+  b.ues_total = 7;
+  EXPECT_EQ(format_log_line(b), "ALERT UPDATE rule=L3-21 cell=1 t=1793005265500 ues_new=2 ues_total=7 branch=1 severity=high");
+
+  // 룰별 필드는 UPDATE에서 severity 뒤 (15_ §4.6 L3-01-O 예)
+  AlertEvent o = e;
+  o.rule = "L3-01-O";
+  o.kind = AlertEventKind::Update;
+  o.ues.resize(4);
+  o.ues_total = 10;
+  o.log_fields = {{"uectx", "96/96"}};
+  EXPECT_EQ(format_log_line(o),
+            "ALERT UPDATE rule=L3-01-O cell=1 t=1793005265500 ues_new=4 ues_total=10 severity=high uectx=96/96");
 }
