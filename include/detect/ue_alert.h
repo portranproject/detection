@@ -6,6 +6,7 @@
 
 #include "detect/alert.h"
 #include "detect/config.h"
+#include "detect/ue_table.h"
 
 #include <cstdint>
 #include <map>
@@ -14,6 +15,9 @@
 #include <vector>
 
 namespace detect {
+
+// 걸린 UE 한 칸의 식별·불확실 표시 (14_ §8.3 ues[]) — 상태표 항목에서 채운다. cond·t_hit·values·peers는 룰이 채운다
+AlertUe alert_ue(const UeState& s);
 
 class UeAlertBook {
  public:
