@@ -27,6 +27,10 @@ class UdsServer {
   // 연결을 닫고 소켓 파일을 지운다 (결정 G7)
   void close();
 
+  // 받은 바이트를 줄로 나눠 넘긴다 — 상한을 넘는 줄은 다음 줄바꿈까지 버린다(결정 G5). poll_once가 부르지만 소켓 없이도
+  // 부를 수 있어 퍼즈 하네스(tests/fuzz, 16_ W-19 — 이슈 #52)가 직접 쓴다
+  void on_data(const char* data, std::size_t n, const LineHandler& on_line);
+
   // 연결·끊김·줄 길이 초과 같은 사건 기록 — 호출 쪽이 로그로 낸다 (core와 같게 직접 찍지 않음)
   std::vector<std::string> take_events();
   const std::string& error() const { return error_; }
@@ -34,7 +38,6 @@ class UdsServer {
 
  private:
   void close_client(const char* why);
-  void on_data(const char* data, std::size_t n, const LineHandler& on_line);
 
   std::string path_;
   std::size_t max_line_bytes_;
