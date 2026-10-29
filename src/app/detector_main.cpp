@@ -57,6 +57,21 @@ void log_diag(const Diag& d) {
   log_err("DIAG", s);
 }
 
+// rules.<id>가 있으면 그 룰의 파서로 해석해 out에 넣는다. 경고는 WARN, 타입·범위 오류면 false (4_ §1.2 설정 오류 처리)
+template <typename T, typename Parse>
+bool read_rule(const DetectorConfig& cfg, const char* id, Parse parse, T& out) {
+  auto it = cfg.rules.find(id);
+  if (it == cfg.rules.end()) return true;
+  RuleConfigResult<T> r = parse(it->second);
+  for (const auto& w : r.warnings) log_err("WARN", w);
+  if (!r.ok) {
+    log_err("ERROR", r.error);
+    return false;
+  }
+  out = r.config;
+  return true;
+}
+
 void usage() {
   std::cerr << "usage: detector (--socket PATH | --replay FILE [--speed max|N]) [--config FILE]\n";
 }
@@ -135,17 +150,17 @@ int main(int argc, char** argv) {
   // 룰 설정 (4_ §1.2, Q-46 결정 J4): rules 맵에서 룰 ID로 꺼내 룰별 파서로 해석한다. 없으면 기본값.
   // 등록하지 않는 룰 ID가 있으면 경고만(오타를 알아채게, 결정 G3)
   BtsVariantConfig bts;
-  if (auto it = cfg.rules.find(BtsVariantRule::kId); it != cfg.rules.end()) {
-    BtsVariantConfigResult br = parse_bts_variant_config(it->second);
-    for (const auto& w : br.warnings) log_err("WARN", w);
-    if (!br.ok) {
-      log_err("ERROR", br.error);
-      return 1;
-    }
-    bts = br.config;
-  }
+  BlindDosConfig blind_dos;
+  AuthStallConfig auth_stall;
+  UplinkDosConfig uplink_dos;
+  if (!read_rule(cfg, BtsVariantRule::kId, parse_bts_variant_config, bts) ||
+      !read_rule(cfg, BlindDosRule::kId, parse_blind_dos_config, blind_dos) ||
+      !read_rule(cfg, AuthStallRule::kId, parse_auth_stall_config, auth_stall) ||
+      !read_rule(cfg, UplinkDosRule::kId, parse_uplink_dos_config, uplink_dos))
+    return 1;
   for (const auto& [id, _] : cfg.rules)
-    if (id != BtsVariantRule::kId) log_err("WARN", "unknown rule id rules." + id + " (ignored)");
+    if (id != BtsVariantRule::kId && id != BlindDosRule::kId && id != AuthStallRule::kId && id != UplinkDosRule::kId)
+      log_err("WARN", "unknown rule id rules." + id + " (ignored)");
 
   // 엔진·룰·증거 (4_ §3). 버퍼 크기는 W와 pre_slots에서 정한다 (3_ §3·§7.1)
   SeriesConfig scfg;
@@ -153,16 +168,15 @@ int main(int argc, char** argv) {
   scfg.h_hold_ms = bts.h_hold_ms;              // 입력 건전성은 series가 (Q-46, 결정 J5)
   scfg.missing_key_slots = bts.missing_key_slots;
   scfg.pre_slots = cfg.evidence.pre_slots;
-  Engine engine(scfg, cfg.max_line_bytes);
+  Engine engine(scfg, cfg.max_line_bytes, cfg.ue_table);
   engine.add_rule(std::make_unique<BtsVariantRule>(bts));
-  // 2단계 룰 (15_). hello에 ue_evt 표시가 있을 때만 돈다(2_ §6.5). 설정 파일 키(rules.L3-20·rules.L3-01-O·rules.L3-21·
-  // alert.*)는 아직 읽지 않고 기본값을 쓴다 (4_ §1.2)
-  engine.add_ue_rule(std::make_unique<BlindDosRule>());
-  engine.add_ue_rule(std::make_unique<AuthStallRule>());
-  engine.add_ue_rule(std::make_unique<UplinkDosRule>());
+  // 2단계 룰 (15_). hello에 ue_evt 표시가 있을 때만 돈다(2_ §6.5). 경보 묶음·UE 증거는 alert.*를 함께 쓴다 (14_ §9)
+  engine.add_ue_rule(std::make_unique<BlindDosRule>(blind_dos, cfg.alert));
+  engine.add_ue_rule(std::make_unique<AuthStallRule>(auth_stall, cfg.alert));
+  engine.add_ue_rule(std::make_unique<UplinkDosRule>(uplink_dos, cfg.alert));
 
   EvidenceQueue queue(cfg.evidence.queue_max);
-  EvidenceRecorder recorder(cfg.evidence, queue);
+  EvidenceRecorder recorder(cfg.evidence, queue, cfg.alert);
   EvidenceSink sink(queue, cfg.evidence.out_path);
   // 전달 스레드는 입력을 연 뒤에 띄운다 — 기동에 실패한 실행이 증거 파일을 건드리지 않게
   auto start_sink = [&]() {

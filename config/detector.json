@@ -8,8 +8,19 @@
       "warmup_ms": 30000, "baseline_tau_s": 300,
       "h_hold_ms": 10000, "missing_key_slots": 10,
       "max_conn": 96
+    },
+    "L3-20": { "accept_wait_ms": 5000, "clear_quiet_ms": 60000 },
+    "L3-01-O": {
+      "auth_wait_ms": 2000, "window_ms": 10000, "n_stall": 5,
+      "clear_quiet_ms": 60000, "max_conn": 96
+    },
+    "L3-21": {
+      "window_ms": 10000, "n_fail": 5, "fail_accept_wait_ms": 5000,
+      "reg_repeat": 3, "clear_quiet_ms": 60000, "ignore_causes": []
     }
   },
+  "ue_table": { "max_ues": 4096, "recent_n": 16, "stale_setup_ms": 30000, "closed_recent_max": 1024 },
+  "alert": { "ues_max": 50, "update_min_ms": 1000, "ue_evidence_max": 50 },
   "evidence": {
     "mode": "full", "pre_slots": null, "post_slots": 10,
     "queue_max": 4096, "out_path": "evidence.jsonl"

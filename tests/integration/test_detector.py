@@ -6,6 +6,8 @@
 2) T20: 같은 파일을 --speed 50으로 재생해도 ALERT 줄이 똑같다 (T03·T05)
 3) 소켓: detector --socket ← mock_producer.py, 결과가 재생과 같고 SIGTERM 뒤 소켓 파일이 지워진다
 4) 사용법 오류 → 2, 설정 오류 → 1, 이미 떠 있는 엔진이 있으면 → 1
+5) 2단계 설정 (10/29 이슈 #33): 저장소 설정 파일(2단계 키는 기본값)이면 WARN 없이 기본값과 같은 결과, 2단계 키가
+   허용 범위를 벗어나면 → 1
 """
 
 import json
@@ -102,6 +104,27 @@ check(subprocess.run([DET, "--replay", os.path.join(SCN, "T03_공격.jsonl"), "-
                      capture_output=True).returncode == 1, "bad config exit 1")
 check(subprocess.run([DET, "--replay", os.path.join(SCN, "T03_공격.jsonl"), "--config", os.path.join(TMP, "none.json")],
                      capture_output=True).returncode == 1, "missing config exit 1")
+
+# 5) 2단계 설정 (4_ §1.2, 15_ §1.2, 14_ §9) — 증거 파일만 임시 폴더로 바꿔 저장소 설정 파일을 그대로 쓴다
+with open(os.path.join(REPO, "config", "detector.json")) as f:
+    repo_cfg = json.load(f)
+repo_cfg["evidence"]["out_path"] = os.path.join(TMP, "repo_cfg_evidence.jsonl")
+repo_cfg_path = os.path.join(TMP, "repo_cfg.json")
+with open(repo_cfg_path, "w") as f:
+    json.dump(repo_cfg, f)
+r = replay("T05_공격종료", cfg=repo_cfg_path)
+default_cfg, _ = config("stage2_defaults")
+check(r.returncode == 0, f"repo config exit {r.returncode}: {r.stderr}")
+check(" WARN " not in r.stderr, f"repo config warnings: {r.stderr}")
+check(alerts(r.stdout) == alerts(replay("T05_공격종료", cfg=default_cfg).stdout), "repo config alerts differ from defaults")
+for name, text, key in [("bad_l3_21", '{"rules":{"L3-21":{"reg_repeat":1}}}', "rules.L3-21.reg_repeat"),
+                        ("bad_ue_table", '{"ue_table":{"max_ues":50}}', "ue_table.max_ues")]:
+    p = os.path.join(TMP, name + ".json")
+    with open(p, "w") as f:
+        f.write(text)
+    r = subprocess.run([DET, "--replay", os.path.join(SCN, "T03_공격.jsonl"), "--config", p],
+                       capture_output=True, text=True)
+    check(r.returncode == 1 and key + ": out of range" in r.stderr, f"{name}: exit {r.returncode} {r.stderr}")
 
 print("OK" if not failures else f"{len(failures)} failure(s)")
 sys.exit(1 if failures else 0)

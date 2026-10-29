@@ -5,6 +5,8 @@
 
 #include <fstream>
 #include <sstream>
+#include <string>
+#include <vector>
 
 using namespace detect;
 
@@ -30,7 +32,7 @@ TEST(Config, RepoConfigFileParses) {
   const DetectorConfig d;
   EXPECT_EQ(r.config.socket_path, d.socket_path);
   EXPECT_EQ(r.config.max_line_bytes, d.max_line_bytes);
-  ASSERT_EQ(r.config.rules.size(), 1u);
+  ASSERT_EQ(r.config.rules.size(), 4u);  // L3-01-V + 2단계 L3-20·L3-01-O·L3-21 (10/29 이슈 #33)
   ASSERT_TRUE(r.config.rules.count("L3-01-V"));
   BtsVariantConfigResult b = parse_bts_variant_config(r.config.rules.at("L3-01-V"));
   ASSERT_TRUE(b.ok) << b.error;
@@ -51,6 +53,41 @@ TEST(Config, RepoConfigFileParses) {
   EXPECT_EQ(r.config.evidence.post_slots, 10u);
   EXPECT_EQ(r.config.evidence.queue_max, 4096u);
   EXPECT_EQ(r.config.evidence.out_path, "evidence.jsonl");
+
+  // 2단계 키는 모두 구조체 기본값과 같다 — 설정 파일을 더해도 판정은 그대로 (4_ §1.2, 10/29 이슈 #33)
+  const UeTableConfig ud;
+  EXPECT_EQ(r.config.ue_table.max_ues, ud.max_ues);
+  EXPECT_EQ(r.config.ue_table.recent_n, ud.recent_n);
+  EXPECT_EQ(r.config.ue_table.stale_setup_ms, ud.stale_setup_ms);
+  EXPECT_EQ(r.config.ue_table.closed_recent_max, ud.closed_recent_max);
+  const AlertConfig ad;
+  EXPECT_EQ(r.config.alert.ues_max, ad.ues_max);
+  EXPECT_EQ(r.config.alert.update_min_ms, ad.update_min_ms);
+  EXPECT_EQ(r.config.alert.ue_evidence_max, ad.ue_evidence_max);
+  auto bl = parse_blind_dos_config(r.config.rules.at("L3-20"));
+  ASSERT_TRUE(bl.ok) << bl.error;
+  EXPECT_TRUE(bl.warnings.empty());
+  EXPECT_EQ(bl.config.accept_wait_ms, BlindDosConfig{}.accept_wait_ms);
+  EXPECT_EQ(bl.config.clear_quiet_ms, BlindDosConfig{}.clear_quiet_ms);
+  auto st = parse_auth_stall_config(r.config.rules.at("L3-01-O"));
+  ASSERT_TRUE(st.ok) << st.error;
+  EXPECT_TRUE(st.warnings.empty());
+  const AuthStallConfig sd;
+  EXPECT_EQ(st.config.auth_wait_ms, sd.auth_wait_ms);
+  EXPECT_EQ(st.config.window_ms, sd.window_ms);
+  EXPECT_EQ(st.config.n_stall, sd.n_stall);
+  EXPECT_EQ(st.config.clear_quiet_ms, sd.clear_quiet_ms);
+  EXPECT_EQ(st.config.max_conn, sd.max_conn);
+  auto up = parse_uplink_dos_config(r.config.rules.at("L3-21"));
+  ASSERT_TRUE(up.ok) << up.error;
+  EXPECT_TRUE(up.warnings.empty());
+  const UplinkDosConfig pd;
+  EXPECT_EQ(up.config.window_ms, pd.window_ms);
+  EXPECT_EQ(up.config.n_fail, pd.n_fail);
+  EXPECT_EQ(up.config.fail_accept_wait_ms, pd.fail_accept_wait_ms);
+  EXPECT_EQ(up.config.reg_repeat, pd.reg_repeat);
+  EXPECT_EQ(up.config.clear_quiet_ms, pd.clear_quiet_ms);
+  EXPECT_EQ(up.config.ignore_causes, pd.ignore_causes);
 }
 
 // 빠진 키는 기본값, 일부만 덮어쓰기
@@ -104,4 +141,147 @@ TEST(Config, Errors) {
   auto b = bts_of(R"({"rules":{"L3-01-V":{"window_ms":-1}}})");
   EXPECT_FALSE(b.ok);
   EXPECT_NE(b.error.find("window_ms"), std::string::npos);
+}
+
+// 2단계 키 (10/29 이슈 #33): 없으면 구조체 기본값, 있으면 그 값 — ue_table·alert는 최상위, 룰은 rules.<룰 ID> (14_ §9, 15_ §1.2)
+TEST(Config, Stage2KeysRead) {
+  ConfigResult none = parse_config("{}");
+  ASSERT_TRUE(none.ok);
+  EXPECT_EQ(none.config.ue_table.max_ues, 4096u);
+  EXPECT_EQ(none.config.alert.update_min_ms, 1000);
+  EXPECT_EQ(parse_uplink_dos_config("{}").config.n_fail, 5);
+
+  ConfigResult r = parse_config(
+      R"({"ue_table":{"max_ues":200,"recent_n":8,"stale_setup_ms":20000,"closed_recent_max":0},)"
+      R"("alert":{"ues_max":10,"update_min_ms":500,"ue_evidence_max":0}})");
+  ASSERT_TRUE(r.ok) << r.error;
+  EXPECT_TRUE(r.warnings.empty());
+  EXPECT_EQ(r.config.ue_table.max_ues, 200u);
+  EXPECT_EQ(r.config.ue_table.recent_n, 8u);
+  EXPECT_EQ(r.config.ue_table.stale_setup_ms, 20000);
+  EXPECT_EQ(r.config.ue_table.closed_recent_max, 0u);
+  EXPECT_EQ(r.config.alert.ues_max, 10u);
+  EXPECT_EQ(r.config.alert.update_min_ms, 500);
+  EXPECT_EQ(r.config.alert.ue_evidence_max, 0u);
+
+  auto bl = parse_blind_dos_config(R"({"accept_wait_ms":3000,"clear_quiet_ms":30000})");
+  ASSERT_TRUE(bl.ok) << bl.error;
+  EXPECT_EQ(bl.config.accept_wait_ms, 3000);
+  EXPECT_EQ(bl.config.clear_quiet_ms, 30000);
+  auto st = parse_auth_stall_config(R"({"auth_wait_ms":1500,"window_ms":5000,"n_stall":3,"clear_quiet_ms":2000,"max_conn":null})");
+  ASSERT_TRUE(st.ok) << st.error;
+  EXPECT_EQ(st.config.auth_wait_ms, 1500);
+  EXPECT_EQ(st.config.window_ms, 5000);
+  EXPECT_EQ(st.config.n_stall, 3);
+  EXPECT_EQ(st.config.clear_quiet_ms, 2000);
+  EXPECT_FALSE(st.config.max_conn);  // null이면 심각도 high를 쓰지 않는다 (15_ §1.2)
+  EXPECT_EQ(parse_auth_stall_config(R"({"max_conn":50})").config.max_conn, 50);
+  auto up = parse_uplink_dos_config(
+      R"({"window_ms":20000,"n_fail":3,"fail_accept_wait_ms":4000,"reg_repeat":4,"clear_quiet_ms":120000,"ignore_causes":[9,22]})");
+  ASSERT_TRUE(up.ok) << up.error;
+  EXPECT_EQ(up.config.window_ms, 20000);
+  EXPECT_EQ(up.config.n_fail, 3);
+  EXPECT_EQ(up.config.fail_accept_wait_ms, 4000);
+  EXPECT_EQ(up.config.reg_repeat, 4);
+  EXPECT_EQ(up.config.clear_quiet_ms, 120000);
+  EXPECT_EQ(up.config.ignore_causes, (std::vector<int64_t>{9, 22}));
+}
+
+// 허용 범위 경계 (15_ §1.2 룰 키, 14_ §9 ue_table·alert — 10/29 이슈 #33): 하한·상한은 받고, 하한 − 1·상한 + 1은 오류
+TEST(Config, Stage2RangeBoundaries) {
+  struct Range {
+    std::string section;  // ue_table·alert는 최상위, 그 밖은 룰 ID
+    std::string key;
+    int64_t lo;
+    int64_t hi;
+  };
+  const std::vector<Range> ranges = {
+      {"ue_table", "max_ues", 100, 16384},          {"ue_table", "recent_n", 1, 64},
+      {"ue_table", "stale_setup_ms", 2000, 600000}, {"ue_table", "closed_recent_max", 0, 16384},
+      {"alert", "ues_max", 1, 1000},                {"alert", "update_min_ms", 100, 60000},
+      {"alert", "ue_evidence_max", 0, 1000},        {"L3-20", "accept_wait_ms", 100, 60000},
+      {"L3-20", "clear_quiet_ms", 1000, 3600000},   {"L3-01-O", "auth_wait_ms", 100, 60000},
+      {"L3-01-O", "window_ms", 1000, 600000},       {"L3-01-O", "n_stall", 1, 10000},
+      {"L3-01-O", "clear_quiet_ms", 1000, 3600000}, {"L3-21", "window_ms", 1000, 600000},
+      {"L3-21", "n_fail", 1, 10000},                {"L3-21", "fail_accept_wait_ms", 100, 60000},
+      {"L3-21", "reg_repeat", 2, 100},              {"L3-21", "clear_quiet_ms", 1000, 3600000},
+  };
+  auto accepts = [](const Range& r, int64_t v, std::string* error = nullptr) {
+    const std::string obj = "{\"" + r.key + "\":" + std::to_string(v) + "}";
+    bool ok = false;
+    std::string err;
+    if (r.section == "ue_table" || r.section == "alert") {
+      ConfigResult c = parse_config("{\"" + r.section + "\":" + obj + "}");
+      ok = c.ok;
+      err = c.error;
+    } else if (r.section == "L3-20") {
+      auto c = parse_blind_dos_config(obj);
+      ok = c.ok;
+      err = c.error;
+    } else if (r.section == "L3-01-O") {
+      auto c = parse_auth_stall_config(obj);
+      ok = c.ok;
+      err = c.error;
+    } else {
+      auto c = parse_uplink_dos_config(obj);
+      ok = c.ok;
+      err = c.error;
+    }
+    if (error) *error = err;
+    return ok;
+  };
+  for (const Range& r : ranges) {
+    const std::string name = r.section + "." + r.key;
+    EXPECT_TRUE(accepts(r, r.lo)) << name;
+    EXPECT_TRUE(accepts(r, r.hi)) << name;
+    std::string err;
+    EXPECT_FALSE(accepts(r, r.lo - 1, &err)) << name;
+    EXPECT_NE(err.find(r.key + ": out of range"), std::string::npos) << name << ": " << err;
+    EXPECT_FALSE(accepts(r, r.hi + 1)) << name;
+  }
+}
+
+// 타입 오류 — 정수 자리의 실수·문자열·null, 객체가 아닌 ue_table·alert, max_conn은 1 이상 또는 null
+TEST(Config, Stage2TypeErrors) {
+  EXPECT_FALSE(parse_config(R"({"ue_table":{"max_ues":4096.5}})").ok);
+  EXPECT_FALSE(parse_config(R"({"ue_table":{"recent_n":"16"}})").ok);
+  EXPECT_FALSE(parse_config(R"({"alert":{"ues_max":null}})").ok);
+  EXPECT_FALSE(parse_config(R"({"ue_table":[1]})").ok);
+  EXPECT_FALSE(parse_config(R"({"alert":5})").ok);
+  EXPECT_FALSE(parse_blind_dos_config(R"({"accept_wait_ms":5000.0})").ok);
+  EXPECT_FALSE(parse_auth_stall_config(R"({"max_conn":0})").ok);
+  EXPECT_FALSE(parse_auth_stall_config(R"({"max_conn":"96"})").ok);
+  EXPECT_FALSE(parse_uplink_dos_config(R"({"reg_repeat":true})").ok);
+  EXPECT_FALSE(parse_uplink_dos_config("[1]").ok);
+  EXPECT_EQ(parse_auth_stall_config("[1]").error, "config: rules.L3-01-O: not an object");
+}
+
+// ignore_causes (15_ §1.2): 정수 배열, 각 0~255, 중복 없음, 빈 배열 허용(끔)
+TEST(Config, IgnoreCauses) {
+  EXPECT_TRUE(parse_uplink_dos_config(R"({"ignore_causes":[]})").ok);
+  EXPECT_TRUE(parse_uplink_dos_config(R"({"ignore_causes":[0,255]})").ok);
+  EXPECT_FALSE(parse_uplink_dos_config(R"({"ignore_causes":[9,9]})").ok);
+  EXPECT_FALSE(parse_uplink_dos_config(R"({"ignore_causes":[256]})").ok);
+  EXPECT_FALSE(parse_uplink_dos_config(R"({"ignore_causes":[-1]})").ok);
+  EXPECT_FALSE(parse_uplink_dos_config(R"({"ignore_causes":["9"]})").ok);
+  EXPECT_FALSE(parse_uplink_dos_config(R"({"ignore_causes":[9.5]})").ok);
+  EXPECT_FALSE(parse_uplink_dos_config(R"({"ignore_causes":9})").ok);
+  EXPECT_FALSE(parse_uplink_dos_config(R"({"ignore_causes":null})").ok);
+  EXPECT_NE(parse_uplink_dos_config(R"({"ignore_causes":[9,9]})").error.find("duplicate 9"), std::string::npos);
+}
+
+// 모르는 키는 경고만, 예약 키 ue_table.tomb_ms·tomb_max는 '쓰지 않음' 경고만 (14_ §3.2·§9)
+TEST(Config, Stage2UnknownAndReservedKeys) {
+  ConfigResult r = parse_config(R"({"ue_table":{"tomb_ms":600000,"tomb_max":4096,"max_uess":1},"alert":{"ues_maxx":1}})");
+  ASSERT_TRUE(r.ok) << r.error;
+  EXPECT_EQ(r.warnings, (std::vector<std::string>{"unknown key ue_table.max_uess (ignored)",
+                                                  "reserved key ue_table.tomb_ms (not used)",
+                                                  "reserved key ue_table.tomb_max (not used)",
+                                                  "unknown key alert.ues_maxx (ignored)"}));
+  EXPECT_EQ(r.config.ue_table.max_ues, 4096u);
+  auto up = parse_uplink_dos_config(R"({"n_fails":3})");
+  ASSERT_TRUE(up.ok);
+  EXPECT_EQ(up.warnings, (std::vector<std::string>{"unknown key rules.L3-21.n_fails (ignored)"}));
+  EXPECT_EQ(parse_blind_dos_config(R"({"accept_wait":1})").warnings.size(), 1u);
+  EXPECT_EQ(parse_auth_stall_config(R"({"n_stal":1})").warnings.size(), 1u);
 }
