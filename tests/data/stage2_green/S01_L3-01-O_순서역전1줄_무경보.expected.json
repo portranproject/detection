@@ -1,0 +1,7 @@
+{
+  "scenario": "S01_L3-01-O_순서역전1줄_무경보",
+  "description": "인증 무응답 5대, UE마다 RegistrationRequest 한 줄이 자기 창 kpm2 뒤에 옴(late) — 판정 없음, 경보 없음 (16_ E1b, 현재 동작 고정)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

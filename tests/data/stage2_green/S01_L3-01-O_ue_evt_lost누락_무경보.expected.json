@@ -1,0 +1,7 @@
+{
+  "scenario": "S01_L3-01-O_ue_evt_lost누락_무경보",
+  "description": "인증 무응답 5대, 모든 kpm2에 ue_evt_lost 키 없음 — 양방향 로스로 보아 전부 보류, 경보 없음 (16_ E2, 현재 동작 고정)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

@@ -14,6 +14,12 @@ stage2_green 데이터는 '직접 작성'하되, 손으로 한 줄씩 치는 대
  - L3-21 갈래① 실패 UE = t_f(첫 실패) + fail_accept_wait_ms(5000); 갈래② 즉시(그 줄 t_ms)(15_ §5.3).
  - CLEAR = 마지막 걸림/성립 + clear_quiet_ms(60000) 이상인 첫 kpm2(15_ §2.5·§4.5·§5.5).
 시각은 모두 데이터 시작(T0)부터의 상대 ms이고, 테스트는 ±tolerance_ms(1칸)를 허용한다.
+
+입력 불완전 시나리오(이슈 #42, 16_ §3.1·§6 W-17): 분석 엔진의 순서 보장(2_ §6.1 — 같은 창의 ue_evt는
+그 창 kpm2보다 먼저)과 ue_evt_lost 필드(2_ §4.6)를 일부러 깬 입력이다. Scenario.late_msgs는 그 메시지(또는 "all")의
+ue_evt를 자기 창 kpm2 뒤에 두어 워터마크보다 이른 줄(late, 14_ §4.3)로 만들고, Scenario.drop_lost는 kpm2에서
+ue_evt_lost 키를 뺀다(2단계는 양방향 로스로 본다, 14_ §6.2). 기대값은 '지금 동작'(경보 없음)을 고정한 것이고,
+4_ §6.1 #7(late_until)·#8(불확실 경보)에서 바뀐다.
 """
 
 import json
@@ -167,6 +173,8 @@ class Scenario:
         self.gap = {}              # cell -> set(tick)  그 칸 kpm2를 내지 않음(구간 끊김)
         self.uectx = {}            # cell -> {tick: UeCtxMax}  ext.UeCtxMax(2_ §4.4)
         self.session_changes = {}  # tick -> 새 session 이름(새 hello, 상태표 초기화)
+        self.late_msgs = None      # None | "all" | {msg, ...}: 그 ue_evt를 자기 창 kpm2 뒤에 둔다(순서 역전, 이슈 #42)
+        self.drop_lost = False     # True면 kpm2에 ue_evt_lost 키를 넣지 않는다(이슈 #42)
         self.expect = []
 
     def ue(self, du, cell=1, crnti=None):
@@ -218,7 +226,8 @@ class Scenario:
              "cc": {"RRC.ConnEstabAtt": {"total": 0}, "RRC.ConnEstabSucc": {"total": 0},
                     "RRC.ConnEstabFailCause": {"NetworkReject": 0, "NoReply": 0, "Other": 0}}}
         dirs = self.loss.get(cell, {}).get(tick)
-        d["ue_evt_lost"] = dirs if dirs else []
+        if not self.drop_lost:
+            d["ue_evt_lost"] = dirs if dirs else []
         if cell in self.uectx and tick in self.uectx[cell]:
             d["ext"] = {"UeCtxMax": self.uectx[cell][tick]}
         return d
@@ -245,7 +254,11 @@ class Scenario:
                     lo.setdefault("ver", 1)
                     lo["session"], lo["seq"] = session, seq
                     lines.append(lo)
+            deferred = []   # 순서 역전(late_msgs): 자기 창 kpm2 뒤로 미루는 ue_evt
             for (t_rel, line) in sorted(per_tick.get(i, []), key=lambda x: x[0]):
+                if self.late_msgs == "all" or (self.late_msgs and line["msg"] in self.late_msgs):
+                    deferred.append(line)
+                    continue
                 seq += 1
                 lo = dict(line)
                 lo["ver"], lo["session"], lo["seq"] = 1, session, seq
@@ -257,6 +270,11 @@ class Scenario:
                 k = self.kpm2(c, i, session)
                 k["seq"] = seq
                 lines.append(k)
+            for line in deferred:   # t_ms < 그 셀 워터마크(kpm2 t_end_ms) → late (14_ §4.3)
+                seq += 1
+                lo = dict(line)
+                lo["ver"], lo["session"], lo["seq"] = 1, session, seq
+                lines.append(lo)
         return lines
 
 
@@ -344,6 +362,57 @@ def s01_clear():
         sc.ue(i + 1).auth_stall(t)
     sc.alert("RAISE", 3000, "L3-01-O", severity="medium", mode="normal")
     sc.alert("CLEAR", 63000, "L3-01-O")
+    return sc
+
+
+# ---- 입력 불완전 (이슈 #42, 16_ §3.1·W-17) — 지금 동작을 고정. 4_ §6.1 #7·#8에서 기대값이 바뀐다 ----
+
+def _stall5():
+    # S01_..._고착5_RAISE와 같은 배치: 5대, 200 ms 간격, 5번째 마감 2905 → 정상이면 RAISE 3000
+    return [(i + 1, t) for i, t in enumerate([0, 200, 400, 600, 800])]
+
+
+def s01_late_one():
+    # 16_ E1b: UE마다 RegistrationRequest 한 줄만 자기 창 kpm2 뒤에 옴 → 그 UE는 late → '없음' 판정 없음(14_ §4.3).
+    # 4_ §6.1 #7(late_until 16 s) 뒤에도 마감(2 s)이 그 안이라 경보 없음 그대로 — 만료 뒤 판정은 15_ L01-T21
+    sc = Scenario("S01_L3-01-O_순서역전1줄_무경보",
+                  "인증 무응답 5대, UE마다 RegistrationRequest 한 줄이 자기 창 kpm2 뒤에 옴(late) — 판정 없음, 경보 없음 (16_ E1b, 현재 동작 고정)", 4000)
+    for du, t in _stall5():
+        sc.ue(du).auth_stall(t)
+    sc.late_msgs = {"RegistrationRequest"}
+    return sc
+
+
+def s01_late_all():
+    # 16_ E1a: 모든 ue_evt가 자기 창 kpm2 뒤에 옴 → 모두 late, 경보 없음
+    sc = Scenario("S01_L3-01-O_순서역전전부_무경보",
+                  "인증 무응답 5대, 모든 ue_evt가 자기 창 kpm2 뒤에 옴(모두 late) — 판정 없음, 경보 없음 (16_ E1a, 현재 동작 고정)", 4000)
+    for du, t in _stall5():
+        sc.ue(du).auth_stall(t)
+    sc.late_msgs = "all"
+    return sc
+
+
+def s01_ul_loss_one():
+    # 16_ E2c: t=1500 한 칸(100 ms)만 UL 로스 — 대기 구간 [t₀, t₀+2000)이 모두 그 칸과 겹쳐 5건 전부 보류(14_ §6.2).
+    # 기존 '로스보류_무경보'는 20칸이고, 여기서는 한 칸이면 충분함을 고정한다. 4_ §6.1 #8(불확실 경보)에서 RAISE로 바뀐다
+    sc = Scenario("S01_L3-01-O_UL로스1칸_무경보",
+                  "인증 무응답 5대, t=1.5 s에 UL 로스 한 칸(100 ms) — 겹치는 5건 모두 보류, 경보 없음 (16_ E2c, 현재 동작 고정)", 4000)
+    for du, t in _stall5():
+        sc.ue(du).auth_stall(t)
+    sc.set_loss(1, 15, ["UL"])
+    return sc
+
+
+def s01_lost_missing():
+    # 16_ E2: kpm2에 ue_evt_lost 키가 없음 — 알 수 없으므로 양방향 로스(14_ §6.2) → 전부 보류, 경보 없음.
+    # 진단 ue_evt_lost_missing은 연속 50칸(5 s) 뒤라 이 4 s 시나리오에서는 나오지 않는다(시험은 경보만 비교).
+    # 4_ §6.1 #8(첫 칸 진단·불확실 경보)에서 바뀐다
+    sc = Scenario("S01_L3-01-O_ue_evt_lost누락_무경보",
+                  "인증 무응답 5대, 모든 kpm2에 ue_evt_lost 키 없음 — 양방향 로스로 보아 전부 보류, 경보 없음 (16_ E2, 현재 동작 고정)", 4000)
+    for du, t in _stall5():
+        sc.ue(du).auth_stall(t)
+    sc.drop_lost = True
     return sc
 
 
@@ -572,6 +641,8 @@ SCENARIOS = [
     s20_peer_uncertain, s20_repeat_update, s20_clear, s20_session_end,
     s21_normal, s21_fail4, s21_branch1, s21_branch2, s21_reg_only,
     s21_mixed_high, s21_accept_boundary_intime, s21_sec_reject, s21_hold, s21_clear,
+    # 입력 불완전 (이슈 #42) — 뒤에 둔다: 앞의 29개 파일은 그대로다
+    s01_late_one, s01_late_all, s01_ul_loss_one, s01_lost_missing,
 ]
 
 
