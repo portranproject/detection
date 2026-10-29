@@ -21,6 +21,8 @@ add_executable(detect_tests
   core/test_ue_table.cpp
   core/test_deadline_queue.cpp
   core/test_ue_evidence.cpp
+  core/test_ue_alert.cpp
+  core/test_blind_dos.cpp
   io/test_uds_server.cpp
   io/test_file_replay.cpp
 )
