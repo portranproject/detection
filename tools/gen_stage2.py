@@ -374,12 +374,25 @@ def _stall5():
 
 def s01_late_one():
     # 16_ E1b: UE마다 RegistrationRequest 한 줄만 자기 창 kpm2 뒤에 옴 → 그 UE는 late → '없음' 판정 없음(14_ §4.3).
-    # 4_ §6.1 #7(late_until 16 s) 뒤에도 마감(2 s)이 그 안이라 경보 없음 그대로 — 만료 뒤 판정은 15_ L01-T21
+    # 이슈 #46(late_until = 늦은 줄 + 16 s) 뒤에도 마감(2 s)이 그 안이라 경보 없음 그대로 — 만료 뒤 판정은 s01_late_one_expired
     sc = Scenario("S01_L3-01-O_순서역전1줄_무경보",
                   "인증 무응답 5대, UE마다 RegistrationRequest 한 줄이 자기 창 kpm2 뒤에 옴(late) — 판정 없음, 경보 없음 (16_ E1b, 현재 동작 고정)", 4000)
     for du, t in _stall5():
         sc.ue(du).auth_stall(t)
     sc.late_msgs = {"RegistrationRequest"}
+    return sc
+
+
+def s01_late_one_expired():
+    # 이슈 #46 (14_ §4.3 late_until, 15_ L01-T21): s01_late_one과 같이 RegistrationRequest 한 줄이 늦은 5대. 첫 AuthenticationRequest
+    # (t+105)의 마감 t+2105는 late_until(t+91+16000)보다 앞이라 판정 없음. 17 s 뒤 두 번째 AuthenticationRequest(t+17105)에도
+    # 무응답 → 마감 t+19105 ≥ late_until → 고착. 5번째(t=800) 마감 19905 → RAISE 20000, ues[].uncertain에 late
+    sc = Scenario("S01_L3-01-O_순서역전1줄_만료뒤_RAISE",
+                  "RegistrationRequest 한 줄이 늦은 5대 — 2 s 마감은 late_until 안(판정 없음), 17 s 뒤 재요청 무응답은 고착 → RAISE (이슈 #46, 15_ L01-T21)", 20200)
+    for du, t in _stall5():
+        sc.ue(du).auth_stall(t).auth_req(t + 17105)
+    sc.late_msgs = {"RegistrationRequest"}
+    sc.alert("RAISE", 20000, "L3-01-O", severity="medium", mode="normal")
     return sc
 
 
@@ -643,6 +656,8 @@ SCENARIOS = [
     s21_mixed_high, s21_accept_boundary_intime, s21_sec_reject, s21_hold, s21_clear,
     # 입력 불완전 (이슈 #42) — 뒤에 둔다: 앞의 29개 파일은 그대로다
     s01_late_one, s01_late_all, s01_ul_loss_one, s01_lost_missing,
+    # late_until 만료 뒤 판정 (이슈 #46)
+    s01_late_one_expired,
 ]
 
 
