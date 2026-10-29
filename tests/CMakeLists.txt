@@ -24,6 +24,7 @@ add_executable(detect_tests
   core/test_ue_alert.cpp
   core/test_blind_dos.cpp
   core/test_auth_stall.cpp
+  core/test_uplink_dos.cpp
   io/test_uds_server.cpp
   io/test_file_replay.cpp
 )

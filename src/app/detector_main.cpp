@@ -13,6 +13,7 @@
 #include "detect/rules/auth_stall.h"
 #include "detect/rules/blind_dos.h"
 #include "detect/rules/bts_variant.h"
+#include "detect/rules/uplink_dos.h"
 
 #include <atomic>
 #include <chrono>
@@ -154,10 +155,11 @@ int main(int argc, char** argv) {
   scfg.pre_slots = cfg.evidence.pre_slots;
   Engine engine(scfg, cfg.max_line_bytes);
   engine.add_rule(std::make_unique<BtsVariantRule>(bts));
-  // 2단계 룰 (15_). hello에 ue_evt 표시가 있을 때만 돈다(2_ §6.5). 설정 파일 키(rules.L3-20·rules.L3-01-O·alert.*)는
-  // 아직 읽지 않고 기본값을 쓴다 (4_ §1.2)
+  // 2단계 룰 (15_). hello에 ue_evt 표시가 있을 때만 돈다(2_ §6.5). 설정 파일 키(rules.L3-20·rules.L3-01-O·rules.L3-21·
+  // alert.*)는 아직 읽지 않고 기본값을 쓴다 (4_ §1.2)
   engine.add_ue_rule(std::make_unique<BlindDosRule>());
   engine.add_ue_rule(std::make_unique<AuthStallRule>());
+  engine.add_ue_rule(std::make_unique<UplinkDosRule>());
 
   EvidenceQueue queue(cfg.evidence.queue_max);
   EvidenceRecorder recorder(cfg.evidence, queue);
