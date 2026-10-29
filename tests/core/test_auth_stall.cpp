@@ -1,4 +1,4 @@
-// 룰 L3-01-O 인증 단계 고착 테스트 — 15_ §4.8 L01-T1~T19. 합성 ue_evt·kpm2 줄로 한다(데이터 파일은 설정 키·데이터 이슈).
+// 룰 L3-01-O 인증 단계 고착 테스트 — 15_ §4.8 L01-T1~T19, 상태표 포화 현재 동작(이슈 #42). 합성 ue_evt·kpm2 줄로 한다(데이터 파일은 설정 키·데이터 이슈).
 // 시각은 kT0 기준 ms. k번째 고착은 그 UE의 t₀ + auth_wait_ms, 경보는 그 시각 이상인 첫 kpm2(최대 100 ms 뒤)에서 나온다
 #include "detect/engine.h"
 #include "detect/evidence.h"
@@ -8,6 +8,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <string>
@@ -28,6 +29,7 @@ const std::string kSuci = R"("reg_type":"initial","id_type":"SUCI")";
 struct Opt {
   AuthStallConfig cfg;
   SeriesConfig scfg;
+  UeTableConfig ue_cfg;  // 상태표 상한 등 (포화 시험, 이슈 #42)
   bool record = false;  // 증거 기록기도 돌린다
   bool stage1 = false;  // 1단계 L3-01-V도 함께 (L01-T15)
   std::string cells = kCells;
@@ -44,7 +46,7 @@ Opt n_stall(int64_t n) {
 class Harness {
  public:
   explicit Harness(Opt o = {})
-      : engine(o.scfg, kDefaultMaxLineBytes, UeTableConfig{}), queue(100000), rec(EvidenceConfig{}, queue),
+      : engine(o.scfg, kDefaultMaxLineBytes, o.ue_cfg), queue(100000), rec(EvidenceConfig{}, queue),
         record_(o.record), cells_(o.cells) {
     if (o.stage1) engine.add_rule(std::make_unique<BtsVariantRule>());
     auto r = std::make_unique<AuthStallRule>(o.cfg);
@@ -618,6 +620,57 @@ TEST(AuthStall, EndOnInputLostAndSessionReset) {
     EXPECT_EQ(h.alerts[1].reason, "session_reset");
     EXPECT_EQ(h.rule->waiting(), 0u);
   }
+}
+
+// 상태표 포화 — 현재 동작 고정 (이슈 #42 W-17, 16_ §3.1-1 실험 F. 4_ §6.1 #6 Q-56 반영 때 U-T26·U-T27·L01-T22로 뒤집힌다).
+// 고착 공격 20/s(50 ms 간격, 해제 줄 없음)로 상한 100이 CONNECTED 고착 연결로 차면, 그 뒤 새 UE의 RRCSetupRequest마다
+// 밀어내기 순위 ①(CONNECTED 아님)에 드는 것은 직전 UE의 SETUP 항목뿐이라 그것이 밀려나고, 그 UE의 RRCSetupComplete는
+// mid_join으로 다시 열려 판정 대상에서 빠진다(14_ §4.3·§4.4). 그래서 고착은 더 세어지지 않고, 밀어내기 수는 UE 수를 넘으며,
+// 공격이 이어지는데도 마지막 성립 + clear_quiet_ms에 CLEAR가 난다. 줄은 UE끼리 섞이도록 시각 순으로 넣는다
+TEST(AuthStall, SaturationStopsVerdicts_CurrentBehavior) {
+  Opt o;
+  o.ue_cfg.max_ues = 100;
+  Harness h(o);
+  // UE i: RRCSetupRequest t_i = 1000 + 50 i, RRCSetup t_i + 1, RRCSetupComplete t_i + 90, RegistrationRequest t_i + 91,
+  // AuthenticationRequest t_i + 105 (gen_stage2.py의 auth_stall과 같은 간격). 1,400대 = 70 s
+  struct Ev {
+    int64_t t;
+    int64_t du;
+    int step;
+  };
+  std::vector<Ev> evs;
+  for (int64_t i = 0; i < 1400; ++i) {
+    const int64_t t = 1000 + 50 * i;
+    const int64_t du = 10 + i;
+    evs.push_back({t, du, 0});
+    evs.push_back({t + 1, du, 1});
+    evs.push_back({t + 90, du, 2});
+    evs.push_back({t + 91, du, 3});
+    evs.push_back({t + 105, du, 4});
+  }
+  std::stable_sort(evs.begin(), evs.end(), [](const Ev& a, const Ev& b) { return a.t < b.t; });
+  for (const Ev& e : evs) {
+    switch (e.step) {
+      case 0: h.rrc(e.t, e.du, "UL", "RRCSetupRequest", kRandom); break;
+      case 1: h.rrc(e.t, e.du, "DL", "RRCSetup"); break;
+      case 2: h.rrc(e.t, e.du, "UL", "RRCSetupComplete"); break;
+      case 3: h.nas(e.t, e.du, "UL", "RegistrationRequest", kSuci); break;
+      default: h.auth_req(e.t, e.du); break;
+    }
+  }
+  h.tick_to(72000);
+  // 표는 UE 99의 RRCSetupRequest(5950)에 100으로 찬다. UE 100(6000)부터 직전 SETUP 항목이 밀려나므로 판정되는 것은
+  // UE 0~98의 99건뿐 — 마지막 고착은 UE 98: 1000 + 4900 + 105 + 2000 = 8005
+  EXPECT_EQ(h.rule->stalls(), 99);
+  EXPECT_GT(h.engine.ue_table().counts(1).evicted, 1400);  // 밀려난 UE의 다음 줄이 다시 열려 또 밀려남 — UE 수보다 많다
+  ASSERT_GE(h.alerts.size(), 3u);
+  EXPECT_EQ(h.alerts.front().kind, AlertEventKind::Raise);
+  EXPECT_EQ(h.alerts.front().t, kT0 + 3400);  // 5번째 고착 UE 4: 1000 + 200 + 105 + 2000 = 3305 → 다음 칸 3400
+  const AlertEvent& last = h.alerts.back();
+  EXPECT_EQ(last.kind, AlertEventKind::Clear);  // 공격은 70 s까지 이어지는데 8005 + 60 s에 풀린다
+  EXPECT_EQ(last.t, kT0 + 68100);
+  EXPECT_EQ(last.ues_total, 99);
+  for (std::size_t i = 1; i + 1 < h.alerts.size(); ++i) EXPECT_EQ(h.alerts[i].kind, AlertEventKind::Update);
 }
 
 // 증거 지평 (14_ §1.1): 응답 대기 + 셀 창 + UPDATE 모음 지연. 상태표는 여기에 여유 1 s를 더해 닫힌 항목의 recent를 보관한다
