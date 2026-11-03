@@ -1,0 +1,19 @@
+{
+  "scenario": "S06_L3-06_거부중복_RAISE",
+  "description": "정상 거부 줄(t0+131)이 두 번 옴 — 둘째 때 R 1·A 1 → RAISE, 오탐을 기록해 두는 시험 (L06-T19)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-06",
+      "cell": 1,
+      "t_rel_ms": 1200,
+      "severity": "medium",
+      "alert_kind": "attack",
+      "conditions": [
+        "mitm_ul_relay"
+      ]
+    }
+  ]
+}

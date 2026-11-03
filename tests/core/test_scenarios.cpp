@@ -13,6 +13,7 @@
 #include "detect/rules/bts_variant.h"
 #include "detect/rules/cap_hijack.h"
 #include "detect/rules/imsi_extractor.h"
+#include "detect/rules/nas_desync.h"
 #include "detect/rules/uplink_dos.h"
 
 #include <gtest/gtest.h>
@@ -71,6 +72,7 @@ std::vector<AlertEvent> replay(const std::string& path) {
   engine.add_ue_rule(std::make_unique<UplinkDosRule>());
   engine.add_ue_rule(std::make_unique<ImsiExtractorRule>());  // 3단계 (20_ §0 순서 — L3-24 → L3-14)
   engine.add_ue_rule(std::make_unique<CapHijackRule>());
+  engine.add_ue_rule(std::make_unique<NasDesyncRule>());  // 3단계로 올린 L3-06 — L3-14 다음 (1_ §6 11/03 M9 등록 순서)
   std::ifstream in(path);
   std::string line;
   std::vector<AlertEvent> alerts;

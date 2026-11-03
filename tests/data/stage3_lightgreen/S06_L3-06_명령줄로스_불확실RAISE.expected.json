@@ -1,0 +1,16 @@
+{
+  "scenario": "S06_L3-06_명령줄로스_불확실RAISE",
+  "description": "T2에서 명령 줄(t0+125)을 빼고 그 창 [t0+100, t0+200) 양방향 로스 — 보류 → K(t0+131) = t0+200에 불확실 경보 (L06-T9)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-06",
+      "cell": 1,
+      "t_rel_ms": 1200,
+      "severity": "medium",
+      "alert_kind": "anomaly"
+    }
+  ]
+}

@@ -104,6 +104,12 @@ struct CapHijackConfig {
   int64_t clear_quiet_ms = 60000;  // clear_quiet_ms — 마지막 걸림(두 갈래 중 늦은 것) 뒤 이만큼 새로 걸린 UE가 없으면 해제 (20_ §4.5)
 };
 
+// 룰 L3-06 NAS 카운터 비동기화 — 요청 없는 Security Mode Reject (20_ §5.4·§1.5). 설정 파일 rules.L3-06에 키가 없으면 이 기본값을
+// 쓴다 (4_ §1.2). 대기 시간 키는 없다(§3.4와 같은 이유)
+struct NasDesyncConfig {
+  int64_t clear_quiet_ms = 60000;  // clear_quiet_ms — 마지막 걸림 뒤 이만큼 새로 걸린 UE가 없으면 해제 (20_ §5.5)
+};
+
 // 설정 파일 전체 (4_ §1.2). rules는 룰 ID → 그 룰의 설정 객체(JSON 문자열)다 — 공통 파서는 넘기기만 하고
 // 룰별 파서(parse_bts_variant_config 등)가 키·범위를 검사한다 (Q-46, 결정 J4)
 struct DetectorConfig {
@@ -148,5 +154,7 @@ RuleConfigResult<UplinkDosConfig> parse_uplink_dos_config(std::string_view json_
 // 3단계 룰 L3-24·L3-14 (20_ §1.5 표 — 타입·허용 범위)
 RuleConfigResult<ImsiExtractorConfig> parse_imsi_extractor_config(std::string_view json_text);
 RuleConfigResult<CapHijackConfig> parse_cap_hijack_config(std::string_view json_text);
+// 3단계로 올린 룰 L3-06 (20_ §5.4 — 4단계 AN-06b였음)
+RuleConfigResult<NasDesyncConfig> parse_nas_desync_config(std::string_view json_text);
 
 }  // namespace detect

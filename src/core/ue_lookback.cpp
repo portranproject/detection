@@ -17,7 +17,17 @@ bool as_integrity_on(const UeState& b) {
 }
 
 bool unsolicited(const UeState& b, Proto proto, const std::string& req, const std::string& resp) {
-  return !b.mid_join && !as_integrity_on(b) && b.count(proto, req) <= b.count(proto, resp);
+  return unsolicited(b, proto, req, std::vector<std::string>{resp});
+}
+
+int64_t count_any(const UeState& n, Proto proto, const std::vector<std::string>& msgs) {
+  int64_t a = 0;
+  for (const std::string& m : msgs) a += n.count(proto, m);
+  return a;
+}
+
+bool unsolicited(const UeState& b, Proto proto, const std::string& req, const std::vector<std::string>& resps) {
+  return !b.mid_join && !as_integrity_on(b) && b.count(proto, req) <= count_any(b, proto, resps);
 }
 
 const LookbackMarks::Mark* LookbackMarks::find(const UeKey& key, int64_t uid, const std::string& tag) const {

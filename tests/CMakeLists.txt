@@ -28,6 +28,7 @@ add_executable(detect_tests
   core/test_ue_lookback.cpp
   core/test_imsi_extractor.cpp
   core/test_cap_hijack.cpp
+  core/test_nas_desync.cpp
   io/test_uds_server.cpp
   io/test_file_replay.cpp
 )

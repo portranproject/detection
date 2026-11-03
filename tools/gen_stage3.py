@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """합성 ue_evt+kpm2 3단계 시나리오(.jsonl)와 기대 경보(.expected.json) 생성기.
 
-명세: 3단계 룰 20_탐지엔진_3단계-연한녹색룰_명세서.md(L3-24 §3.8, L3-14 §4.8), 입력 2_ §6, 상태·경보 14_.
+명세: 3단계 룰 20_탐지엔진_3단계-연한녹색룰_명세서.md(L3-24 §3.8, L3-14 §4.8, L3-06 §5.8), 입력 2_ §6, 상태·경보 14_.
 실행: python3 tools/gen_stage3.py [출력 폴더]  (기본 tests/data/stage3_lightgreen/).
 tests/core/test_scenarios.cpp가 이 폴더를 실행 파일과 같은 룰 구성(1·2·3단계, 기본값)으로 재생해 같은 이름
 .expected.json과 비교한다(Stage3Scenario, 시각 정확 비교). 2단계 생성기 gen_stage2.py의 UE·Scenario 틀을 그대로 쓰고
 3단계 메시지 4개(IdentityRequest·IdentityResponse·UECapabilityEnquiry·UECapabilityInformation, 20_ §1.1)와
-기본 흐름 F(20_ §3.8)만 더한다(4_ §6.2 #6).
+기본 흐름 F(20_ §3.8)만 더한다(4_ §6.2 #6). 3단계로 올린 L3-06(M9)은 2단계부터 받는 NAS SecurityModeCommand·Complete·
+Reject만 쓰므로 메시지를 더하지 않는다(20_ §5.2).
 
 기대 경보 시각은 생성기가 계산하지 않고 명세 식으로 손 계산한 값이다(2단계와 같은 방식):
  - 연결 시작 t0 = 1000(창 시작). K(t) = t를 품은 창의 t_end = t0 + 100 × (⌊(t − t0)/100⌋ + 1) — '요청 없는 응답'의
@@ -633,6 +634,224 @@ def s14_order_before_sec():
     return sc
 
 
+# ============ L3-06 NAS 카운터 비동기화 — 요청 없는 Security Mode Reject (20_ §5.8 L06-T1~T20 — T18 밀어내기·T20 설정·결정성은
+# 단위 시험). 공격 줄 J1 = t0+98(보안 전 주입), J2 = t0+135(정상 명령 t0+125·완료 t0+131 뒤, RRC 보안 t0+140 전 주입) ============
+
+R06 = "L3-06"
+
+
+def raise06(sc, t_rel):
+    return sc.alert("RAISE", t_rel, R06, severity="medium", alert_kind="attack", conditions=MITM)
+
+
+def held06(sc, t_rel):
+    return sc.alert("RAISE", t_rel, R06, severity="medium", alert_kind="anomaly")
+
+
+def s06_normal():
+    sc = Scenario3("S06_L3-06_정상흐름_무경보", "기본 흐름 F + 해제 — 정상 명령 → Complete, Reject 없음 (L06-T1)", 3000)
+    sc.ue(3).flow_F(B).release(B + 1000)
+    return sc
+
+
+def _normal_reject(sc, skip_cmd=False):
+    # T2 흐름: F의 인증까지 → (t0+125 NAS 명령) → t0+131 UE 거부 → t0+140 AMF 거절 → t0+150 해제
+    u = sc.ue(3).flow_F(B, until=125)
+    if not skip_cmd:
+        u.nas_smc(B + 125)
+    return u.nas_sec_reject(B + 131).reg_reject(B + 140, cause=23).release(B + 150)
+
+
+def s06_normal_reject():
+    sc = Scenario3("S06_L3-06_정상거부_무경보",
+                   "t0+131 Complete 대신 UE가 망의 명령을 거부, 뒤이어 AMF 거절·해제 — R 1·A 0 → 후보 없음 (L06-T2)", 3000)
+    _normal_reject(sc)
+    return sc
+
+
+def s06_retx_once():
+    sc = Scenario3("S06_L3-06_AMF재전송_거부1회_무경보",
+                   "명령 t0+125·t0+6,125(T3560), 거부 t0+6,131 한 번 — R 2·A 0 → 후보 없음 (L06-T3)", 8000)
+    sc.ue(3).flow_F(B, until=125).nas_smc(B + 125).nas_smc(B + 6125).nas_sec_reject(B + 6131).release(B + 6200)
+    return sc
+
+
+def s06_retx_each():
+    sc = Scenario3("S06_L3-06_AMF재전송_명령마다거부_무경보",
+                   "명령마다 거부(t0+131·t0+6,131) — 둘째 거부 때 R 2·A 1 → 후보 없음 (L06-T3)", 8000)
+    u = sc.ue(3).flow_F(B, until=125).nas_smc(B + 125).nas_sec_reject(B + 131)
+    u.nas_smc(B + 6125).nas_sec_reject(B + 6131).release(B + 6200)
+    return sc
+
+
+def s06_raise_before_sec():
+    sc = Scenario3("S06_L3-06_보안전주입_RAISE",
+                   "F + J1(t0+98) — R 0·A 0 → K = t0+100에 RAISE, medium, 전제 mitm_ul_relay, 후보 [] (L06-T4)", 3000)
+    sc.ue(3).flow_F(B).nas_sec_reject(B + 98)
+    raise06(sc, K(B + 98))
+    return sc
+
+
+def s06_raise_after_complete():
+    sc = Scenario3("S06_L3-06_정상완료뒤주입_RAISE",
+                   "F + J2(t0+135) — Complete를 응답으로 세어 R 1·A 1 → K = t0+200에 RAISE (L06-T5)", 3000)
+    sc.ue(3).flow_F(B).nas_sec_reject(B + 135)
+    raise06(sc, K(B + 135))
+    return sc
+
+
+def s06_after_as_integrity():
+    sc = Scenario3("S06_L3-06_AS무결성뒤거부_무경보", "F 뒤 t0+220 거부 — AS 무결성(nia2) 뒤라 후보 없음 (L06-T6)", 3000)
+    sc.ue(3).flow_F(B).nas_sec_reject(B + 220)
+    return sc
+
+
+def s06_nia0():
+    sc = Scenario3("S06_L3-06_nia0_RAISE", "RRC 보안 nia0 + t0+220 거부 — K = t0+300에 RAISE(rrc_sec ON) (L06-T6)", 3000)
+    sc.ue(3).flow_F(B, integrity="nia0").nas_sec_reject(B + 220)
+    raise06(sc, K(B + 220))
+    return sc
+
+
+def s06_rrc_cmd():
+    sc = Scenario3("S06_L3-06_RRC보안명령뒤완료전_RAISE", "t0+145(rrc_sec CMD) 거부 — K = t0+200에 RAISE (L06-T6)", 3000)
+    sc.ue(3).flow_F(B).nas_sec_reject(B + 145)
+    raise06(sc, K(B + 145))
+    return sc
+
+
+def s06_extra():
+    sc = Scenario3("S06_L3-06_같은연결추가거부_RAISE",
+                   "T4 + t0+135(J2)·t0+250(AS 무결성 뒤) 거부 — RAISE 1번, UPDATE 없음 (L06-T7)", 3000)
+    sc.ue(3).flow_F(B).nas_sec_reject(B + 98).nas_sec_reject(B + 135).nas_sec_reject(B + 250)
+    raise06(sc, K(B + 98))
+    return sc
+
+
+def s06_two_in_window():
+    sc = Scenario3("S06_L3-06_같은창두거부_RAISE", "같은 창 t0+60·t0+98에 거부 둘 — RAISE 1번(extra 1) (L06-T8)", 3000)
+    sc.ue(3).flow_F(B).nas_sec_reject(B + 60).nas_sec_reject(B + 98)
+    raise06(sc, K(B + 98))
+    return sc
+
+
+def s06_cmd_lost():
+    sc = Scenario3("S06_L3-06_명령줄로스_불확실RAISE",
+                   "T2에서 명령 줄(t0+125)을 빼고 그 창 [t0+100, t0+200) 양방향 로스 — 보류 → K(t0+131) = t0+200에 불확실 경보 "
+                   "(L06-T9)", 3000)
+    _normal_reject(sc, skip_cmd=True)
+    sc.lost(B + 100, ["UL", "DL"])
+    held06(sc, K(B + 131))
+    return sc
+
+
+def s06_loss_before_start():
+    sc = Scenario3("S06_L3-06_연결전로스_RAISE", "T4 + 로스 창 [t0−100, t0) — loss_end[DL] = t0 ≤ t_s → RAISE (L06-T10)", 3000)
+    sc.ue(3).flow_F(B).nas_sec_reject(B + 98)
+    sc.lost(B - 100, ["UL", "DL"])
+    raise06(sc, K(B + 98))
+    return sc
+
+
+def s06_loss_after_start():
+    sc = Scenario3("S06_L3-06_연결뒤로스_불확실RAISE", "T5 + 로스 창 [t0, t0+100) — 보류 → K = t0+200에 불확실 경보 (L06-T10)",
+                   3000)
+    sc.ue(3).flow_F(B).nas_sec_reject(B + 135)
+    sc.lost(B, ["UL", "DL"])
+    held06(sc, K(B + 135))
+    return sc
+
+
+def s06_ul_loss():
+    sc = Scenario3("S06_L3-06_UL로스_RAISE", "T4 + 거부 창 ue_evt_lost [\"UL\"] — DL 로스 아님 → RAISE (L06-T11)", 3000)
+    sc.ue(3).flow_F(B).nas_sec_reject(B + 98)
+    sc.lost(B, ["UL"])
+    raise06(sc, K(B + 98))
+    return sc
+
+
+def s06_boundary():
+    sc = Scenario3("S06_L3-06_창경계거부_RAISE", "거부 t_r = t0+100(앞 창 t_end) — K = t0+200에 RAISE (L06-T12)", 3000)
+    sc.ue(3).head(B).nas_sec_reject(B + 100)
+    raise06(sc, K(B + 100))
+    return sc
+
+
+def s06_closed_same_window():
+    sc = Scenario3("S06_L3-06_같은창해제_RAISE",
+                   "거부 t0+98 직후 t0+99 해제(released) — 마감 때 판정해 K = t0+100에 RAISE (L06-T13)", 3000)
+    sc.ue(3).head(B).nas_sec_reject(B + 98).release(B + 99)
+    raise06(sc, K(B + 98))
+    return sc
+
+
+def s06_mid_join():
+    sc = Scenario3("S06_L3-06_중간합류_무경보", "첫 줄이 SecurityModeReject(mid_join) — 후보 없음 (L06-T14)", 3000)
+    sc.ue(5).nas_sec_reject(B + 50)
+    return sc
+
+
+def s06_late():
+    sc = Scenario3("S06_L3-06_늦은거부줄_무경보", "J1 줄(t_ms t0+98)이 t0+100 kpm2 뒤에 도착 — late, 판정 없음 (L06-T15)", 3000)
+    sc.ue(3).head(B).nas_sec_reject(B + 98)
+    sc.late_msgs = {"SecurityModeReject"}
+    return sc
+
+
+def s06_clear():
+    sc = Scenario3("S06_L3-06_해제_CLEAR", "T4 뒤 마지막 걸림(t0+98) + 60 s 이상인 첫 kpm2에 CLEAR (L06-T16)", 62000)
+    sc.ue(3).flow_F(B).nas_sec_reject(B + 98)
+    raise06(sc, K(B + 98))
+    sc.alert("CLEAR", K(B + 98 + 60000 - 1), R06, alert_kind="attack")
+    return sc
+
+
+def s06_clear_extra():
+    sc = Scenario3("S06_L3-06_extra는해제를안늦춤_CLEAR",
+                   "보안 전 연결에 t0+98 걸림 + t0+30,000 같은 연결 extra — 해제 시각 그대로 (L06-T16)", 62000)
+    sc.ue(3).head(B).nas_sec_reject(B + 98).nas_sec_reject(B + 30000)
+    raise06(sc, K(B + 98))
+    sc.alert("CLEAR", K(B + 98 + 60000 - 1), R06, alert_kind="attack")
+    return sc
+
+
+def s06_two_ues():
+    sc = Scenario3("S06_L3-06_두UE_UPDATE",
+                   "UE A는 T4, UE B는 t0+500에 J1 — RAISE + 1 s 모음 UPDATE, 심각도 그대로 (L06-T17)", 3000)
+    sc.ue(1).flow_F(B).nas_sec_reject(B + 98)
+    sc.ue(2).flow_F(B + 500).nas_sec_reject(B + 598)
+    raise06(sc, K(B + 98))
+    sc.alert("UPDATE", K(B + 98) + 1000, R06, severity="medium", alert_kind="attack")
+    return sc
+
+
+def s06_order_violation():
+    sc = Scenario3("S06_L3-06_명령줄순서위반_무경보",
+                   "같은 창에서 명령 줄(t0+125)이 Complete 줄(t0+131) 뒤에 옴, 주입 거부 없음 — Complete는 후보 줄이 아님 "
+                   "(L06-T19)", 3000)
+    u = sc.ue(3).flow_F(B, skip=("NasSecurityModeCommand",))
+    u.out_of_order(B + 131, B + 125, "DL", "NAS", "SecurityModeCommand")
+    return sc
+
+
+def s06_duplicate():
+    sc = Scenario3("S06_L3-06_거부중복_RAISE",
+                   "정상 거부 줄(t0+131)이 두 번 옴 — 둘째 때 R 1·A 1 → RAISE, 오탐을 기록해 두는 시험 (L06-T19)", 3000)
+    sc.ue(3).flow_F(B, until=125).nas_smc(B + 125).nas_sec_reject(B + 131).nas_sec_reject(B + 131)
+    raise06(sc, K(B + 131))
+    return sc
+
+
+def s06_dl_unobserved():
+    sc = Scenario3("S06_L3-06_DL미관측_불확실RAISE",
+                   "모든 kpm2 ue_evt_lost [\"DL\"], DL 줄 없음 — 정상 거부(T2)의 거부가 R 0으로 후보가 되나 보류돼 불확실 경보만 "
+                   "(20_ §5.7)", 3000)
+    sc.ue(3).flow_F(B, until=125).nas_smc(B + 125).nas_sec_reject(B + 131).drop_dl()
+    sc.lost_all(["DL"])
+    held06(sc, K(B + 131))
+    return sc
+
+
 SCENARIOS = [
     s24_normal, s24_guti_identity, s24_retx_once, s24_retx_twice, s24_raise, s24_unexpected_f,
     s24_after_normal_identity, s24_extra, s24_two_in_window, s24_request_lost, s24_loss_before_start,
@@ -643,6 +862,10 @@ SCENARIOS = [
     s14_normal, s14_no_cap, s14_branch1, s14_branch2, s14_cmd, s14_failed, s14_on, s14_enq_lost, s14_smc_lost,
     s14_mixed, s14_mixed_reversed, s14_both_branches, s14_once, s14_nia0, s14_cu_misconfig, s14_mid_join, s14_closed,
     s14_late, s14_dl_unobserved, s14_clear, s14_order_after_sec, s14_order_before_sec,
+    s06_normal, s06_normal_reject, s06_retx_once, s06_retx_each, s06_raise_before_sec, s06_raise_after_complete,
+    s06_after_as_integrity, s06_nia0, s06_rrc_cmd, s06_extra, s06_two_in_window, s06_cmd_lost, s06_loss_before_start,
+    s06_loss_after_start, s06_ul_loss, s06_boundary, s06_closed_same_window, s06_mid_join, s06_late, s06_clear,
+    s06_clear_extra, s06_two_ues, s06_order_violation, s06_duplicate, s06_dl_unobserved,
 ]
 
 

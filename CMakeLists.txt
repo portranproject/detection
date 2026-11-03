@@ -38,6 +38,7 @@ add_library(detect
   src/core/rules/uplink_dos.cpp
   src/core/rules/imsi_extractor.cpp
   src/core/rules/cap_hijack.cpp
+  src/core/rules/nas_desync.cpp
   src/core/evidence.cpp
   src/core/evidence_queue.cpp
   src/core/config.cpp

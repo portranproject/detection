@@ -1,0 +1,19 @@
+{
+  "scenario": "S06_L3-06_보안전주입_RAISE",
+  "description": "F + J1(t0+98) — R 0·A 0 → K = t0+100에 RAISE, medium, 전제 mitm_ul_relay, 후보 [] (L06-T4)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-06",
+      "cell": 1,
+      "t_rel_ms": 1100,
+      "severity": "medium",
+      "alert_kind": "attack",
+      "conditions": [
+        "mitm_ul_relay"
+      ]
+    }
+  ]
+}

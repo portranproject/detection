@@ -1,0 +1,7 @@
+{
+  "scenario": "S06_L3-06_정상거부_무경보",
+  "description": "t0+131 Complete 대신 UE가 망의 명령을 거부, 뒤이어 AMF 거절·해제 — R 1·A 0 → 후보 없음 (L06-T2)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}
