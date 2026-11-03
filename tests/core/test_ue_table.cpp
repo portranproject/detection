@@ -1,7 +1,7 @@
 // UE 상태표·마감 목록·2단계 분배 테스트 — 14_ §10 공통 테스트 U-T1~U-T29(U-T26·U-T27은 이슈 #44 유령 정리·보호 무리, U-T28은 이슈 #46 late_until, U-T29는 이슈 #48 진단),
 // 입력 침묵의 엔진 몫(이슈 #50 — 소켓 통합 시험 U-T31은 tests/integration).
 // U-T13(1단계 alert 형식 이전)은 이슈 #17에서 확인했고, U-T20(경보당 증거 UE 상한)은 UE 증거 이슈에서 한다.
-// 닫힌 S-TMSI 기억(U-T1·U-T11의 기억 표 부분)은 보류다(14_ §3.2).
+// S-TMSI 이력 표(14_ §3.2 — U-T1·U-T11의 기억 표 부분, U-T32~U-T35)는 11/04 이슈 #74.
 // 대기 표시가 필요한 시험은 15_ 룰의 대기 규칙(14_ §2.4·§6)을 그대로 따르는 테스트용 룰(WaitRule)로 한다
 #include "detect/engine.h"
 
@@ -72,6 +72,8 @@ class WaitRule : public UeRule {
   int resets = 0;
   std::vector<std::string> log;  // 호출 순서 — "event 1/3/1 RRCSetupRequest", "close 1/3/1 released"
   std::vector<std::tuple<int64_t, bool, bool, bool>> ticks;  // (셀, loss.ul, loss.dl, input_lost)
+  // 닫힘 통지를 받을 때 S-TMSI 이력 표에 이 연결의 레코드가 이미 있었나 (14_ §3.2·§7 ⑦ — 레코드 먼저)
+  std::vector<bool> record_seen_at_close;
 
   static std::string name(const UeState& s) {
     return std::to_string(s.key.cell_id) + "/" + std::to_string(s.key.du_ue_id) + "/" + std::to_string(s.uid);
@@ -121,8 +123,13 @@ class WaitRule : public UeRule {
     hits.push_back(Hit{d.key, d.uid, d.at, m.closed});
   }
 
-  void on_ue_close(const UeState& last, CloseReason reason, int64_t, const UeRuleCtx&, RuleOutput&) override {
+  void on_ue_close(const UeState& last, CloseReason reason, int64_t, const UeRuleCtx& ctx, RuleOutput&) override {
     log.push_back("close " + name(last) + " " + to_string(reason));
+    if (last.s_tmsi || last.s_tmsi_part1) {
+      const auto recs = last.s_tmsi ? ctx.table.history(*last.s_tmsi, 0)
+                                    : ctx.table.history_part1(*last.s_tmsi_part1, 0);
+      record_seen_at_close.push_back(!recs.empty() && recs.back()->uid == last.uid);
+    }
     auto it = marks.find({last.key, last.uid});
     if (it == marks.end()) return;
     if (reason == CloseReason::Released || reason == CloseReason::Reused || reason == CloseReason::StaleSetup) {
@@ -320,6 +327,29 @@ TEST(UeTable, UT01NormalRegistrationAndRelease) {
   ASSERT_GE(h.rule->log.size(), 2u);
   EXPECT_EQ(h.rule->log[h.rule->log.size() - 2], "event 1/3/1 UEContextReleaseComplete");
   EXPECT_EQ(h.rule->log.back(), "close 1/3/1 released");
+
+  // S-TMSI 이력 표 (14_ §3.2): 닫힌 연결이 레코드로 남고, 망이 RegistrationAccept로 준 S-TMSI는 할당 기억에 있다
+  EXPECT_EQ(h.engine.ue_table().allocated(kS), kT0 + 160);
+  const auto recs = h.engine.ue_table().history(kS, 0);
+  ASSERT_EQ(recs.size(), 1u);
+  const ConnRecord& r = *recs[0];
+  EXPECT_EQ(r.uid, 1);
+  EXPECT_EQ(r.key.du_ue_id, 3);
+  EXPECT_EQ(r.t_start, kT0);
+  EXPECT_EQ(r.t_end, kT0 + 5010);
+  EXPECT_EQ(r.reason, CloseReason::Released);
+  EXPECT_TRUE(r.connected);
+  EXPECT_TRUE(r.accepted);
+  EXPECT_EQ(r.rrc_last, RrcState::Releasing);
+  EXPECT_EQ(r.nas_last, NasState::Registered);
+  EXPECT_EQ(std::string(r.src()), "net");  // SUCI 등록 — S-TMSI는 RegistrationAccept에만 있다(14_ §2.1)
+  EXPECT_EQ(r.est_cause, "mo-Signalling");
+  EXPECT_EQ(r.reg_type, "initial");
+  EXPECT_EQ(r.id_type, "SUCI");
+  EXPECT_FALSE(r.rel_req_cause);
+  EXPECT_EQ(r.part1, kS & kPart1Mask);
+  EXPECT_EQ(h.engine.ue_table().history_part1(kS & kPart1Mask, 0).size(), 1u);
+  EXPECT_EQ(h.rule->record_seen_at_close, (std::vector<bool>{true}));
 }
 
 // U-T2: 이미 등록한 UE의 ServiceRequest → ServiceAccept — nas SR_INITIATED → REGISTERED, S-TMSI 색인
@@ -467,11 +497,18 @@ TEST(UeTable, UT11NewSessionClearsEverything) {
   h.rrc(0, 40, "UL", "RRCSetupRequest", part1(kS));
   h.nas(100, 40, "DL", "AuthenticationRequest");
   EXPECT_EQ(h.engine.deadlines().size(), 2u);  // stale_setup + 룰의 대기
+  h.rrc(100, 42, "UL", "RRCSetupRequest");
+  h.nas(110, 42, "DL", "RegistrationAccept", stmsi(kS2), 2);  // 할당 기억
+  h.f1ap(120, 42, "UL", "UEContextReleaseComplete");          // 연결 레코드
+  EXPECT_EQ(h.engine.ue_table().history_size(), 1u);
+  EXPECT_EQ(h.engine.ue_table().alloc_size(), 1u);
   h.hello(true, "S2");
   EXPECT_EQ(h.rule->resets, 1);
   EXPECT_EQ(h.engine.ue_table().size(), 0u);
   EXPECT_EQ(h.engine.deadlines().size(), 0u);
   EXPECT_TRUE(h.engine.ue_table().by_part1(kS & kPart1Mask).empty());
+  EXPECT_EQ(h.engine.ue_table().history_size(), 0u);  // S-TMSI 이력 표도 비운다 (14_ §3.2)
+  EXPECT_EQ(h.engine.ue_table().alloc_size(), 0u);
   h.rrc(0, 41, "UL", "RRCSetupRequest");
   EXPECT_EQ(h.ue_state(41)->uid, 1);
   h.hello(true, "S2");  // 같은 세션·같은 파라미터(재연결) — 상태 유지
@@ -1028,4 +1065,144 @@ TEST(UeTable, SecStateNames) {
   EXPECT_STREQ(to_string(NasSecState::Cmd), "CMD");
   EXPECT_STREQ(to_string(NasSecState::On), "ON");
   EXPECT_STREQ(to_string(NasSecState::Rejected), "REJECTED");
+}
+
+// U-T32 (14_ §3.2, 11/04 이슈 #74): S-TMSI 이력 표 연결 레코드 — 48비트를 아는 연결이 released로 닫힘 → 레코드 1개(48비트·
+// Part1 색인 둘 다, src ue) / Part1만 아는 연결이 stale_setup으로 닫힘 → 레코드 1개(Part1 색인만, connected false) / S-TMSI를
+// 모르는 연결 → 레코드 없음. DU가 먼저 해제를 요청하면 그 원인(rel_req_cause), 마지막 등록 요청의 종류
+TEST(UeTable, UT32HistoryRecords) {
+  Harness h;
+  h.rrc(0, 3, "UL", "RRCSetupRequest", R"("est_cause":"mt-Access",)" + part1(kS));
+  h.rrc(10, 3, "UL", "RRCSetupComplete", stmsi(kS));
+  h.nas(10, 3, "UL", "RegistrationRequest", R"("reg_type":"mobility","id_type":"5G-GUTI",)" + stmsi(kS));
+  h.ue(500, 1, "3", "UL", "F1AP", "UEContextReleaseRequest", R"("cause":"radioNetwork:rl-failure")", "");
+  h.f1ap(510, 3, "DL", "UEContextReleaseCommand");
+  h.f1ap(520, 3, "UL", "UEContextReleaseComplete");
+  ASSERT_EQ(h.engine.ue_table().history(kS, 0).size(), 1u);
+  const ConnRecord& a = *h.engine.ue_table().history(kS, 0)[0];
+  EXPECT_EQ(a.s_tmsi, kS);
+  EXPECT_EQ(a.part1, kS & kPart1Mask);
+  EXPECT_EQ(std::string(a.src()), "ue");
+  EXPECT_EQ(a.reason, CloseReason::Released);
+  EXPECT_TRUE(a.connected);
+  EXPECT_FALSE(a.accepted);
+  EXPECT_EQ(a.est_cause, "mt-Access");
+  EXPECT_EQ(a.reg_type, "mobility");
+  EXPECT_EQ(a.id_type, "5G-GUTI");
+  EXPECT_EQ(a.rel_req_cause, "radioNetwork:rl-failure");
+  EXPECT_FALSE(h.engine.ue_table().allocated(kS));  // UE가 낸 값은 할당 기억이 아니다
+  ASSERT_EQ(h.engine.ue_table().history_part1(kS & kPart1Mask, 0).size(), 1u);
+
+  h.rrc(1000, 4, "UL", "RRCSetupRequest", part1(kS2));  // Part1만 — RRCSetupComplete 없이 30 s
+  h.tick_to(32000);
+  EXPECT_FALSE(h.ue_state(4));
+  EXPECT_TRUE(h.engine.ue_table().history(kS2, 0).empty());
+  const auto p = h.engine.ue_table().history_part1(kS2 & kPart1Mask, 0);
+  ASSERT_EQ(p.size(), 1u);
+  EXPECT_FALSE(p[0]->s_tmsi);
+  EXPECT_EQ(p[0]->reason, CloseReason::StaleSetup);
+  EXPECT_FALSE(p[0]->connected);
+  EXPECT_EQ(p[0]->rrc_last, RrcState::Setup);
+
+  h.rrc(33000, 5, "UL", "RRCSetupRequest", R"("ue_identity":{"type":"randomValue"})");  // S-TMSI 모름
+  h.rrc(33010, 5, "UL", "RRCSetupComplete");
+  h.f1ap(33020, 5, "UL", "UEContextReleaseComplete");
+  EXPECT_EQ(h.engine.ue_table().history_size(), 2u);
+}
+
+// U-T33 (14_ §3.2): 할당 기억 — RegistrationAccept f.s_tmsi 뒤 allocated(s) = 할당 시각 / 같은 값 재할당이면 시각 갱신(앞 마감은
+// 지우지 않음) / alloc_ms 뒤 없음. 항목이 열려 있어도 넣는다
+TEST(UeTable, UT33AllocationMemory) {
+  UeTableConfig cfg;
+  cfg.alloc_ms = 60000;
+  Harness h(cfg);
+  h.rrc(0, 3, "UL", "RRCSetupRequest");
+  h.nas(100, 3, "DL", "RegistrationAccept", stmsi(kS), 2);
+  EXPECT_EQ(h.engine.ue_table().allocated(kS), kT0 + 100);
+  EXPECT_TRUE(h.ue_state(3));
+  h.nas(20000, 3, "DL", "RegistrationAccept", stmsi(kS), 2);  // 재할당
+  EXPECT_EQ(h.engine.ue_table().allocated(kS), kT0 + 20000);
+  EXPECT_EQ(h.engine.ue_table().alloc_size(), 1u);
+  h.tick_to(60200);  // 첫 할당 + 60 s — 그 마감은 다시 할당됐으므로 지우지 않는다
+  EXPECT_EQ(h.engine.ue_table().allocated(kS), kT0 + 20000);
+  h.tick_to(80100);  // 재할당 + 60 s
+  EXPECT_FALSE(h.engine.ue_table().allocated(kS));
+  EXPECT_EQ(h.engine.ue_table().alloc_size(), 0u);
+}
+
+// U-T34 (14_ §3.2): 만료·상한 — tomb_ms 뒤 표 몫 마감으로 지움 / tomb_max 초과면 오래된 것부터 / alloc_max 초과 / du_reset은 비우지
+// 않음(닫힌 연결도 레코드로) / 새 hello는 둘 다 비움(U-T11)
+TEST(UeTable, UT34ExpiryAndCaps) {
+  {
+    UeTableConfig cfg;
+    cfg.tomb_ms = 60000;
+    Harness h(cfg);
+    h.rrc(0, 3, "UL", "RRCSetupRequest", part1(kS));
+    h.f1ap(100, 3, "UL", "UEContextReleaseComplete");
+    EXPECT_EQ(h.engine.ue_table().history_size(), 1u);
+    h.tick_to(60000);  // t_end 100 + 60 s = 60,100 — 마감 ≤ 셀 시계인 칸(t_end 60,100)에서 지운다 (14_ §6.1)
+    EXPECT_EQ(h.engine.ue_table().history_size(), 1u);
+    h.tick_to(60100);
+    EXPECT_EQ(h.engine.ue_table().history_size(), 0u);
+    EXPECT_TRUE(h.engine.ue_table().history_part1(kS & kPart1Mask, 0).empty());
+  }
+  {
+    UeTableConfig cfg;
+    cfg.tomb_max = 100;
+    cfg.alloc_max = 100;
+    Harness h(cfg);
+    for (int64_t i = 0; i < 101; ++i) {
+      const uint64_t s = kS + static_cast<uint64_t>(i);
+      h.rrc(i * 10, 100 + i, "UL", "RRCSetupRequest", part1(s));
+      h.nas(i * 10, 100 + i, "DL", "RegistrationAccept", stmsi(s), 2);
+      h.f1ap(i * 10 + 5, 100 + i, "UL", "UEContextReleaseComplete");
+    }
+    EXPECT_EQ(h.engine.ue_table().history_size(), 100u);
+    EXPECT_TRUE(h.engine.ue_table().history(kS, 0).empty());  // 가장 오래된 것부터
+    EXPECT_EQ(h.engine.ue_table().history(kS + 100, 0).size(), 1u);
+    EXPECT_EQ(h.engine.ue_table().alloc_size(), 100u);
+    EXPECT_FALSE(h.engine.ue_table().allocated(kS));
+    EXPECT_TRUE(h.engine.ue_table().allocated(kS + 100));
+  }
+  {
+    Harness h;
+    h.rrc(0, 3, "UL", "RRCSetupRequest", part1(kS));
+    h.rrc(0, 3, "UL", "RRCSetupComplete", stmsi(kS));
+    h.nas(10, 3, "DL", "RegistrationAccept", stmsi(kS), 2);
+    h.rrc(20, 4, "UL", "RRCSetupRequest", part1(kS2));
+    h.f1ap(30, 4, "UL", "UEContextReleaseComplete");
+    h.f1(300, "F1SetupRequest", "[1]");  // du_reset — 열린 3도 레코드로, 지난 레코드·할당 기억은 그대로
+    EXPECT_EQ(h.engine.ue_table().history_size(), 2u);
+    EXPECT_EQ(h.engine.ue_table().history(kS, 0)[0]->reason, CloseReason::DuReset);
+    EXPECT_EQ(std::string(h.engine.ue_table().history(kS, 0)[0]->src()), "both");
+    EXPECT_TRUE(h.engine.ue_table().allocated(kS));
+  }
+}
+
+// U-T35 (14_ §3.2·§7 ⑦): 룰이 읽는 것 — 같은 S-TMSI 연결 3건(5 s 간격) 뒤 history(s, since)는 t_end 순 3건, since로 거른다 /
+// mid_join 연결 레코드에 표시가 남는다 / 닫힘 통지를 받을 때 그 연결의 레코드가 이미 있다(레코드 먼저)
+TEST(UeTable, UT35RulesRead) {
+  Harness h;
+  for (int64_t i = 0; i < 3; ++i) {
+    const int64_t t = i * 5000;
+    h.rrc(t, 10 + i, "UL", "RRCSetupRequest", part1(kS));
+    h.rrc(t + 10, 10 + i, "UL", "RRCSetupComplete", stmsi(kS));
+    h.f1ap(t + 1200, 10 + i, "UL", "UEContextReleaseComplete");
+  }
+  const auto all = h.engine.ue_table().history(kS, 0);
+  ASSERT_EQ(all.size(), 3u);
+  EXPECT_EQ(all[0]->t_end, kT0 + 1200);
+  EXPECT_EQ(all[1]->t_end, kT0 + 6200);
+  EXPECT_EQ(all[2]->t_end, kT0 + 11200);
+  EXPECT_EQ(h.engine.ue_table().history(kS, kT0 + 6200).size(), 2u);
+  EXPECT_EQ(h.engine.ue_table().history(kS, kT0 + 6201).size(), 1u);
+  EXPECT_EQ(h.engine.ue_table().history_part1(kS & kPart1Mask, kT0 + 6200).size(), 2u);
+  EXPECT_EQ(h.rule->record_seen_at_close, (std::vector<bool>{true, true, true}));
+
+  h.nas(20000, 20, "UL", "ServiceRequest", stmsi(kS2), 1);  // 첫 줄 — mid_join
+  h.f1ap(20100, 20, "UL", "UEContextReleaseComplete");
+  const auto mj = h.engine.ue_table().history(kS2, 0);
+  ASSERT_EQ(mj.size(), 1u);
+  EXPECT_TRUE(mj[0]->mid_join);
+  EXPECT_FALSE(mj[0]->loss);
 }

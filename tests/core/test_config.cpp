@@ -273,6 +273,8 @@ TEST(Config, Stage2RangeBoundaries) {
       {"ue_table", "ghost_margin", 0, 4096},        {"ue_table", "ghost_hold_ms", 0, 600000},
       {"ue_table", "evict_protect_ms", 0, 600000},  {"ue_table", "dl_unobserved_ms", 1000, 600000},
       {"ue_table", "recent_keep_margin_ms", 0, 60000}, {"top", "max_cells", 1, 1024},
+      {"ue_table", "tomb_ms", 60000, 86400000},     {"ue_table", "tomb_max", 100, 65536},  // S-TMSI 이력 표 (14_ §9)
+      {"ue_table", "alloc_ms", 60000, 86400000},    {"ue_table", "alloc_max", 100, 65536},
       {"top", "input_silent_ms", 1000, 600000},
       {"alert", "ues_max", 1, 1000},                {"alert", "update_min_ms", 100, 60000},
       {"alert", "ue_evidence_max", 0, 1000},        {"L3-20", "accept_wait_ms", 100, 60000},
@@ -389,15 +391,19 @@ TEST(Config, IgnoreCauses) {
   EXPECT_NE(parse_uplink_dos_config(R"({"ignore_causes":[9,9]})").error.find("duplicate 9"), std::string::npos);
 }
 
-// 모르는 키는 경고만, 예약 키 ue_table.tomb_ms·tomb_max는 '쓰지 않음' 경고만 (14_ §3.2·§9)
+// 모르는 키는 경고만. ue_table.tomb_ms·tomb_max는 10/29까지 예약 키('쓰지 않음' 경고)였으나 11/03 S-TMSI 이력 표 키가 되어
+// 경고 없이 읽는다(alloc_*와 함께 — 14_ §3.2·§9, 11/04 이슈 #74)
 TEST(Config, Stage2UnknownAndReservedKeys) {
-  ConfigResult r = parse_config(R"({"ue_table":{"tomb_ms":600000,"tomb_max":4096,"max_uess":1},"alert":{"ues_maxx":1}})");
+  ConfigResult r = parse_config(
+      R"({"ue_table":{"tomb_ms":120000,"tomb_max":200,"alloc_ms":7200000,"alloc_max":300,"max_uess":1},"alert":{"ues_maxx":1}})");
   ASSERT_TRUE(r.ok) << r.error;
   EXPECT_EQ(r.warnings, (std::vector<std::string>{"unknown key ue_table.max_uess (ignored)",
-                                                  "reserved key ue_table.tomb_ms (not used)",
-                                                  "reserved key ue_table.tomb_max (not used)",
                                                   "unknown key alert.ues_maxx (ignored)"}));
   EXPECT_EQ(r.config.ue_table.max_ues, 4096u);
+  EXPECT_EQ(r.config.ue_table.tomb_ms, 120000);
+  EXPECT_EQ(r.config.ue_table.tomb_max, 200u);
+  EXPECT_EQ(r.config.ue_table.alloc_ms, 7200000);
+  EXPECT_EQ(r.config.ue_table.alloc_max, 300u);
   auto up = parse_uplink_dos_config(R"({"n_fails":3})");
   ASSERT_TRUE(up.ok);
   EXPECT_EQ(up.warnings, (std::vector<std::string>{"unknown key rules.L3-21.n_fails (ignored)"}));
