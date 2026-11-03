@@ -1,0 +1,30 @@
+{
+  "scenario": "S14_L3-14_한연결두갈래_RAISE-UPDATE",
+  "description": "C2 + t0+135 요청 없는 능력 응답 — 같은 칸에서 갈래 ② RAISE 직후 전제 변화로 UPDATE (L14-T9)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-14",
+      "cell": 1,
+      "t_rel_ms": 1200,
+      "severity": "high",
+      "branch": "2",
+      "alert_kind": "attack",
+      "conditions": []
+    },
+    {
+      "kind": "UPDATE",
+      "rule": "L3-14",
+      "cell": 1,
+      "t_rel_ms": 1200,
+      "severity": "high",
+      "branch": "2",
+      "alert_kind": "attack",
+      "conditions": [
+        "mitm_ul_relay"
+      ]
+    }
+  ]
+}

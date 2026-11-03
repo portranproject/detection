@@ -1,0 +1,20 @@
+{
+  "scenario": "S14_L3-14_요청없는능력응답_갈래1_RAISE",
+  "description": "F + t0+98 요청 없는 UECapabilityInformation — K = t0+100에 갈래 ① RAISE, medium, 전제 mitm_ul_relay (L14-T3)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-14",
+      "cell": 1,
+      "t_rel_ms": 1100,
+      "severity": "medium",
+      "branch": "1",
+      "alert_kind": "attack",
+      "conditions": [
+        "mitm_ul_relay"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "scenario": "S14_L3-14_보안전순서위반_RAISE-UPDATE",
+  "description": "RRC 보안 전 t0+120 응답·t0+125 요청 — 갈래 ① RAISE 직후 같은 칸 갈래 ② UPDATE, 오탐을 기록해 두는 시험 (L14-T19)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-14",
+      "cell": 1,
+      "t_rel_ms": 1200,
+      "severity": "medium",
+      "branch": "1",
+      "alert_kind": "attack",
+      "conditions": [
+        "mitm_ul_relay"
+      ]
+    },
+    {
+      "kind": "UPDATE",
+      "rule": "L3-14",
+      "cell": 1,
+      "t_rel_ms": 1200,
+      "severity": "high",
+      "branch": "2",
+      "alert_kind": "attack"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "scenario": "S14_L3-14_보안명령줄로스_불확실RAISE",
+  "description": "F에서 RRC SecurityModeCommand 줄을 빼고 그 창 양방향 로스 — t0+160 능력 요청이 갈래 ② 후보 → 보류 → K = t0+200에 불확실 경보 (L14-T7)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-14",
+      "cell": 1,
+      "t_rel_ms": 1200,
+      "severity": "medium",
+      "alert_kind": "anomaly"
+    }
+  ]
+}

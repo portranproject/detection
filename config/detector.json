@@ -19,7 +19,8 @@
       "window_ms": 10000, "n_fail": 5, "fail_accept_wait_ms": 5000,
       "reg_repeat": 3, "clear_quiet_ms": 60000, "ignore_causes": []
     },
-    "L3-24": { "clear_quiet_ms": 60000 }
+    "L3-24": { "clear_quiet_ms": 60000 },
+    "L3-14": { "clear_quiet_ms": 60000 }
   },
   "ue_table": { "max_ues": 4096, "recent_n": 16, "stale_setup_ms": 30000, "closed_recent_max": 1024,
                 "ghost_k": 2, "ghost_margin": 16, "ghost_hold_ms": 5000, "evict_protect_ms": 5000,

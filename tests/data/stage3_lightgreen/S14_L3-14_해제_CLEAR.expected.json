@@ -1,0 +1,37 @@
+{
+  "scenario": "S14_L3-14_해제_CLEAR",
+  "description": "L14-T8 앞 경우 뒤 마지막 걸림(B의 t_e = t0+520) + 60 s 이상인 첫 kpm2에 CLEAR, branch 2 (L14-T17)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-14",
+      "cell": 1,
+      "t_rel_ms": 1100,
+      "severity": "medium",
+      "branch": "1",
+      "alert_kind": "attack",
+      "conditions": [
+        "mitm_ul_relay"
+      ]
+    },
+    {
+      "kind": "UPDATE",
+      "rule": "L3-14",
+      "cell": 1,
+      "t_rel_ms": 1600,
+      "severity": "high",
+      "branch": "2",
+      "alert_kind": "attack"
+    },
+    {
+      "kind": "CLEAR",
+      "rule": "L3-14",
+      "cell": 1,
+      "t_rel_ms": 61600,
+      "branch": "2",
+      "alert_kind": "attack"
+    }
+  ]
+}

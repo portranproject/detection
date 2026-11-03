@@ -27,6 +27,7 @@ add_executable(detect_tests
   core/test_uplink_dos.cpp
   core/test_ue_lookback.cpp
   core/test_imsi_extractor.cpp
+  core/test_cap_hijack.cpp
   io/test_uds_server.cpp
   io/test_file_replay.cpp
 )

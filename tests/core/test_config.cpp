@@ -32,7 +32,7 @@ TEST(Config, RepoConfigFileParses) {
   const DetectorConfig d;
   EXPECT_EQ(r.config.socket_path, d.socket_path);
   EXPECT_EQ(r.config.max_line_bytes, d.max_line_bytes);
-  ASSERT_EQ(r.config.rules.size(), 5u);  // L3-01-V + 2단계 L3-20·L3-01-O·L3-21 (10/29 이슈 #33) + 3단계 L3-24 (20_ §1.5)
+  ASSERT_EQ(r.config.rules.size(), 6u);  // L3-01-V + 2단계 L3-20·L3-01-O·L3-21 (10/29 이슈 #33) + 3단계 L3-24·L3-14 (20_ §1.5)
   ASSERT_TRUE(r.config.rules.count("L3-01-V"));
   BtsVariantConfigResult b = parse_bts_variant_config(r.config.rules.at("L3-01-V"));
   ASSERT_TRUE(b.ok) << b.error;
@@ -109,6 +109,11 @@ TEST(Config, RepoConfigFileParses) {
   EXPECT_TRUE(ie.warnings.empty());
   EXPECT_EQ(ie.config.clear_quiet_ms, ImsiExtractorConfig{}.clear_quiet_ms);
   EXPECT_EQ(ImsiExtractorConfig{}.clear_quiet_ms, 60000);
+  auto ch = parse_cap_hijack_config(r.config.rules.at("L3-14"));
+  ASSERT_TRUE(ch.ok) << ch.error;
+  EXPECT_TRUE(ch.warnings.empty());
+  EXPECT_EQ(ch.config.clear_quiet_ms, CapHijackConfig{}.clear_quiet_ms);
+  EXPECT_EQ(CapHijackConfig{}.clear_quiet_ms, 60000);
 }
 
 // 빠진 키는 기본값, 일부만 덮어쓰기
@@ -251,6 +256,7 @@ TEST(Config, Stage2RangeBoundaries) {
       {"L3-21", "n_fail", 1, 10000},                {"L3-21", "fail_accept_wait_ms", 100, 60000},
       {"L3-21", "reg_repeat", 2, 100},              {"L3-21", "clear_quiet_ms", 1000, 3600000},
       {"L3-24", "clear_quiet_ms", 1000, 3600000},  // 3단계 (20_ §1.5, L24-T25)
+      {"L3-14", "clear_quiet_ms", 1000, 3600000},  // 3단계 (20_ §1.5, L14-T20)
   };
   auto accepts = [](const Range& r, int64_t v, std::string* error = nullptr) {
     const std::string obj = "{\"" + r.key + "\":" + std::to_string(v) + "}";
@@ -274,6 +280,10 @@ TEST(Config, Stage2RangeBoundaries) {
       err = c.error;
     } else if (r.section == "L3-24") {
       auto c = parse_imsi_extractor_config(obj);
+      ok = c.ok;
+      err = c.error;
+    } else if (r.section == "L3-14") {
+      auto c = parse_cap_hijack_config(obj);
       ok = c.ok;
       err = c.error;
     } else {
@@ -365,4 +375,16 @@ TEST(Config, Stage3ImsiExtractor) {
   ASSERT_TRUE(r.ok);
   EXPECT_EQ(r.warnings, (std::vector<std::string>{"unknown key rules.L3-24.clear_quiet (ignored)"}));
   EXPECT_EQ(r.config.clear_quiet_ms, 60000);
+}
+
+// L14-T20 (20_ §4.8·§1.5): rules.L3-14.clear_quiet_ms — 범위 밖·문자열은 오류(실행 파일은 종료 코드 1), 모르는 키는 경고만
+TEST(Config, Stage3CapHijack) {
+  EXPECT_TRUE(parse_cap_hijack_config(R"({"clear_quiet_ms":1000})").ok);
+  EXPECT_TRUE(parse_cap_hijack_config(R"({"clear_quiet_ms":3600000})").ok);
+  EXPECT_FALSE(parse_cap_hijack_config(R"({"clear_quiet_ms":999})").ok);
+  EXPECT_FALSE(parse_cap_hijack_config(R"({"clear_quiet_ms":3600001})").ok);
+  EXPECT_FALSE(parse_cap_hijack_config(R"({"clear_quiet_ms":"60000"})").ok);
+  auto r = parse_cap_hijack_config(R"({"branch2":true})");
+  ASSERT_TRUE(r.ok);
+  EXPECT_EQ(r.warnings, (std::vector<std::string>{"unknown key rules.L3-14.branch2 (ignored)"}));
 }

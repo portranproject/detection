@@ -10,6 +10,7 @@
 #include "detect/rules/auth_stall.h"
 #include "detect/rules/blind_dos.h"
 #include "detect/rules/bts_variant.h"
+#include "detect/rules/cap_hijack.h"
 #include "detect/rules/imsi_extractor.h"
 #include "detect/rules/uplink_dos.h"
 
@@ -29,6 +30,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, std::size_t size) {
   engine.add_ue_rule(std::make_unique<AuthStallRule>());
   engine.add_ue_rule(std::make_unique<UplinkDosRule>());
   engine.add_ue_rule(std::make_unique<ImsiExtractorRule>());
+  engine.add_ue_rule(std::make_unique<CapHijackRule>());
   EvidenceQueue queue(16);
   EvidenceRecorder recorder(EvidenceConfig{}, queue);
   UdsServer server("fuzz-no-socket", kMaxLine);  // open()을 부르지 않는다 — 소켓·파일을 만들지 않음
