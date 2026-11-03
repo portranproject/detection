@@ -33,6 +33,8 @@ struct AlertUe {
   nlohmann::ordered_json values;        // 이 UE의 관측값 — 룰마다 다름
   std::vector<std::string> uncertain;   // 14_ §4.3 이유 목록
   std::vector<std::vector<int64_t>> peers;            // 함께 판정된 UE의 [cell, du_ue_id, uid] — 비면 키를 뺀다
+  // 이 UE의 3단계 성립 전제 ID (14_ §8.3, 20_ §1.3) — 갈래마다 전제가 다른 룰(L3-14)만 채운다. nullopt면 키를 뺀다
+  std::optional<std::vector<std::string>> conditions;
   std::optional<std::pair<int64_t, int64_t>> seq_range;  // 이 UE 증거(recent)의 seq 범위
   bool evidence = false;                // 이 UE의 증거를 냈는지 (경보당 증거 UE 상한, 14_ §8.3)
 };
@@ -55,6 +57,9 @@ struct AlertEvent {
   // RAISE 칸에서 성립한 조건 ID (14_ §8.3 cond, §8.5). 예: {"C1","C2","C3"}, {"C2a"}, dl_missing {"U","C3"}
   std::vector<std::string> cond;
   std::vector<std::string> candidates;
+  // 3단계 성립 전제 ID (14_ §8.3 conditions, 20_ §1.3) — 그 룰이 공격을 볼 수 있는 공격자 쪽 전제. 3단계 룰이 raise와 전제가
+  // 바뀌는 update에만 채운다. nullopt면 레코드·로그 줄에서 뺀다(1·2단계 룰, clear·end, 불확실 경보), 빈 배열이면 [] (4_ §6.2 #2)
+  std::optional<std::vector<std::string>> conditions;
 
   // 룰마다 다른 값 (14_ §8.3) — 넣은 순서대로 레코드에 나간다(결정 F10). 비워 두면 레코드에서 뺀다
   nlohmann::ordered_json values;  // 판정에 쓴 관측값

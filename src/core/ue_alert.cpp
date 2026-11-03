@@ -19,8 +19,8 @@ AlertUe alert_ue(const UeState& s) {
   return u;
 }
 
-UeAlertBook::UeAlertBook(std::string rule, AlertConfig cfg, std::string kind)
-    : rule_(std::move(rule)), cfg_(cfg), kind_(std::move(kind)) {}
+UeAlertBook::UeAlertBook(std::string rule, AlertConfig cfg, std::string kind, int stage)
+    : rule_(std::move(rule)), cfg_(cfg), kind_(std::move(kind)), stage_(stage) {}
 
 std::optional<Severity> UeAlertBook::severity(int64_t cell) const {
   auto it = open_.find(cell);
@@ -32,7 +32,8 @@ int64_t UeAlertBook::ues_total(int64_t cell) const {
   return it == open_.end() ? 0 : it->second.ues_total;
 }
 
-// 공통 겉모양 (14_ §8.3): 2단계 UE 단위 경보(공격 attack 또는 불확실 anomaly — §6.2), mode normal (15_ §1)
+// 공통 겉모양 (14_ §8.3): UE 단위 경보(공격 attack 또는 불확실 anomaly — §6.2), 단계는 생성자에서 받은 값(2단계 2·3단계 3,
+// 4_ §6.2 #1), mode normal (15_ §1)
 AlertEvent UeAlertBook::event(AlertEventKind kind, int64_t cell, const Open& o, int64_t t) const {
   AlertEvent e;
   e.kind = kind;
@@ -40,7 +41,7 @@ AlertEvent UeAlertBook::event(AlertEventKind kind, int64_t cell, const Open& o, 
   e.alert_id = o.alert_id;
   e.cell_id = cell;
   e.t = t;
-  e.stage = 2;
+  e.stage = stage_;
   e.unit = "ue";
   e.alert_kind = kind_;
   e.mode = AlertMode::Normal;

@@ -550,3 +550,104 @@ TEST(Evidence, UeUnitAlertHasNoKpm2Evidence) {
   EXPECT_EQ(mine[1]["evidence_sent"], 0);
   EXPECT_EQ(rec.counts(id).sent, 0);
 }
+
+// 3단계 alert 레코드 (20_ §3.6·§4.6, 14_ §8.3, 4_ §6.2 #1·#2): stage 3, 경보 conditions는 candidates 뒤·values 앞,
+// ues[] 칸 conditions는 peers 뒤·seq_range 앞. 값이 없으면 키를 뺀다(L3-24 ues[] 칸)
+TEST(EvidenceRecord, AlertConditionsMatchStage3Examples) {
+  AlertEvent e;
+  e.kind = AlertEventKind::Raise;
+  e.rule = "L3-24";
+  e.stage = 3;
+  e.unit = "ue";
+  e.alert_id = "20261026T090000Z-L3-24-1-2007";
+  e.cell_id = 1;
+  e.t = 1793005200100;
+  e.cond = {"unsolicited"};
+  e.conditions = std::vector<std::string>{"mitm_ul_relay"};
+  e.values["extra"] = 0;
+  e.values["held"] = 0;
+  e.values["evicted"] = 0;
+  e.params["clear_quiet_ms"] = 60000;
+  AlertUe u;
+  u.cell = 1;
+  u.du_ue_id = 3;
+  u.uid = 12;
+  u.cu_ue_id = 3;
+  u.crnti = 17922;
+  u.cond = {"unsolicited"};
+  u.t_hit = 1793005200098;
+  u.values["req"] = 0;
+  u.values["resp"] = 1;
+  u.values["rrc_sec"] = "OFF";
+  u.values["nas_sec"] = "NONE";
+  u.seq_range = {{2001, 2006}};
+  u.evidence = true;
+  e.ues = {u};
+  e.ues_total = 1;
+  EXPECT_EQ(alert_record_line(e, 0, 0),
+            R"({"type":"alert","fmt":1,"alert_id":"20261026T090000Z-L3-24-1-2007","event":"raise","rule":"L3-24",)"
+            R"("stage":3,"unit":"ue","kind":"attack","cell":1,"t":1793005200100,"severity":"medium","mode":"normal",)"
+            R"("cond":["unsolicited"],"candidates":[],"conditions":["mitm_ul_relay"],)"
+            R"("values":{"extra":0,"held":0,"evicted":0},"params":{"clear_quiet_ms":60000},)"
+            R"("ues":[{"cell":1,"du_ue_id":3,"uid":12,"cu_ue_id":3,"crnti":17922,"s_tmsi":null,"cond":["unsolicited"],)"
+            R"("t_hit":1793005200098,"values":{"req":0,"resp":1,"rrc_sec":"OFF","nas_sec":"NONE"},"uncertain":[],)"
+            R"("seq_range":[2001,2006],"evidence":true}],"ues_total":1})");
+
+  // L3-14 갈래 ② — 경보·UE 칸 모두 빈 conditions (20_ §4.6 예)
+  AlertEvent b;
+  b.kind = AlertEventKind::Raise;
+  b.rule = "L3-14";
+  b.stage = 3;
+  b.unit = "ue";
+  b.alert_id = "20261026T090000Z-L3-14-1-2009";
+  b.cell_id = 1;
+  b.t = 1793005200200;
+  b.severity = Severity::High;
+  b.branch = "2";
+  b.cond = {"enquiry_before_as_sec"};
+  b.conditions = std::vector<std::string>{};
+  b.values["branch1_ues"] = 0;
+  b.values["branch2_ues"] = 1;
+  b.values["extra"] = 0;
+  b.values["held"] = 0;
+  b.values["evicted"] = 0;
+  b.params["clear_quiet_ms"] = 60000;
+  AlertUe v;
+  v.cell = 1;
+  v.du_ue_id = 3;
+  v.uid = 12;
+  v.cu_ue_id = 3;
+  v.crnti = 17922;
+  v.cond = {"enquiry_before_as_sec"};
+  v.t_hit = 1793005200120;
+  v.values["branch"] = "2";
+  v.values["req"] = 1;
+  v.values["resp"] = 0;
+  v.values["rrc_sec"] = "OFF";
+  v.conditions = std::vector<std::string>{};
+  v.seq_range = {{2001, 2008}};
+  v.evidence = true;
+  b.ues = {v};
+  b.ues_total = 1;
+  EXPECT_EQ(alert_record_line(b, 0, 0),
+            R"({"type":"alert","fmt":1,"alert_id":"20261026T090000Z-L3-14-1-2009","event":"raise","rule":"L3-14",)"
+            R"("stage":3,"unit":"ue","kind":"attack","cell":1,"t":1793005200200,"severity":"high","mode":"normal",)"
+            R"("branch":"2","cond":["enquiry_before_as_sec"],"candidates":[],"conditions":[],)"
+            R"("values":{"branch1_ues":0,"branch2_ues":1,"extra":0,"held":0,"evicted":0},)"
+            R"("params":{"clear_quiet_ms":60000},)"
+            R"("ues":[{"cell":1,"du_ue_id":3,"uid":12,"cu_ue_id":3,"crnti":17922,"s_tmsi":null,)"
+            R"("cond":["enquiry_before_as_sec"],"t_hit":1793005200120,)"
+            R"("values":{"branch":"2","req":1,"resp":0,"rrc_sec":"OFF"},"uncertain":[],"conditions":[],)"
+            R"("seq_range":[2001,2008],"evidence":true}],"ues_total":1})");
+
+  // 전제가 바뀐 update — cond·candidates 없이 branch 뒤·values 앞 (20_ §4.5)
+  b.kind = AlertEventKind::Update;
+  b.conditions = std::vector<std::string>{"mitm_ul_relay"};
+  b.values = nlohmann::ordered_json();
+  b.ues.clear();
+  b.ues_total = 2;
+  EXPECT_EQ(alert_record_line(b, 0, 0),
+            R"({"type":"alert","fmt":1,"alert_id":"20261026T090000Z-L3-14-1-2009","event":"update","rule":"L3-14",)"
+            R"("stage":3,"unit":"ue","kind":"attack","cell":1,"t":1793005200200,"severity":"high","mode":"normal",)"
+            R"("branch":"2","conditions":["mitm_ul_relay"],"ues":[],"ues_total":2})");
+}

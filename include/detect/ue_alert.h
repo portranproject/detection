@@ -1,5 +1,5 @@
 #pragma once
-// UE 경보 묶음 (14_ §8.2·§8.3) — 2단계 룰이 함께 쓰는 (룰, 셀)별 경보 골격 (10/29 이슈 #27 사용자 결정).
+// UE 경보 묶음 (14_ §8.2·§8.3) — 2단계 이상 룰이 함께 쓰는 (룰, 셀)별 경보 골격 (10/29 이슈 #27 사용자 결정).
 // 걸린 UE로 RAISE, 그 뒤 걸린 UE는 모았다가 alert.update_min_ms 간격으로 UPDATE(심각도가 오르면 바로),
 // 한 레코드의 ues는 alert.ues_max칸까지(넘는 UE는 ues_total로만 센다), CLEAR·END.
 // 룰은 여기서 만든 이벤트에 values·params·cond·candidates·로그 필드만 채운다. CLEAR 조건은 룰이 정한다
@@ -21,8 +21,9 @@ AlertUe alert_ue(const UeState& s);
 
 class UeAlertBook {
  public:
-  // kind = 경보 종류 "attack"(공격) 또는 "anomaly"(불확실 경보 — 14_ §6.2·§8.2, 이슈 #48). 룰은 종류마다 묶음을 하나씩 둔다
-  UeAlertBook(std::string rule, AlertConfig cfg, std::string kind = "attack");
+  // kind = 경보 종류 "attack"(공격) 또는 "anomaly"(불확실 경보 — 14_ §6.2·§8.2, 이슈 #48). 룰은 종류마다 묶음을 하나씩 둔다.
+  // stage = 레코드의 단계(14_ §8.3) — 2단계 룰은 기본값 2, 3단계 룰은 3을 넘긴다(20_ §3.6·§4.6, 4_ §6.2 #1)
+  UeAlertBook(std::string rule, AlertConfig cfg, std::string kind = "attack", int stage = 2);
 
   // 걸린 UE (14_ §8.2): 그 셀에 열린 경보가 없으면 이 UE들로 RAISE, 있으면 모았다가 간격이 지났으면 UPDATE.
   // sev가 지금 심각도보다 높으면 기다리지 않고 바로 UPDATE(모아 둔 UE 포함). session·seq는 RAISE의 alert_id용
@@ -60,6 +61,7 @@ class UeAlertBook {
   std::string rule_;
   AlertConfig cfg_;
   std::string kind_;
+  int stage_;
   std::map<int64_t, Open> open_;
 };
 

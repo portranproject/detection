@@ -53,6 +53,16 @@ std::string fields_str(const AlertEvent& e) {
   return s;
 }
 
+std::string join(const std::vector<std::string>& v) {
+  std::string s;
+  for (std::size_t i = 0; i < v.size(); ++i) s += (i ? "," : "") + v[i];
+  return s;
+}
+
+// 3단계 성립 전제 (20_ §1.3·§3.6·§4.6): 룰이 채운 이벤트에만 ' conditions=a,b'(비어도 'conditions='). 없으면 빈 문자열이라
+// 1·2단계 로그 줄은 그대로다 (4_ §6.2 #2)
+std::string conditions_str(const AlertEvent& e) { return e.conditions ? " conditions=" + join(*e.conditions) : ""; }
+
 }  // namespace
 
 // 경보 로그 한 줄 (3_ §7, 15_ §2.6·§4.6·§5.6 예시 형식). 골격은 모든 룰이 같고, 룰마다 다른 필드는 룰이
@@ -60,15 +70,16 @@ std::string fields_str(const AlertEvent& e) {
 //   ALERT RAISE rule=L3-01-V cell=1 t=… A_w=48 … uectx=93/96 severity=high mode=normal candidates=L3-11
 //   ALERT UPDATE rule=L3-21 cell=1 t=… ues_new=2 ues_total=7 branch=1 severity=high
 //   ALERT CLEAR rule=L3-20 cell=1 t=… duration_ms=… ues_total=3
-// candidates는 비어 있어도 'candidates='를 찍는다 (15_ §2.6 L3-20 예)
+// candidates는 비어 있어도 'candidates='를 찍는다 (15_ §2.6 L3-20 예).
+// 3단계 conditions는 명세 예의 자리에 공통 골격이 찍는다 — RAISE는 mode= 뒤·candidates= 앞, UPDATE는 severity= 뒤
+// (20_ §3.6·§4.6). 룰의 log_fields는 RAISE에서 severity= 앞에 붙어 이 자리를 낼 수 없다
 std::string format_log_line(const AlertEvent& e) {
   const bool ue = e.unit == "ue";
   switch (e.kind) {
     case AlertEventKind::Raise: {
       std::string s = head("RAISE", e) + fields_str(e);
-      s += std::string(" severity=") + severity_str(e.severity) + " mode=" + mode_str(e.mode) + " candidates=";
-      for (std::size_t i = 0; i < e.candidates.size(); ++i) s += (i ? "," : "") + e.candidates[i];
-      return s;
+      s += std::string(" severity=") + severity_str(e.severity) + " mode=" + mode_str(e.mode) + conditions_str(e);
+      return s + " candidates=" + join(e.candidates);
     }
     case AlertEventKind::Clear: {
       std::string s = head("CLEAR", e) + " duration_ms=" + std::to_string(e.duration_ms);
@@ -81,7 +92,7 @@ std::string format_log_line(const AlertEvent& e) {
       std::string s = head("UPDATE", e);
       if (ue) s += " ues_new=" + std::to_string(e.ues.size()) + " ues_total=" + std::to_string(e.ues_total);
       if (e.branch) s += " branch=" + *e.branch;
-      return s + " severity=" + severity_str(e.severity) + fields_str(e);
+      return s + " severity=" + severity_str(e.severity) + conditions_str(e) + fields_str(e);
     }
   }
   return {};

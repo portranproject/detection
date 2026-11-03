@@ -1012,3 +1012,20 @@ TEST(UeTable, UT28LateUntil) {
     EXPECT_TRUE(c.rule->hits[0].closed);
   }
 }
+
+// 보안 상태 이름 (14_ §5.3·§5.4 철자) — 3단계 경보 ues[].values의 rrc_sec·nas_sec (20_ §3.6·§4.6)
+TEST(UeTable, SecStateNames) {
+  EXPECT_STREQ(to_string(RrcSecState::Off), "OFF");
+  EXPECT_STREQ(to_string(RrcSecState::Unknown), "UNKNOWN");
+  EXPECT_STREQ(to_string(RrcSecState::Cmd), "CMD");
+  EXPECT_STREQ(to_string(RrcSecState::On), "ON");
+  EXPECT_STREQ(to_string(RrcSecState::Failed), "FAILED");
+  EXPECT_STREQ(to_string(NasSecState::None), "NONE");
+  EXPECT_STREQ(to_string(NasSecState::Unknown), "UNKNOWN");
+  EXPECT_STREQ(to_string(NasSecState::Auth), "AUTH");
+  EXPECT_STREQ(to_string(NasSecState::AuthOk), "AUTH_OK");
+  EXPECT_STREQ(to_string(NasSecState::AuthFail), "AUTH_FAIL");
+  EXPECT_STREQ(to_string(NasSecState::Cmd), "CMD");
+  EXPECT_STREQ(to_string(NasSecState::On), "ON");
+  EXPECT_STREQ(to_string(NasSecState::Rejected), "REJECTED");
+}
