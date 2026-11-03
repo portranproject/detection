@@ -1,0 +1,19 @@
+{
+  "scenario": "SAN01_AN-01_중간합류_RAISE",
+  "description": "첫 줄이 AuthenticationFailure(21)(mid_join) — 원인값은 줄 자체에 있어 걸림, uncertain mid_join (AN01-T8)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "AN-01",
+      "cell": 1,
+      "t_rel_ms": 1100,
+      "severity": "medium",
+      "alert_kind": "anomaly",
+      "candidates": [
+        "L3-07-OV"
+      ]
+    }
+  ]
+}

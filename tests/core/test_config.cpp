@@ -33,7 +33,8 @@ TEST(Config, RepoConfigFileParses) {
   EXPECT_EQ(r.config.socket_path, d.socket_path);
   EXPECT_EQ(r.config.max_line_bytes, d.max_line_bytes);
   // L3-01-V + 2단계 L3-20·L3-01-O·L3-21 (10/29 이슈 #33) + 3단계 L3-24·L3-14 (20_ §1.5) + 3단계로 올린 L3-06 (20_ §5.4)
-  ASSERT_EQ(r.config.rules.size(), 7u);
+  // + 4단계 AN-01 (21_ §1.2)
+  ASSERT_EQ(r.config.rules.size(), 8u);
   ASSERT_TRUE(r.config.rules.count("L3-01-V"));
   BtsVariantConfigResult b = parse_bts_variant_config(r.config.rules.at("L3-01-V"));
   ASSERT_TRUE(b.ok) << b.error;
@@ -121,6 +122,17 @@ TEST(Config, RepoConfigFileParses) {
   EXPECT_TRUE(nd.warnings.empty());
   EXPECT_EQ(nd.config.clear_quiet_ms, NasDesyncConfig{}.clear_quiet_ms);
   EXPECT_EQ(NasDesyncConfig{}.clear_quiet_ms, 60000);
+  // 4단계 AN-01 (21_ §1.2·§3.4)
+  auto sf = parse_sync_failure_config(r.config.rules.at("AN-01"));
+  ASSERT_TRUE(sf.ok) << sf.error;
+  EXPECT_TRUE(sf.warnings.empty());
+  const SyncFailureConfig sfd;
+  EXPECT_EQ(sf.config.window_ms, sfd.window_ms);
+  EXPECT_EQ(sf.config.n_sync, sfd.n_sync);
+  EXPECT_EQ(sf.config.clear_quiet_ms, sfd.clear_quiet_ms);
+  EXPECT_EQ(sfd.window_ms, 60000);
+  EXPECT_EQ(sfd.n_sync, 1);
+  EXPECT_EQ(sfd.clear_quiet_ms, 60000);
 }
 
 // 빠진 키는 기본값, 일부만 덮어쓰기
@@ -265,6 +277,8 @@ TEST(Config, Stage2RangeBoundaries) {
       {"L3-24", "clear_quiet_ms", 1000, 3600000},  // 3단계 (20_ §1.5, L24-T25)
       {"L3-14", "clear_quiet_ms", 1000, 3600000},  // 3단계 (20_ §1.5, L14-T20)
       {"L3-06", "clear_quiet_ms", 1000, 3600000},  // 3단계로 올린 L3-06 (20_ §5.4, L06-T20)
+      {"AN-01", "window_ms", 1000, 600000},        // 4단계 (21_ §1.2, AN01-T11)
+      {"AN-01", "n_sync", 1, 10000},               {"AN-01", "clear_quiet_ms", 1000, 3600000},
   };
   auto accepts = [](const Range& r, int64_t v, std::string* error = nullptr) {
     const std::string obj = "{\"" + r.key + "\":" + std::to_string(v) + "}";
@@ -296,6 +310,10 @@ TEST(Config, Stage2RangeBoundaries) {
       err = c.error;
     } else if (r.section == "L3-06") {
       auto c = parse_nas_desync_config(obj);
+      ok = c.ok;
+      err = c.error;
+    } else if (r.section == "AN-01") {
+      auto c = parse_sync_failure_config(obj);
       ok = c.ok;
       err = c.error;
     } else {
@@ -413,4 +431,19 @@ TEST(Config, Stage3NasDesync) {
   ASSERT_TRUE(r.ok);
   EXPECT_EQ(r.warnings, (std::vector<std::string>{"unknown key rules.L3-06.wait_ms (ignored)"}));
   EXPECT_EQ(r.config.clear_quiet_ms, 60000);
+}
+
+// AN01-T11 (21_ §3.8·§1.2): rules.AN-01 — window_ms 999·n_sync 0·clear_quiet_ms 문자열은 오류(실행 파일은 종료 코드 1),
+// 모르는 키는 경고만
+TEST(Config, Stage4SyncFailure) {
+  EXPECT_FALSE(parse_sync_failure_config(R"({"window_ms":999})").ok);
+  EXPECT_FALSE(parse_sync_failure_config(R"({"n_sync":0})").ok);
+  EXPECT_FALSE(parse_sync_failure_config(R"({"clear_quiet_ms":"60000"})").ok);
+  EXPECT_FALSE(parse_sync_failure_config(R"({"n_sync":1.5})").ok);
+  auto ok = parse_sync_failure_config(R"({"window_ms":1000,"n_sync":10000,"clear_quiet_ms":3600000})");
+  ASSERT_TRUE(ok.ok) << ok.error;
+  EXPECT_EQ(ok.config.n_sync, 10000);
+  auto r = parse_sync_failure_config(R"({"n_reauth":1})");
+  ASSERT_TRUE(r.ok);
+  EXPECT_EQ(r.warnings, (std::vector<std::string>{"unknown key rules.AN-01.n_reauth (ignored)"}));
 }

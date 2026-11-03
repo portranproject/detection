@@ -17,6 +17,7 @@
 #include "detect/rules/cap_hijack.h"
 #include "detect/rules/imsi_extractor.h"
 #include "detect/rules/nas_desync.h"
+#include "detect/rules/sync_failure.h"
 #include "detect/rules/uplink_dos.h"
 
 #include <atomic>
@@ -161,17 +162,20 @@ int main(int argc, char** argv) {
   ImsiExtractorConfig imsi_extractor;
   CapHijackConfig cap_hijack;
   NasDesyncConfig nas_desync;
+  SyncFailureConfig sync_failure;
   if (!read_rule(cfg, BtsVariantRule::kId, parse_bts_variant_config, bts) ||
       !read_rule(cfg, BlindDosRule::kId, parse_blind_dos_config, blind_dos) ||
       !read_rule(cfg, AuthStallRule::kId, parse_auth_stall_config, auth_stall) ||
       !read_rule(cfg, UplinkDosRule::kId, parse_uplink_dos_config, uplink_dos) ||
       !read_rule(cfg, ImsiExtractorRule::kId, parse_imsi_extractor_config, imsi_extractor) ||
       !read_rule(cfg, CapHijackRule::kId, parse_cap_hijack_config, cap_hijack) ||
-      !read_rule(cfg, NasDesyncRule::kId, parse_nas_desync_config, nas_desync))
+      !read_rule(cfg, NasDesyncRule::kId, parse_nas_desync_config, nas_desync) ||
+      !read_rule(cfg, SyncFailureRule::kId, parse_sync_failure_config, sync_failure))
     return 1;
   for (const auto& [id, _] : cfg.rules)
     if (id != BtsVariantRule::kId && id != BlindDosRule::kId && id != AuthStallRule::kId && id != UplinkDosRule::kId &&
-        id != ImsiExtractorRule::kId && id != CapHijackRule::kId && id != NasDesyncRule::kId)
+        id != ImsiExtractorRule::kId && id != CapHijackRule::kId && id != NasDesyncRule::kId &&
+        id != SyncFailureRule::kId)
       log_err("WARN", "unknown rule id rules." + id + " (ignored)");
 
   // 엔진·룰·증거 (4_ §3). 버퍼 크기는 W와 pre_slots에서 정한다 (3_ §3·§7.1)
@@ -193,6 +197,8 @@ int main(int argc, char** argv) {
   // 3단계로 올린 L3-06 (20_ §5). 등록은 구현 순서대로 뒤에 붙인다 — 같은 kpm2에서 여러 룰이 낼 때 기존 출력 순서가 그대로이게
   // (1_ §6 11/03 M9 착수 결정 ③)
   engine.add_ue_rule(std::make_unique<NasDesyncRule>(nas_desync, cfg.alert));
+  // 4단계 룰 (21_). 이상 유형 + 후보(kind anomaly, stage 4). L3-06 다음 — 등록 순서는 위와 같은 원칙
+  engine.add_ue_rule(std::make_unique<SyncFailureRule>(sync_failure, cfg.alert));
 
   EvidenceQueue queue(cfg.evidence.queue_max);
   EvidenceRecorder recorder(cfg.evidence, queue, cfg.alert);

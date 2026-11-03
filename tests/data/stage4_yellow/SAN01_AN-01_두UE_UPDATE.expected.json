@@ -1,0 +1,27 @@
+{
+  "scenario": "SAN01_AN-01_두UE_UPDATE",
+  "description": "UE A는 S(t0), UE B는 S(t0+500) — RAISE + 1 s 모음 UPDATE(경보 값 누적 수, UE 칸은 B만) (21_ §3.5)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "AN-01",
+      "cell": 1,
+      "t_rel_ms": 1200,
+      "severity": "medium",
+      "alert_kind": "anomaly",
+      "candidates": [
+        "L3-07-OV"
+      ]
+    },
+    {
+      "kind": "UPDATE",
+      "rule": "AN-01",
+      "cell": 1,
+      "t_rel_ms": 2200,
+      "severity": "medium",
+      "alert_kind": "anomaly"
+    }
+  ]
+}

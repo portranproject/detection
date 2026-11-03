@@ -1,0 +1,26 @@
+{
+  "scenario": "SAN01_AN-01_해제_CLEAR",
+  "description": "S 뒤 마지막 걸림(t0+118) + 60 s 이상인 첫 kpm2에 CLEAR (AN01-T10)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "AN-01",
+      "cell": 1,
+      "t_rel_ms": 1200,
+      "severity": "medium",
+      "alert_kind": "anomaly",
+      "candidates": [
+        "L3-07-OV"
+      ]
+    },
+    {
+      "kind": "CLEAR",
+      "rule": "AN-01",
+      "cell": 1,
+      "t_rel_ms": 61200,
+      "alert_kind": "anomaly"
+    }
+  ]
+}

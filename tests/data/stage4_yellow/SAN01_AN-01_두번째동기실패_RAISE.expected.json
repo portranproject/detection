@@ -1,0 +1,19 @@
+{
+  "scenario": "SAN01_AN-01_두번째동기실패_RAISE",
+  "description": "t0+160 재인증 요청 뒤 t0+173에 다시 동기 실패, t0+180 AuthenticationReject — RAISE 1번(연결당 한 번), 경보 값 extra 1·reauth 1 (AN01-T3)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "AN-01",
+      "cell": 1,
+      "t_rel_ms": 1200,
+      "severity": "medium",
+      "alert_kind": "anomaly",
+      "candidates": [
+        "L3-07-OV"
+      ]
+    }
+  ]
+}

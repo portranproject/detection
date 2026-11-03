@@ -1,0 +1,19 @@
+{
+  "scenario": "SAN01_AN-01_로스창_RAISE",
+  "description": "S + 실패 줄이 든 창 [t0+100, t0+200) ue_evt_lost [\"UL\",\"DL\"] — 보류 없이 같은 RAISE, uncertain loss (AN01-T9)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "AN-01",
+      "cell": 1,
+      "t_rel_ms": 1200,
+      "severity": "medium",
+      "alert_kind": "anomaly",
+      "candidates": [
+        "L3-07-OV"
+      ]
+    }
+  ]
+}

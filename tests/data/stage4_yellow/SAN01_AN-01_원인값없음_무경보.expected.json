@@ -1,0 +1,7 @@
+{
+  "scenario": "SAN01_AN-01_원인값없음_무경보",
+  "description": "S에서 f 없는 AuthenticationFailure — 원인을 몰라 걸림 없음 (AN01-T5)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

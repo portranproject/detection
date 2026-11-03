@@ -29,6 +29,8 @@ add_executable(detect_tests
   core/test_imsi_extractor.cpp
   core/test_cap_hijack.cpp
   core/test_nas_desync.cpp
+  core/test_ue_hits.cpp
+  core/test_sync_failure.cpp
   io/test_uds_server.cpp
   io/test_file_replay.cpp
 )
@@ -44,7 +46,7 @@ gtest_discover_tests(detect_tests)
 # 데이터 시나리오 묶음 (4_ §4.2, 이슈 #38): 시나리오 시험은 tests/data/의 파일로 시험을 만드는데, 위 목록은 시험
 # 바이너리를 다시 링크할 때만 다시 모인다. 바이너리가 실행할 때 폴더를 읽어 모든 데이터를 도는 항목을 하나 더 둔다 —
 # 데이터만 넣거나 바꿔도 다음 ctest에서 돈다
-add_test(NAME data.scenarios COMMAND detect_tests --gtest_filter=Data/*:Stage2Data.*:Stage3Data.*)
+add_test(NAME data.scenarios COMMAND detect_tests --gtest_filter=Data/*:Stage2Data.*:Stage3Data.*:Stage4Data.*)
 
 # 실행 파일 통합 테스트 — detector + mock_producer.py, T20 (4_ §4-2·§4-4)
 find_package(Python3 COMPONENTS Interpreter REQUIRED)

@@ -60,6 +60,8 @@
 "\"SecurityModeCommand\""
 "\"SecurityModeComplete\""
 "\"SecurityModeReject\""
+"\"AuthenticationFailure\""
+"\"cause\":21"
 "\"F1Reset\""
 "\"f\""
 "\"s_tmsi\":\"0x"

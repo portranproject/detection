@@ -1,0 +1,7 @@
+{
+  "scenario": "SAN01_AN-01_MAC실패_무경보",
+  "description": "S에서 원인값 20(MAC 실패) — 걸림 없음, L3-21 몫 (AN01-T4)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}
