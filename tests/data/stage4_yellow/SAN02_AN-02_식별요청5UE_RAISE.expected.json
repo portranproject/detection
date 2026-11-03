@@ -1,0 +1,20 @@
+{
+  "scenario": "SAN02_AN-02_식별요청5UE_RAISE",
+  "description": "5 UE가 10 s 간격으로 SUCI 등록 뒤 IdentityRequest — 5번째에서 창 안 5, RAISE branch 2 (AN02-T4)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "AN-02",
+      "cell": 1,
+      "t_rel_ms": 41100,
+      "severity": "medium",
+      "branch": "2",
+      "alert_kind": "anomaly",
+      "candidates": [
+        "L3-25-OV"
+      ]
+    }
+  ]
+}

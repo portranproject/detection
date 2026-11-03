@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """합성 ue_evt+kpm2 4단계 시나리오(.jsonl)와 기대 경보(.expected.json) 생성기.
 
-명세: 4단계 룰 21_탐지엔진_4단계-노란색룰_명세서.md(AN-01 §3.8·AN-06a §4.8 — 뒤 룰은 구현 이슈마다 더함), 입력 2_ §6, 상태·경보 14_.
+명세: 4단계 룰 21_탐지엔진_4단계-노란색룰_명세서.md(AN-01 §3.8·AN-06a §4.8·AN-02 §5.8 — 뒤 룰은 구현 이슈마다 더함), 입력 2_ §6,
+상태·경보 14_.
 실행: python3 tools/gen_stage4.py [출력 폴더]  (기본 tests/data/stage4_yellow/).
 tests/core/test_scenarios.cpp가 이 폴더를 실행 파일과 같은 룰 구성(1~4단계, 기본값)으로 재생해 같은 이름 .expected.json과
 비교한다(Stage4Scenario, 시각 정확 비교). 3단계 생성기 gen_stage3.py의 UE3·Scenario3·기본 흐름 F·K(t)를 그대로 쓰고
-4단계 흐름(AN-01 동기 실패 흐름 S·AN-06a 재등장 흐름 R)과 기대 경보의 candidates(4단계는 후보가 경보의 뜻이다, 21_ §1)만
-더한다.
+4단계 흐름(AN-01 동기 실패 흐름 S·AN-06a 재등장 흐름 R·AN-02 등록 흐름 G)과 기대 경보의 candidates(4단계는 후보가 경보의
+뜻이다, 21_ §1)만 더한다.
 
 기대 경보 시각은 명세 식으로 손 계산한 값이다(3단계와 같은 방식):
  - 연결 시작 t0 = 1000(창 시작). K(t) = t를 품은 창의 t_end — 걸림이 든 창의 kpm2에서 RAISE(21_ §1.1)
@@ -26,6 +27,13 @@ from gen_stage2 import T0  # noqa: E402
 from gen_stage3 import B, K  # noqa: E402
 
 SYNCH_FAILURE = 21  # 5GMM 원인값 #21 synch failure (21_ §3.1)
+S_ALLOC = "0x0123456789ab"    # 이 망이 RegistrationAccept로 준 S-TMSI (AN-02 등록 흐름 G)
+S_UNKNOWN = "0x00fedcba9876"  # 모르는 S-TMSI
+
+
+def part1_of(s):
+    """48비트 S-TMSI의 하위 39비트 Part1 (14_ §3.1)."""
+    return "0x%010x" % (int(s, 16) & ((1 << 39) - 1))
 
 
 class UE4(gen_stage3.UE3):
@@ -47,6 +55,20 @@ class UE4(gen_stage3.UE3):
         if smc_only:
             return self.nas_smc(t0 + 1250).nas_smcomplete(t0 + 1256)
         return self.auth_req(t0 + 1250).auth_resp(t0 + 1263).nas_smc(t0 + 1270).nas_smcomplete(t0 + 1276)
+
+    # 등록 흐름 G의 연결 A (21_ §5.8): SUCI로 F대로 등록하되 RegistrationAccept가 S-TMSI s를 준다(할당 기억) → t0+1,000 해제
+    def flow_alloc(self, t0, s=S_ALLOC):
+        self.flow_F(t0, skip=("RegistrationAccept",))
+        self.reg_accept(t0 + 190, s_tmsi=s)
+        return self.release(t0 + 1000)
+
+    # 등록 흐름 G의 연결 B 앞부분: RRC에는 rrc_s(RRCSetupRequest Part1 + RRCSetupComplete 48비트, rrc_full이 False면 Part1만),
+    # 등록 요청은 5G-GUTI nas_s. 중간자가 NAS GUTI만 바꾸면 rrc_s ≠ nas_s (#25, 21_ §5.1·§5.3-1)
+    def guti_head(self, t0, rrc_s=S_ALLOC, nas_s=S_ALLOC, rrc_full=True):
+        self.setup_req(t0, random=False, part1=part1_of(rrc_s))
+        self.setup(t0)
+        self.setup_complete(t0 + 91, s_tmsi=rrc_s if rrc_full else None)
+        return self.reg_req(t0 + 91, id_type="5G-GUTI", s_tmsi=nas_s)
 
 
 class Scenario4(gen_stage3.Scenario3):
@@ -233,11 +255,95 @@ def san06a_clear():
     return sc
 
 
+# ============ AN-02 식별 요청 증가 (21_ §5.8 AN02-T1~T8 + 11/04 결정 AN02-T9 — T6 보안 뒤·T7 할당 만료·mid_join·설정·결정성은 단위 시험) ============
+
+RAN02 = "AN-02"
+CAND02 = ["L3-25-OV"]
+
+
+def an02(sc, kind, t_rel, branch):
+    return sc.alert(kind, t_rel, RAN02, severity="medium" if kind in ("RAISE", "UPDATE") else None, branch=branch,
+                    alert_kind="anomaly", candidates=CAND02 if kind == "RAISE" else None)
+
+
+def san02_suci():
+    sc = Scenario4("SAN02_AN-02_SUCI등록_무경보", "기본 흐름 F(SUCI 첫 등록) + 해제 — 식별 요청 없음 (AN02-T1)", 3000)
+    sc.ue(3).flow_F(B).release(B + 1000)
+    return sc
+
+
+def san02_guti_no_idreq():
+    sc = Scenario4("SAN02_AN-02_준GUTI식별없음_무경보",
+                   "G — A가 RegistrationAccept로 S를 받고 해제, B가 5G-GUTI S로 등록해 식별 요청 없이 진행 (AN02-T1)", 8000)
+    sc.ue(1).flow_alloc(B)
+    sc.ue(2).guti_head(5000).flow_F(5000, rest_from=105)
+    return sc
+
+
+def san02_known_guti():
+    sc = Scenario4("SAN02_AN-02_준GUTI식별요청_RAISE",
+                   "G에서 B의 등록 요청(t+91) 뒤 t+96 IdentityRequest — 갈래 ① 걸림, K에 RAISE branch 1 (AN02-T2)", 8000)
+    sc.ue(1).flow_alloc(B)
+    u = sc.ue(2).guti_head(5000)
+    u.id_req(5096).id_resp(5099).flow_F(5000, rest_from=105)
+    an02(sc, "RAISE", K(5096), "1")
+    return sc
+
+
+def san02_attack_shape():
+    sc = Scenario4("SAN02_AN-02_공격모양RRC원래값_RAISE",
+                   "중간자가 NAS 등록 요청의 GUTI만 모르는 값으로 바꿈 — RRC S-TMSI는 원래 값(할당됨)이라 갈래 ① RAISE "
+                   "(11/04 결정, AN02-T9)", 8000)
+    sc.ue(1).flow_alloc(B)
+    sc.ue(2).guti_head(5000, nas_s=S_UNKNOWN).id_req(5096).id_resp(5099)
+    an02(sc, "RAISE", K(5096), "1")
+    return sc
+
+
+def san02_unknown_guti():
+    sc = Scenario4("SAN02_AN-02_모르는GUTI_무경보",
+                   "B가 모르는 GUTI(RRC·NAS 모두 S′)로 등록 → IdentityRequest — 갈래 ① 없음, 갈래 ② 수 1 (AN02-T3)", 8000)
+    sc.ue(1).flow_alloc(B)
+    sc.ue(2).guti_head(5000, rrc_s=S_UNKNOWN, nas_s=S_UNKNOWN).id_req(5096).id_resp(5099)
+    return sc
+
+
+def san02_five():
+    sc = Scenario4("SAN02_AN-02_식별요청5UE_RAISE",
+                   "5 UE가 10 s 간격으로 SUCI 등록 뒤 IdentityRequest — 5번째에서 창 안 5, RAISE branch 2 (AN02-T4)", 45000)
+    for i in range(5):
+        sc.ue(10 + i).flow_F(B + 10000 * i, identity=True)
+    an02(sc, "RAISE", K(B + 40000 + 95), "2")
+    return sc
+
+
+def san02_four():
+    sc = Scenario4("SAN02_AN-02_식별요청4UE_무경보", "T4에서 4 UE만 — 창 안 4 (AN02-T5)", 45000)
+    for i in range(4):
+        sc.ue(10 + i).flow_F(B + 10000 * i, identity=True)
+    return sc
+
+
+def san02_clear():
+    sc = Scenario4("SAN02_AN-02_해제_CLEAR",
+                   "T2 RAISE 뒤 30 s에 SUCI 식별 요청 UE 하나(성립 아님) — UPDATE로 실리지만 해제는 마지막 성립(t+96) + 60 s "
+                   "(21_ §5.5, AN02-T8)", 66000)
+    sc.ue(1).flow_alloc(B)
+    sc.ue(2).guti_head(5000).id_req(5096).id_resp(5099)
+    sc.ue(3).flow_F(35000, identity=True)
+    an02(sc, "RAISE", K(5096), "1")
+    an02(sc, "UPDATE", K(35095), "1")
+    an02(sc, "CLEAR", K(5096 + 60000 - 1), "1")
+    return sc
+
+
 SCENARIOS = [
     san01_normal, san01_raise, san01_second_failure, san01_mac_failure, san01_no_cause, san01_mid_join, san01_loss,
     san01_clear, san01_two_ues,
     san06a_normal, san06a_reauth, san06a_smc_only, san06a_retx_smc, san06a_retx_auth, san06a_second, san06a_mid_join,
     san06a_complete_lost, san06a_clear,
+    san02_suci, san02_guti_no_idreq, san02_known_guti, san02_attack_shape, san02_unknown_guti, san02_five, san02_four,
+    san02_clear,
 ]
 
 

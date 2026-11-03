@@ -22,11 +22,11 @@ void refresh(AlertUe& u, const UeState& s) {
 HitWindow::HitWindow(std::string rule, AlertConfig alert, int64_t window_ms, int64_t n, int64_t clear_quiet_ms)
     : window_ms_(window_ms), n_(n), clear_quiet_ms_(clear_quiet_ms), book_(std::move(rule), alert, "anomaly", 4) {}
 
-bool HitWindow::hit(const UeId& id, AlertUe u) {
+bool HitWindow::hit(const UeId& id, AlertUe u, bool force) {
   if (conns_.count(id)) return false;
   const int64_t cell = id.first.cell_id;
   conns_[id] = Conn{cell, false};
-  cells_[cell].fresh.push_back(Hit{id, std::move(u), {}});
+  cells_[cell].fresh.push_back(Hit{id, std::move(u), {}, force});
   return true;
 }
 
@@ -62,9 +62,10 @@ void HitWindow::include(Cell& c, const Hit& h) {
   c.t_hit_last = std::max(c.t_hit_last, h.u.t_hit);
 }
 
-// 셀 kpm2 (21_ §1.1·§3.3-3·§3.5): 이번 걸림마다 창 (t_hit − W, t_hit]을 맞추고 걸린 연결 수 ≥ N이면 성립 — 경보가 없으면 창 안
-// 걸림 전부로 RAISE(누적 수는 처음부터), 경보 중이면 새 걸림을 UPDATE로 모은다(alert.update_min_ms). 심각도는 4단계 기본 medium
-// (21_ §1). 해제는 경보에 실린 마지막 걸림 뒤 clear_quiet_ms, 직전 clear_quiet_ms 동안 밀어내기가 있으면 풀지 않는다(Q-56)
+// 셀 kpm2 (21_ §1.1·§3.3-3·§3.5·§5.3): 이번 걸림마다 창 (t_hit − W, t_hit]을 맞추고 걸린 연결 수 ≥ N이거나 force 걸림이면
+// 성립 — 경보가 없으면 창 안 걸림 전부로 RAISE(누적 수는 처음부터), 경보 중이면 새 걸림을 UPDATE로 모은다(alert.update_min_ms).
+// 심각도는 4단계 기본 medium(21_ §1). 해제는 경보에 실린 마지막 걸림(clear_on_satisfied면 마지막 성립) 뒤 clear_quiet_ms,
+// 직전 clear_quiet_ms 동안 밀어내기가 있으면 풀지 않는다(Q-56)
 void HitWindow::tick(int64_t cell, int64_t t, bool input_lost, const UeRuleCtx& ctx, std::vector<AlertEvent>& out,
                      const Decorate& fn) {
   Cell& c = cells_[cell];
@@ -77,11 +78,13 @@ void HitWindow::tick(int64_t cell, int64_t t, bool input_lost, const UeRuleCtx& 
     if (const UeState* s = ctx.table.find(h.id.first); s && s->uid == h.id.second) refresh(h.u, *s);
     c.win.push_back(h);
     while (c.win.front().u.t_hit <= h.u.t_hit - window_ms_) c.win.pop_front();
+    const bool sat = h.force || static_cast<int64_t>(c.win.size()) >= n_;
+    if (sat) c.t_sat = std::max(c.t_sat, h.u.t_hit);
     from = out.size();
     if (book_.open(cell)) {
       include(c, h);
       book_.add(cell, std::vector<AlertUe>{h.u}, Severity::Medium, t, ctx.session, ctx.seq, out);
-    } else if (static_cast<int64_t>(c.win.size()) >= n_) {
+    } else if (sat) {
       c.counts.clear();  // 새 경보 — 누적 수를 처음부터 센다
       c.evicted_open = 0;
       std::vector<AlertUe> ues;
@@ -97,7 +100,8 @@ void HitWindow::tick(int64_t cell, int64_t t, bool input_lost, const UeRuleCtx& 
 
   from = out.size();
   book_.flush(cell, t, out);
-  if (book_.open(cell) && t - c.t_hit_last >= clear_quiet_ms_ && evicted_window(c, t) == 0) book_.clear(cell, t, out);
+  const int64_t base = clear_on_satisfied_ ? c.t_sat : c.t_hit_last;
+  if (book_.open(cell) && t - base >= clear_quiet_ms_ && evicted_window(c, t) == 0) book_.clear(cell, t, out);
   fn(from);
 }
 
@@ -109,6 +113,14 @@ void HitWindow::reset() {
 int64_t HitWindow::window(int64_t cell) const {
   auto it = cells_.find(cell);
   return it == cells_.end() ? 0 : static_cast<int64_t>(it->second.win.size());
+}
+
+int64_t HitWindow::window_with(int64_t cell, const std::string& cond) const {
+  auto it = cells_.find(cell);
+  if (it == cells_.end()) return 0;
+  return static_cast<int64_t>(std::count_if(it->second.win.begin(), it->second.win.end(), [&](const Hit& h) {
+    return std::find(h.u.cond.begin(), h.u.cond.end(), cond) != h.u.cond.end();
+  }));
 }
 
 int64_t HitWindow::count(int64_t cell, const std::string& name) const {

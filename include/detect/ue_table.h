@@ -89,6 +89,10 @@ struct UeState {
   // 망이 줌(RegistrationAccept)
   bool s_tmsi_from_ue = false;
   bool s_tmsi_from_net = false;
+  // 층별 S-TMSI (21_ §5.3-1, 11/04 AN-02 사용자 결정): s_tmsi는 마지막 값이라 RRC·NAS를 가르지 않는다. 중간자가 NAS 등록 요청의
+  // GUTI만 바꾸면(#25) RRC 쪽은 원래 값이 남으므로 둘을 따로 둔다
+  std::optional<uint64_t> rrc_s_tmsi;  // RRCSetupComplete의 48비트(또는 Part1 + Part2)
+  std::optional<uint64_t> reg_s_tmsi;  // 마지막 RegistrationRequest의 f.s_tmsi (5G-GUTI의 5G-S-TMSI)
   // 4단계가 쓰는 값 (14_ §2.2, 11/03) — 닫힐 때 이력 표 레코드로 옮긴다. 판정에는 룰이 쓴다(AN-04·AN-08)
   std::optional<std::string> est_cause;      // RRCSetupRequest의 f.est_cause
   std::optional<std::string> reg_type;       // 마지막 RegistrationRequest의 f.reg_type
@@ -211,6 +215,8 @@ class UeTable {
   std::vector<const ConnRecord*> history(uint64_t s_tmsi, int64_t since) const;
   std::vector<const ConnRecord*> history_part1(uint64_t part1, int64_t since) const;
   std::optional<int64_t> allocated(uint64_t s_tmsi) const;
+  // Part1(하위 39비트)만 아는 연결용 — 하위 39비트가 같은 할당 가운데 가장 최근 시각. 식별 요청 줄에서만 불려 선형으로 찾는다
+  std::optional<int64_t> allocated_part1(uint64_t part1) const;
   std::size_t history_size() const { return records_.size(); }
   std::size_t alloc_size() const { return allocs_.size(); }
 

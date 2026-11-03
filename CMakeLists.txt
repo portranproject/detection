@@ -42,6 +42,7 @@ add_library(detect
   src/core/rules/nas_desync.cpp
   src/core/rules/sync_failure.cpp
   src/core/rules/sec_reauth.cpp
+  src/core/rules/identity_request.cpp
   src/core/evidence.cpp
   src/core/evidence_queue.cpp
   src/core/config.cpp

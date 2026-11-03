@@ -1,0 +1,7 @@
+{
+  "scenario": "SAN02_AN-02_준GUTI식별없음_무경보",
+  "description": "G — A가 RegistrationAccept로 S를 받고 해제, B가 5G-GUTI S로 등록해 식별 요청 없이 진행 (AN02-T1)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

@@ -1,0 +1,37 @@
+{
+  "scenario": "SAN02_AN-02_해제_CLEAR",
+  "description": "T2 RAISE 뒤 30 s에 SUCI 식별 요청 UE 하나(성립 아님) — UPDATE로 실리지만 해제는 마지막 성립(t+96) + 60 s (21_ §5.5, AN02-T8)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "AN-02",
+      "cell": 1,
+      "t_rel_ms": 5100,
+      "severity": "medium",
+      "branch": "1",
+      "alert_kind": "anomaly",
+      "candidates": [
+        "L3-25-OV"
+      ]
+    },
+    {
+      "kind": "UPDATE",
+      "rule": "AN-02",
+      "cell": 1,
+      "t_rel_ms": 35100,
+      "severity": "medium",
+      "branch": "1",
+      "alert_kind": "anomaly"
+    },
+    {
+      "kind": "CLEAR",
+      "rule": "AN-02",
+      "cell": 1,
+      "t_rel_ms": 65100,
+      "branch": "1",
+      "alert_kind": "anomaly"
+    }
+  ]
+}

@@ -33,8 +33,8 @@ TEST(Config, RepoConfigFileParses) {
   EXPECT_EQ(r.config.socket_path, d.socket_path);
   EXPECT_EQ(r.config.max_line_bytes, d.max_line_bytes);
   // L3-01-V + 2단계 L3-20·L3-01-O·L3-21 (10/29 이슈 #33) + 3단계 L3-24·L3-14 (20_ §1.5) + 3단계로 올린 L3-06 (20_ §5.4)
-  // + 4단계 AN-01·AN-06a (21_ §1.2)
-  ASSERT_EQ(r.config.rules.size(), 9u);
+  // + 4단계 AN-01·AN-06a·AN-02 (21_ §1.2)
+  ASSERT_EQ(r.config.rules.size(), 10u);
   ASSERT_TRUE(r.config.rules.count("L3-01-V"));
   BtsVariantConfigResult b = parse_bts_variant_config(r.config.rules.at("L3-01-V"));
   ASSERT_TRUE(b.ok) << b.error;
@@ -140,6 +140,15 @@ TEST(Config, RepoConfigFileParses) {
   EXPECT_EQ(sr.config.clear_quiet_ms, SecReauthConfig{}.clear_quiet_ms);
   EXPECT_EQ(SecReauthConfig{}.n_reauth, 1);
   EXPECT_EQ(SecReauthConfig{}.clear_quiet_ms, 60000);
+  auto ir = parse_identity_request_config(r.config.rules.at("AN-02"));  // 21_ §5.4
+  ASSERT_TRUE(ir.ok) << ir.error;
+  EXPECT_TRUE(ir.warnings.empty());
+  const IdentityRequestConfig ird;
+  EXPECT_EQ(ir.config.window_ms, ird.window_ms);
+  EXPECT_EQ(ir.config.n_idreq, ird.n_idreq);
+  EXPECT_EQ(ir.config.clear_quiet_ms, ird.clear_quiet_ms);
+  EXPECT_EQ(ird.window_ms, 60000);
+  EXPECT_EQ(ird.n_idreq, 5);
 }
 
 // 빠진 키는 기본값, 일부만 덮어쓰기
@@ -289,6 +298,8 @@ TEST(Config, Stage2RangeBoundaries) {
       {"AN-01", "window_ms", 1000, 600000},        // 4단계 (21_ §1.2, AN01-T11)
       {"AN-01", "n_sync", 1, 10000},               {"AN-01", "clear_quiet_ms", 1000, 3600000},
       {"AN-06a", "n_reauth", 1, 100},              {"AN-06a", "clear_quiet_ms", 1000, 3600000},  // AN06a-T10
+      {"AN-02", "window_ms", 1000, 600000},        {"AN-02", "n_idreq", 1, 10000},  // AN02-T8
+      {"AN-02", "clear_quiet_ms", 1000, 3600000},
   };
   auto accepts = [](const Range& r, int64_t v, std::string* error = nullptr) {
     const std::string obj = "{\"" + r.key + "\":" + std::to_string(v) + "}";
@@ -328,6 +339,10 @@ TEST(Config, Stage2RangeBoundaries) {
       err = c.error;
     } else if (r.section == "AN-06a") {
       auto c = parse_sec_reauth_config(obj);
+      ok = c.ok;
+      err = c.error;
+    } else if (r.section == "AN-02") {
+      auto c = parse_identity_request_config(obj);
       ok = c.ok;
       err = c.error;
     } else {
@@ -477,4 +492,14 @@ TEST(Config, Stage4SecReauth) {
   auto r = parse_sec_reauth_config(R"({"window_ms":1})");
   ASSERT_TRUE(r.ok);
   EXPECT_EQ(r.warnings, (std::vector<std::string>{"unknown key rules.AN-06a.window_ms (ignored)"}));
+}
+
+// AN02-T8 (21_ §5.8·§1.2): rules.AN-02 — 범위 밖·문자열은 오류(실행 파일은 종료 코드 1), 모르는 키는 경고만
+TEST(Config, Stage4IdentityRequest) {
+  EXPECT_FALSE(parse_identity_request_config(R"({"window_ms":999})").ok);
+  EXPECT_FALSE(parse_identity_request_config(R"({"n_idreq":0})").ok);
+  EXPECT_FALSE(parse_identity_request_config(R"({"clear_quiet_ms":"60000"})").ok);
+  auto r = parse_identity_request_config(R"({"n_sync":1})");
+  ASSERT_TRUE(r.ok);
+  EXPECT_EQ(r.warnings, (std::vector<std::string>{"unknown key rules.AN-02.n_sync (ignored)"}));
 }

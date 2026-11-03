@@ -200,6 +200,9 @@ void update_ids(UeState& s, const UeEvt& e) {
   } else {
     return;
   }
+  // 층별 S-TMSI (21_ §5.3-1): RRC에서 본 값과 등록 요청 GUTI를 따로 둔다
+  if (setup_complete) s.rrc_s_tmsi = s.s_tmsi;
+  if (is(e, Proto::NAS, Dir::UL, "RegistrationRequest")) s.reg_s_tmsi = s.s_tmsi;
   // 이력 표 레코드의 src (14_ §3.2): UE가 냄 / RegistrationAccept가 줌
   (from_net ? s.s_tmsi_from_net : s.s_tmsi_from_ue) = true;
 }
@@ -615,6 +618,13 @@ std::vector<const ConnRecord*> UeTable::history_part1(uint64_t part1, int64_t si
 std::optional<int64_t> UeTable::allocated(uint64_t s_tmsi) const {
   auto it = allocs_.find(s_tmsi);
   return it == allocs_.end() ? std::nullopt : std::optional<int64_t>(it->second.t);
+}
+
+std::optional<int64_t> UeTable::allocated_part1(uint64_t part1) const {
+  std::optional<int64_t> t;
+  for (const auto& [s, a] : allocs_)
+    if ((s & kPart1Mask) == part1 && (!t || a.t > *t)) t = a.t;
+  return t;
 }
 
 // 닫힌 항목 recent 보관 (14_ §2.3·§6.1 표 closed_recent): 닫힌 시각 + 보관 시간에 표 몫 마감으로 지우고,

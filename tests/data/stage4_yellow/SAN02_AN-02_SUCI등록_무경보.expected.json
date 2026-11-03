@@ -1,0 +1,7 @@
+{
+  "scenario": "SAN02_AN-02_SUCI등록_무경보",
+  "description": "기본 흐름 F(SUCI 첫 등록) + 해제 — 식별 요청 없음 (AN02-T1)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}
