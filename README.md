@@ -51,4 +51,23 @@ python3 tools/mock_producer.py --socket /run/ran-detect/kpm.sock --file tests/da
 - SIGINT·SIGTERM을 받으면 남은 증거를 다 쓰고 소켓 파일을 지운 뒤 끝낸다.
 - 종료 코드: 0 정상, 1 기동·설정 오류, 2 사용법 오류.
 
+## 대시보드 전송기
+
+증거 파일(`evidence.jsonl`)의 새 줄을 줄 그대로 대시보드 `/ingest`(HTTPS)로 보내는 별도 프로그램이다. 탐지 엔진 코드와는 파일로만 이어진다.
+
+```bash
+# 탐지 엔진과 함께 띄우기 (저장소 최상위에서). 시작 전에 evidence.out_path와 전송기 입력 경로가 같은지 확인한다
+tools/run_with_sender.sh config/sender.json -- ./build-rel/detector --socket /run/ran-detect/kpm.sock --config config/detector.json
+
+# 전송기만 — 계속 따라 읽기 / 지금 있는 줄만 보내고 끝내기 / 보내지 않고 묶음만 확인
+python3 tools/dashboard_sender.py --config config/sender.json
+python3 tools/dashboard_sender.py --config config/sender.json --once
+python3 tools/dashboard_sender.py --config config/sender.json --dry-run
+```
+
+- 설정 `config/sender.json`: 수집 주소 `url`, 대시보드 자체 서명 인증서 `ca_file`(저장소 밖에 둔다 — 받기 전에는 `null`이라 TLS 검증에 실패한다), 환경 헤더 `env`(`X-Env`). 토큰은 쓰지 않는다.
+- 보낸 위치는 `sender_state.json`에 저장한다(200·400을 받은 뒤에만). 다시 띄우면 그 자리부터 보낸다. 실험마다 깨끗이 보내려면 옛 `evidence.jsonl`을 옮겨 둔다.
+- 전송기가 오류로 끝나도 실행 스크립트는 탐지 엔진을 멈추지 않는다. 끝날 때 `--once`로 남은 줄을 한 번 더 보낸다(최대 60초).
+- 종료 코드: 0 정상, 1 설정 오류, 2 약속에 없는 응답(주소·권한·보안 그룹 확인), 3 TLS 검증 실패(`ca_file`·`url` 확인), 4 상태 파일 저장 실패, 5 같은 `state_path`를 다른 전송기가 쓰는 중.
+
 - `third_party/nlohmann/json.hpp`: nlohmann/json 3.11.3 (MIT), 저장소에 동봉

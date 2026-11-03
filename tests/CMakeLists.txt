@@ -53,6 +53,12 @@ add_test(NAME tools.ocu_log_to_kpm2
   COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/tools/test_ocu_log_to_kpm2.py
           ${PROJECT_SOURCE_DIR} $<TARGET_FILE:detector> ${CMAKE_CURRENT_BINARY_DIR}/tools)
 
+# 전송기 테스트 (19_ §9 S1~S21, 이슈 #56) — 가짜 HTTPS 수집 서버(인증서는 시험 때 openssl로 만듦), S1 입력은 detector 재생으로 만듦
+add_test(NAME tools.dashboard_sender
+  COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/tools/test_dashboard_sender.py
+          ${PROJECT_SOURCE_DIR} $<TARGET_FILE:detector> ${CMAKE_CURRENT_BINARY_DIR}/tools/dashboard_sender)
+set_tests_properties(tools.dashboard_sender PROPERTIES TIMEOUT 300)
+
 # 퍼즈 하네스 (4_ §4, 16_ W-19 — 이슈 #52): tests/fuzz/. 기본은 독립 실행 모드(시드 + 결정적 변형)로 ctest에 들어가고,
 # clang이면 -DDETECT_LIBFUZZER=ON으로 libFuzzer 캠페인을 돌릴 수 있다
 option(DETECT_LIBFUZZER "Link fuzz harnesses with libFuzzer (needs clang)" OFF)
