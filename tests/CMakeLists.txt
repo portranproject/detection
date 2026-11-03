@@ -35,6 +35,7 @@ add_executable(detect_tests
   core/test_identity_request.cpp
   core/test_short_repeat.cpp
   core/test_setup_repeat.cpp
+  core/test_known_reg_burst.cpp
   io/test_uds_server.cpp
   io/test_file_replay.cpp
 )

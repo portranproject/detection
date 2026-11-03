@@ -1,0 +1,7 @@
+{
+  "scenario": "SAN08_AN-08_주기등록_무경보",
+  "description": "M에서 reg_type periodic — 세지 않음 (AN08-T4)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

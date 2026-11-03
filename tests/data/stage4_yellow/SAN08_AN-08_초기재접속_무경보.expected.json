@@ -1,0 +1,7 @@
+{
+  "scenario": "SAN08_AN-08_초기재접속_무경보",
+  "description": "M에서 reg_type initial(재시작 뒤 일제 재접속) — 세지 않음 (AN08-T4)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

@@ -228,6 +228,16 @@ void parse_setup_repeat(const json& r, SetupRepeatConfig& c, std::vector<std::st
   read_int_in(r, "clear_quiet_ms", c.clear_quiet_ms, 1000, 3600000, w);
 }
 
+// rules."AN-08" (21_ §1.2·§8.4)
+void parse_known_reg_burst(const json& r, KnownRegBurstConfig& c, std::vector<std::string>& warnings) {
+  const std::string w = "rules.AN-08.";
+  warn_unknown(r, {"window_ms", "n_reg", "known_ms", "clear_quiet_ms"}, w, warnings);
+  read_int_in(r, "window_ms", c.window_ms, 1000, 600000, w);
+  read_int_in(r, "n_reg", c.n_reg, 1, 10000, w);
+  read_int_in(r, "known_ms", c.known_ms, 1000, 86400000, w);
+  read_int_in(r, "clear_quiet_ms", c.clear_quiet_ms, 1000, 3600000, w);
+}
+
 // ue_table (14_ §9 — 허용 범위는 10/29 이슈 #33 사용자 결정). tomb_*는 10/29까지 예약 키였으나 11/03 4단계 S-TMSI 이력 표 키가
 // 되어(확인 지점 ⑤) alloc_*와 함께 범위를 검사한다 (14_ §3.2·§9, 11/04 이슈 #74)
 void parse_ue_table(const json& e, UeTableConfig& c, std::vector<std::string>& warnings) {
@@ -390,6 +400,10 @@ RuleConfigResult<ShortRepeatConfig> parse_short_repeat_config(std::string_view j
 
 RuleConfigResult<SetupRepeatConfig> parse_setup_repeat_config(std::string_view json_text) {
   return parse_rule<SetupRepeatConfig>(json_text, "AN-07", parse_setup_repeat);
+}
+
+RuleConfigResult<KnownRegBurstConfig> parse_known_reg_burst_config(std::string_view json_text) {
+  return parse_rule<KnownRegBurstConfig>(json_text, "AN-08", parse_known_reg_burst);
 }
 
 }  // namespace detect

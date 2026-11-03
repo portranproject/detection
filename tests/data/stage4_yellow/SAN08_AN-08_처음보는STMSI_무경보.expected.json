@@ -1,0 +1,7 @@
+{
+  "scenario": "SAN08_AN-08_처음보는STMSI_무경보",
+  "description": "처음 보는 S-TMSI 5개의 이동 등록 — 최근 본 UE가 아님 (AN08-T6)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

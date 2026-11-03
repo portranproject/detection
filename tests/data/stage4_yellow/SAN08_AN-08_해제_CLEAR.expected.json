@@ -1,0 +1,27 @@
+{
+  "scenario": "SAN08_AN-08_해제_CLEAR",
+  "description": "M RAISE 뒤 마지막 성립 + 60 s 이상인 첫 kpm2에 CLEAR (AN08-T7)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "AN-08",
+      "cell": 1,
+      "t_rel_ms": 61100,
+      "severity": "medium",
+      "alert_kind": "anomaly",
+      "candidates": [
+        "L3-17-OV",
+        "L3-26-O"
+      ]
+    },
+    {
+      "kind": "CLEAR",
+      "rule": "AN-08",
+      "cell": 1,
+      "t_rel_ms": 121100,
+      "alert_kind": "anomaly"
+    }
+  ]
+}

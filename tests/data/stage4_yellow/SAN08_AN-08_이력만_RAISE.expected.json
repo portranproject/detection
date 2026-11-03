@@ -1,0 +1,20 @@
+{
+  "scenario": "SAN08_AN-08_이력만_RAISE",
+  "description": "할당 기억 없이(RegistrationAccept 없음) UE가 낸 S-TMSI의 연결 레코드만 있는 5 UE의 이동 등록 — known history로 세어 RAISE (AN08-T5)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "AN-08",
+      "cell": 1,
+      "t_rel_ms": 61100,
+      "severity": "medium",
+      "alert_kind": "anomaly",
+      "candidates": [
+        "L3-17-OV",
+        "L3-26-O"
+      ]
+    }
+  ]
+}
