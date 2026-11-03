@@ -1,0 +1,19 @@
+{
+  "scenario": "SAN06a_AN-06a_보안뒤SMC재등장_RAISE",
+  "description": "t0+1,250에 재인증 없이 NAS SecurityModeCommand만 다시 옴 — 걸림(msg SecurityModeCommand), RAISE (AN06a-T3)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "AN-06a",
+      "cell": 1,
+      "t_rel_ms": 2300,
+      "severity": "medium",
+      "alert_kind": "anomaly",
+      "candidates": [
+        "L3-06-O1"
+      ]
+    }
+  ]
+}

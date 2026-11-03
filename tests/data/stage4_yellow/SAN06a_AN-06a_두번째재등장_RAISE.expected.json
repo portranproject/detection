@@ -1,0 +1,19 @@
+{
+  "scenario": "SAN06a_AN-06a_두번째재등장_RAISE",
+  "description": "R + t0+2,250 인증 요청(두 번째 재등장) — RAISE 1번, 경보 값 extra 1 (AN06a-T5)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "AN-06a",
+      "cell": 1,
+      "t_rel_ms": 2300,
+      "severity": "medium",
+      "alert_kind": "anomaly",
+      "candidates": [
+        "L3-06-O1"
+      ]
+    }
+  ]
+}

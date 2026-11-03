@@ -1,0 +1,7 @@
+{
+  "scenario": "SAN06a_AN-06a_AMF재전송SMC_무경보",
+  "description": "F에서 t0+131 완료를 빼고 t0+6,125에 NAS SMC 재전송 — 갱신 전 CMD라 걸림 없음 (AN06a-T4)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

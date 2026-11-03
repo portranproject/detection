@@ -22,7 +22,8 @@
     "L3-24": { "clear_quiet_ms": 60000 },
     "L3-14": { "clear_quiet_ms": 60000 },
     "L3-06": { "clear_quiet_ms": 60000 },
-    "AN-01": { "window_ms": 60000, "n_sync": 1, "clear_quiet_ms": 60000 }
+    "AN-01": { "window_ms": 60000, "n_sync": 1, "clear_quiet_ms": 60000 },
+    "AN-06a": { "n_reauth": 1, "clear_quiet_ms": 60000 }
   },
   "ue_table": { "max_ues": 4096, "recent_n": 16, "stale_setup_ms": 30000, "closed_recent_max": 1024,
                 "ghost_k": 2, "ghost_margin": 16, "ghost_hold_ms": 5000, "evict_protect_ms": 5000,
