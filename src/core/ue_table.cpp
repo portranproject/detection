@@ -84,7 +84,11 @@ UeState open_state(const UeKey& key, int64_t uid, const UeEvt& e) {
     s.rrc = RrcState::Setup;
     s.rrc_sec = RrcSecState::Off;
     s.nas_sec = NasSecState::None;
-    if (e.ue_identity == UeIdentityType::Part1) s.s_tmsi_part1 = e.s_tmsi_part1;
+    s.est_cause = e.est_cause;  // 14_ §2.2 (11/03 4단계) — 이력 표 레코드로 옮긴다
+    if (e.ue_identity == UeIdentityType::Part1) {
+      s.s_tmsi_part1 = e.s_tmsi_part1;
+      s.s_tmsi_from_ue = true;
+    }
   } else {
     s.mid_join = true;
     s.rrc = RrcState::Unknown;
@@ -163,6 +167,19 @@ void transition(UeState& s, const UeEvt& e) {
   } else if (is(e, P::NAS, D::UL, "SecurityModeReject")) {
     if (s.nas_sec == NasSecState::Cmd) s.nas_sec = NasSecState::Rejected;
   }
+
+  // 4단계가 쓰는 값 (14_ §2.2, 11/03) — 상태는 바꾸지 않고 닫힐 때 S-TMSI 이력 표 레코드로 옮긴다(§3.2). 등록 종류·식별자 종류는
+  // 마지막 RegistrationRequest의 것, DU가 먼저 해제를 요청하면 그 원인(AN-04 #33 후보 구분)
+  if (is(e, P::NAS, D::UL, "RegistrationRequest")) {
+    s.reg_type = e.reg_type;
+    s.id_type = e.id_type;
+  } else if (is(e, P::F1AP, D::UL, "UEContextReleaseRequest")) {
+    s.rel_req_cause = e.f1ap_cause;
+  }
+  // 망 수락 (15_ §1.1): RegistrationAccept·ServiceAccept·RRC SecurityModeCommand — 레코드의 accepted
+  if (is(e, P::NAS, D::DL, "RegistrationAccept") || is(e, P::NAS, D::DL, "ServiceAccept") ||
+      is(e, P::RRC, D::DL, "SecurityModeCommand"))
+    s.ever_accepted = true;
 }
 
 // 식별 값 (14_ §2.1): cu_ue_id는 알게 되면 채우고, crnti는 첫 값을 쓴다. 48비트 S-TMSI는 RRCSetupComplete·
@@ -175,11 +192,16 @@ void update_ids(UeState& s, const UeEvt& e) {
   const bool carries = setup_complete || is(e, Proto::NAS, Dir::UL, "RegistrationRequest") ||
                        is(e, Proto::NAS, Dir::UL, "ServiceRequest") || is(e, Proto::NAS, Dir::DL, "RegistrationAccept");
   if (!carries) return;
+  const bool from_net = is(e, Proto::NAS, Dir::DL, "RegistrationAccept");
   if (e.s_tmsi) {
     s.s_tmsi = e.s_tmsi;
   } else if (setup_complete && e.s_tmsi_part2 && s.s_tmsi_part1) {
     s.s_tmsi = (*e.s_tmsi_part2 << 39) | *s.s_tmsi_part1;
+  } else {
+    return;
   }
+  // 이력 표 레코드의 src (14_ §3.2): UE가 냄 / RegistrationAccept가 줌
+  (from_net ? s.s_tmsi_from_net : s.s_tmsi_from_ue) = true;
 }
 
 void index_erase(std::map<uint64_t, std::set<UeKey>>& index, uint64_t v, const UeKey& key) {
@@ -208,7 +230,7 @@ UeTable::Applied UeTable::apply(const UeEvt& e, int64_t seq, DeadlineQueue& dq) 
   auto it = entries_.find(a.key);
   // 열린 키에 RRCSetupRequest — UEContextReleaseComplete를 놓쳐 F1AP ID가 재사용됐다. 옛 항목을 reused로 닫고 새로 연다 (14_ §4.1)
   if (it != entries_.end() && is(e, Proto::RRC, Dir::UL, "RRCSetupRequest")) {
-    a.closed.push_back(close(it, CloseReason::Reused, e.t_ms, &dq));
+    a.closed.push_back(close(it, CloseReason::Reused, e.t_ms, dq));
     it = entries_.end();
   }
   if (it == entries_.end()) {
@@ -222,7 +244,7 @@ UeTable::Applied UeTable::apply(const UeEvt& e, int64_t seq, DeadlineQueue& dq) 
                              "UE table full (" + std::to_string(cfg_.max_ues) + "): evicted du_ue_id=" +
                                  std::to_string(v.key.du_ue_id) + " uid=" + std::to_string(v.uid) +
                                  " (cell total " + std::to_string(n) + ")"});
-      a.closed.push_back(close(victim, CloseReason::Evicted, e.t_ms, nullptr));
+      a.closed.push_back(close(victim, CloseReason::Evicted, e.t_ms, dq));
     }
     it = entries_.emplace(a.key, Entry{open_state(a.key, next_uid_++, e), {}}).first;
     a.opened = true;
@@ -249,6 +271,8 @@ UeTable::Applied UeTable::apply(const UeEvt& e, int64_t seq, DeadlineQueue& dq) 
   }
   transition(s, e);
   update_ids(s, e);
+  // 할당 기억 (14_ §3.2): 망이 RegistrationAccept로 준 5G-S-TMSI — '이 망이 준 식별자인가'(AN-02). 항목이 열려 있어도 넣는다
+  if (e.s_tmsi && is(e, Proto::NAS, Dir::DL, "RegistrationAccept")) add_alloc(*e.s_tmsi, s, e.t_ms, dq);
   ++s.cnt[{e.proto, e.msg}];
   s.last = LastMsg{e.proto, e.dir, e.msg, e.t_ms, seq};
   s.t_last = std::max(s.t_last, e.t_ms);
@@ -285,9 +309,9 @@ std::vector<UeTable::Closed> UeTable::settle(const Applied& a, DeadlineQueue& dq
         if (o.uid < n.uid && (o.mid_join || o.loss)) ghosts.push_back(k);
       }
     }
-    for (const UeKey& k : ghosts) out.push_back(close(entries_.find(k), CloseReason::Superseded, t, &dq));
+    for (const UeKey& k : ghosts) out.push_back(close(entries_.find(k), CloseReason::Superseded, t, dq));
   }
-  if (a.released) out.push_back(close(entries_.find(a.key), CloseReason::Released, t, &dq));
+  if (a.released) out.push_back(close(entries_.find(a.key), CloseReason::Released, t, dq));
   return out;
 }
 
@@ -296,6 +320,25 @@ std::vector<UeTable::Closed> UeTable::settle(const Applied& a, DeadlineQueue& dq
 //  - stale_setup: CONNECTED 전인 항목이 stale_setup_ms 동안 새 줄이 없으면 닫는다(14_ §4.2). t_last가 바뀌었으면
 //    새 마감으로 다시 넣고, CONNECTED가 됐거나 닫힌 항목(uid가 다름)이면 버린다
 std::optional<UeTable::Closed> UeTable::on_deadline(const Deadline& d, DeadlineQueue& dq) {
+  // tomb: 연결 레코드 보관이 끝났다 — 그 레코드가 아직 있고 같은 것(닫힌 시각)이면 지운다 (14_ §3.2·§6.1 표)
+  if (d.tag == kTombTag) {
+    auto r = record_of_.find({d.key, d.uid});
+    if (r != record_of_.end() && records_.at(r->second).t_end == d.t_from) erase_record(r->second);
+    return std::nullopt;
+  }
+  // alloc: 할당 기억 보관이 끝났다 — 그 S-TMSI의 마지막 할당이 이 마감의 할당과 같으면 지운다(다시 할당됐으면 그 마감이 지운다)
+  if (d.tag == kAllocTag) {
+    auto due = alloc_due_.find({d.key, d.uid, d.t_from});
+    if (due == alloc_due_.end()) return std::nullopt;
+    const uint64_t s_tmsi = due->second;
+    alloc_due_.erase(due);
+    auto a = allocs_.find(s_tmsi);
+    if (a != allocs_.end() && a->second.t == d.t_from) {
+      alloc_order_.erase(a->second.order);
+      allocs_.erase(a);
+    }
+    return std::nullopt;
+  }
   if (d.tag == kKeptTag) {
     auto k = kept_.find({d.key, d.uid});
     if (k != kept_.end() && k->second.closed_at == d.t_from) {
@@ -312,7 +355,7 @@ std::optional<UeTable::Closed> UeTable::on_deadline(const Deadline& d, DeadlineQ
     dq.add(stale_deadline(s));
     return std::nullopt;
   }
-  return close(it, CloseReason::StaleSetup, d.at, &dq);
+  return close(it, CloseReason::StaleSetup, d.at, dq);
 }
 
 // 로스 창이 난 셀의 열린 항목에 loss와 마지막 로스 시각 (14_ §4.3, §7 kpm2 ②)
@@ -330,7 +373,7 @@ void UeTable::mark_loss(int64_t cell, int64_t t_loss) {
 // 유령 정리 (14_ §4.2 ghost_purge, 10/29 Q-56 해결 — 이슈 #44). 헤더 주석 참고. INACTIVE 항목은 RRC 연결 수에 들지 않으므로
 // C에 세지 않는다. 여유 ghost_margin은 ConnMax가 창당 표본 1개라(2_ §4.3, Q-04) 표본 뒤 붙은 UE와 해제 대기(RELEASING)
 // 몇 개를 덮기 위한 것이다. 조건이 깨지면 초과 시작 시각을 지워 다시 잰다
-UeTable::Purged UeTable::purge_ghosts(const Kpm2& k, int64_t seq, const DeadlineQueue& dq) {
+UeTable::Purged UeTable::purge_ghosts(const Kpm2& k, int64_t seq, DeadlineQueue& dq) {
   Purged out;
   const int64_t cell = k.cell_id;
   const std::optional<int64_t> m = k.conn_max ? k.conn_max : k.ue_ctx_max;
@@ -362,7 +405,7 @@ UeTable::Purged UeTable::purge_ghosts(const Kpm2& k, int64_t seq, const Deadline
     return std::make_pair(a->second.st.t_last, a->second.st.uid) < std::make_pair(b->second.st.t_last, b->second.st.uid);
   });
   const std::size_t n = std::min(candidates.size(), static_cast<std::size_t>(c - threshold));
-  for (std::size_t i = 0; i < n; ++i) out.closed.push_back(close(candidates[i], CloseReason::GhostPurge, k.t_end_ms, nullptr));
+  for (std::size_t i = 0; i < n; ++i) out.closed.push_back(close(candidates[i], CloseReason::GhostPurge, k.t_end_ms, dq));
   if (n > 0) {
     counts_[cell].ghost_purged += static_cast<int64_t>(n);
     out.diags.push_back(Diag{DiagKind::GhostPurge, cell, seq,
@@ -375,7 +418,7 @@ UeTable::Purged UeTable::purge_ghosts(const Kpm2& k, int64_t seq, const Deadline
 
 // f1_evt (14_ §4.2 du_reset, 2_ §6.7): cells(null = 모든 셀)의 열린 항목, du_ue_ids가 있으면 그 UE만 닫는다.
 // 이때 UE별 해제 줄은 오지 않는다
-std::vector<UeTable::Closed> UeTable::close_du(const F1Evt& f) {
+std::vector<UeTable::Closed> UeTable::close_du(const F1Evt& f, DeadlineQueue& dq) {
   auto listed = [](const std::optional<std::vector<int64_t>>& v, int64_t x) {
     return !v || std::find(v->begin(), v->end(), x) != v->end();
   };
@@ -383,7 +426,7 @@ std::vector<UeTable::Closed> UeTable::close_du(const F1Evt& f) {
   for (auto it = entries_.begin(); it != entries_.end();) {
     Iter cur = it++;
     if (listed(f.cells, cur->first.cell_id) && listed(f.du_ue_ids, cur->first.du_ue_id))
-      out.push_back(close(cur, CloseReason::DuReset, f.t_ms, nullptr));
+      out.push_back(close(cur, CloseReason::DuReset, f.t_ms, dq));
   }
   return out;
 }
@@ -399,6 +442,16 @@ void UeTable::clear() {
   kept_.clear();
   kept_order_.clear();
   next_kept_ = 0;
+  // S-TMSI 이력 표도 비운다 (14_ §3.2 — 새 hello·session_reset. du_reset은 비우지 않는다)
+  records_.clear();
+  record_of_.clear();
+  hist_s_tmsi_.clear();
+  hist_part1_.clear();
+  next_record_ = 0;
+  allocs_.clear();
+  alloc_order_.clear();
+  alloc_due_.clear();
+  next_alloc_ = 0;
 }
 
 const UeState* UeTable::find(const UeKey& key) const {
@@ -426,19 +479,142 @@ UeTable::CellCounts UeTable::counts(int64_t cell) const {
   return it == counts_.end() ? CellCounts{} : it->second;
 }
 
-// 닫기 (14_ §4.2): 색인에서 빼고 표에서 지운 뒤 마지막 상태를 돌려준다. released·reused·stale_setup·superseded면
-// 최근 메시지를 보관한다 — 경보를 낼 때 걸린 UE가 이미 닫혀 있을 수 있어서다(14_ §2.3). du_reset·evicted는 룰도
-// 대기 표시를 지우므로(15_ §1) 보관하지 않는다
-UeTable::Closed UeTable::close(Iter it, CloseReason reason, int64_t t, DeadlineQueue* dq) {
+// 닫기 (14_ §4.2): 색인에서 빼고 표에서 지운 뒤 마지막 상태를 돌려준다. 모든 닫힘 이유에서 S-TMSI 이력 표에 연결 레코드를
+// 넣는다 — 호출자(Engine)가 그 뒤에 룰 on_ue_close를 부르므로 룰이 history()로 받는 목록에 이 연결이 들어 있다(14_ §3.2·
+// §7 ⑦). session_reset은 이 길이 아니라 clear()로 표 전체를 비운다. released·reused·stale_setup·superseded면 최근 메시지를
+// 보관한다 — 경보를 낼 때 걸린 UE가 이미 닫혀 있을 수 있어서다(14_ §2.3). du_reset·evicted·ghost_purge는 룰도 대기 표시를
+// 지우므로(15_ §1) 보관하지 않는다
+UeTable::Closed UeTable::close(Iter it, CloseReason reason, int64_t t, DeadlineQueue& dq) {
   rank_erase(it->second.st);
   Closed c{std::move(it->second.st), reason};
   if (c.last.s_tmsi) index_erase(by_s_tmsi_, *c.last.s_tmsi, c.last.key);
   if (const std::optional<uint64_t> p1 = part1_of(c.last)) index_erase(by_part1_, *p1, c.last.key);
+  add_record(c.last, reason, t, dq);
   const bool keep = reason == CloseReason::Released || reason == CloseReason::Reused ||
                     reason == CloseReason::StaleSetup || reason == CloseReason::Superseded;
-  if (keep && dq) keep_recent(c.last, std::move(it->second.recent), t, *dq);
+  if (keep) keep_recent(c.last, std::move(it->second.recent), t, dq);
   entries_.erase(it);
   return c;
+}
+
+// S-TMSI 이력 표 — 연결 레코드 (14_ §3.2, 11/03 확인 지점 ⑤ 사용자 확정): 연결 1건 = 레코드 1개. S-TMSI(48비트·Part1)를 둘 다
+// 모르면 넣지 않는다 — 같은 UE로 이을 수 없다. 불확실(mid_join·loss·late) 연결도 넣되 표시를 남긴다(결정 ④). 색인은 48비트를
+// 알면 48비트·그 하위 39비트 Part1 둘 다, Part1만 알면 Part1만이다(§3.1과 같음). 닫힌 시각 + tomb_ms에 표 몫 마감 tomb으로 지우고,
+// tomb_max를 넘으면 오래된 것(먼저 넣은 것)부터 버린다
+void UeTable::add_record(const UeState& s, CloseReason reason, int64_t t, DeadlineQueue& dq) {
+  const std::optional<uint64_t> p1 = part1_of(s);
+  if (!s.s_tmsi && !p1) return;
+  ConnRecord r;
+  r.s_tmsi = s.s_tmsi;
+  r.part1 = p1;
+  r.src_ue = s.s_tmsi_from_ue;
+  r.src_net = s.s_tmsi_from_net;
+  r.key = s.key;
+  r.uid = s.uid;
+  r.t_start = s.t_start;
+  r.t_end = t;
+  r.reason = reason;
+  r.connected = s.ever_connected;
+  r.rrc_last = s.rrc;
+  r.nas_last = s.nas;
+  r.accepted = s.ever_accepted;
+  r.est_cause = s.est_cause;
+  r.reg_type = s.reg_type;
+  r.id_type = s.id_type;
+  r.rel_req_cause = s.rel_req_cause;
+  r.mid_join = s.mid_join;
+  r.loss = s.loss;
+  r.late = s.late;
+  const uint64_t order = next_record_++;
+  // 같은 (키, uid)는 한 번만 닫히지만, 방어로 옛 것을 먼저 지운다
+  if (auto old = record_of_.find({s.key, s.uid}); old != record_of_.end()) erase_record(old->second);
+  record_of_[{s.key, s.uid}] = order;
+  // 색인 — (t_end, 순서)로 정렬해 둔다. 닫힘은 대개 시각순이라 뒤에 붙는다
+  auto put = [&](std::vector<uint64_t>& v) {
+    auto pos = std::upper_bound(v.begin(), v.end(), order, [&](uint64_t a, uint64_t b) {
+      const int64_t ta = a == order ? t : records_.at(a).t_end;
+      const int64_t tb = b == order ? t : records_.at(b).t_end;
+      return std::make_pair(ta, a) < std::make_pair(tb, b);
+    });
+    v.insert(pos, order);
+  };
+  if (r.s_tmsi) put(hist_s_tmsi_[*r.s_tmsi]);
+  if (r.part1) put(hist_part1_[*r.part1]);
+  records_.emplace(order, std::move(r));
+  while (records_.size() > cfg_.tomb_max) erase_record(records_.begin()->first);
+  Deadline d;
+  d.at = t + cfg_.tomb_ms;
+  d.key = s.key;
+  d.uid = s.uid;
+  d.owner = DeadlineQueue::kTableOwner;
+  d.tag = kTombTag;
+  d.t_from = t;  // 닫힌 시각 — 꺼낼 때 레코드의 t_end와 대조
+  dq.add(std::move(d));
+}
+
+void UeTable::erase_record(uint64_t order) {
+  auto it = records_.find(order);
+  if (it == records_.end()) return;
+  const ConnRecord& r = it->second;
+  auto drop = [&](std::map<uint64_t, std::vector<uint64_t>>& index, uint64_t v) {
+    auto ix = index.find(v);
+    if (ix == index.end()) return;
+    ix->second.erase(std::remove(ix->second.begin(), ix->second.end(), order), ix->second.end());
+    if (ix->second.empty()) index.erase(ix);
+  };
+  if (r.s_tmsi) drop(hist_s_tmsi_, *r.s_tmsi);
+  if (r.part1) drop(hist_part1_, *r.part1);
+  if (auto id = record_of_.find({r.key, r.uid}); id != record_of_.end() && id->second == order) record_of_.erase(id);
+  records_.erase(it);
+}
+
+// S-TMSI 이력 표 — 할당 기억 (14_ §3.2): RegistrationAccept의 f.s_tmsi → 마지막 할당 시각·셀. 같은 값이 다시 할당되면 시각만
+// 갱신한다. 할당 시각 + alloc_ms에 표 몫 마감 alloc으로 지우고(그 사이 다시 할당됐으면 그 마감이 지운다), alloc_max를 넘으면
+// 가장 오래 전에 할당된 것부터 버린다. NAS 암호 망에서는 RegistrationAccept가 보이지 않아 비어 있다(§11)
+void UeTable::add_alloc(uint64_t s_tmsi, const UeState& s, int64_t t, DeadlineQueue& dq) {
+  if (auto old = allocs_.find(s_tmsi); old != allocs_.end()) alloc_order_.erase(old->second.order);
+  const uint64_t order = next_alloc_++;
+  allocs_[s_tmsi] = Alloc{t, s.key.cell_id, order};
+  alloc_order_[order] = s_tmsi;
+  while (allocs_.size() > cfg_.alloc_max) {
+    auto oldest = alloc_order_.begin();
+    allocs_.erase(oldest->second);
+    alloc_order_.erase(oldest);
+  }
+  alloc_due_[{s.key, s.uid, t}] = s_tmsi;
+  Deadline d;
+  d.at = t + cfg_.alloc_ms;
+  d.key = s.key;
+  d.uid = s.uid;
+  d.owner = DeadlineQueue::kTableOwner;
+  d.tag = kAllocTag;
+  d.t_from = t;  // 할당 시각 — 꺼낼 때 그 S-TMSI의 마지막 할당 시각과 대조
+  dq.add(std::move(d));
+}
+
+std::vector<const ConnRecord*> UeTable::select(const std::map<uint64_t, std::vector<uint64_t>>& index, uint64_t v,
+                                               int64_t since) const {
+  std::vector<const ConnRecord*> out;
+  auto ix = index.find(v);
+  if (ix == index.end()) return out;
+  for (uint64_t order : ix->second) {
+    const ConnRecord& r = records_.at(order);
+    if (r.t_end >= since) out.push_back(&r);
+  }
+  return out;
+}
+
+std::vector<const ConnRecord*> UeTable::history(uint64_t s_tmsi, int64_t since) const {
+  return select(hist_s_tmsi_, s_tmsi, since);
+}
+
+std::vector<const ConnRecord*> UeTable::history_part1(uint64_t part1, int64_t since) const {
+  return select(hist_part1_, part1, since);
+}
+
+std::optional<int64_t> UeTable::allocated(uint64_t s_tmsi) const {
+  auto it = allocs_.find(s_tmsi);
+  return it == allocs_.end() ? std::nullopt : std::optional<int64_t>(it->second.t);
 }
 
 // 닫힌 항목 recent 보관 (14_ §2.3·§6.1 표 closed_recent): 닫힌 시각 + 보관 시간에 표 몫 마감으로 지우고,

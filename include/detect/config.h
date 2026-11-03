@@ -57,6 +57,11 @@ struct UeTableConfig {
   // 상수에서 설정 키로 (16_ §3.2-1 W-24, 이슈 #44)
   int64_t dl_unobserved_ms = 5000;       // ue_table.dl_unobserved_ms — 진단 dl_unobserved·ue_evt_lost_missing 연속 시간 (14_ §6.2)
   int64_t recent_keep_margin_ms = 1000;  // ue_table.recent_keep_margin_ms — 닫힌 항목 recent 보관 여유 (14_ §2.3·§1.1)
+  // S-TMSI 이력 표 (14_ §3.2·§9 — 11/03 확인 지점 ⑤ 사용자 확정, 11/04 이슈 #74)
+  int64_t tomb_ms = 600000;        // ue_table.tomb_ms — 연결 레코드 보관 시간. 4단계 룰의 창(최대 5분)보다 길게
+  std::size_t tomb_max = 4096;     // ue_table.tomb_max — 연결 레코드 상한, 넘치면 오래된 것부터
+  int64_t alloc_ms = 3600000;      // ue_table.alloc_ms — 할당 기억 보관 시간. 단말은 받은 5G-GUTI를 다음 등록까지 쓴다
+  std::size_t alloc_max = 4096;    // ue_table.alloc_max — 할당 기억 상한
 };
 
 // UE 단위 경보 (14_ §9 alert.*). 설정 파일에 키가 없으면 이 기본값을 쓴다 (4_ §1.2)

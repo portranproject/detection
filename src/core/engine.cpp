@@ -121,7 +121,7 @@ void Engine::on_ue_evt(UeEvt& e, int64_t seq, EngineOutput& out) {
 }
 
 // f1_evt (14_ §7, 2_ §6.7): 그 셀의 열린 항목(일부 Reset이면 그 UE만)을 du_reset으로 닫는다. 세션·kpm2·1단계 상태는 그대로
-void Engine::on_f1_evt(const F1Evt& f, int64_t seq, EngineOutput& out) { notify_close(table_.close_du(f), f.t_ms, seq, out); }
+void Engine::on_f1_evt(const F1Evt& f, int64_t seq, EngineOutput& out) { notify_close(table_.close_du(f, deadlines_), f.t_ms, seq, out); }
 
 // kpm2 (14_ §7): ① series·1단계 룰은 이미 지났다 → ② 로스 기록과 그 셀 열린 항목의 loss 표시 — 마감 처리보다 먼저다.
 // 마감이 든 창이 로스 창이면 그 창에서 꺼낸 마감도 보류돼야 하기 때문이다(14_ §6.2) → ②′ 유령 정리 → ③ 셀 시계를 t_end_ms로 올리고

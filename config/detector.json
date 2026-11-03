@@ -26,6 +26,7 @@
     "AN-06a": { "n_reauth": 1, "clear_quiet_ms": 60000 }
   },
   "ue_table": { "max_ues": 4096, "recent_n": 16, "stale_setup_ms": 30000, "closed_recent_max": 1024,
+                "tomb_ms": 600000, "tomb_max": 4096, "alloc_ms": 3600000, "alloc_max": 4096,
                 "ghost_k": 2, "ghost_margin": 16, "ghost_hold_ms": 5000, "evict_protect_ms": 5000,
                 "dl_unobserved_ms": 5000, "recent_keep_margin_ms": 1000 },
   "alert": { "ues_max": 50, "update_min_ms": 1000, "ue_evidence_max": 50, "held_alert": true },

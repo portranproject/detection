@@ -200,16 +200,20 @@ void parse_sec_reauth(const json& r, SecReauthConfig& c, std::vector<std::string
   read_int_in(r, "clear_quiet_ms", c.clear_quiet_ms, 1000, 3600000, w);
 }
 
-// ue_table (14_ §9 — 허용 범위는 10/29 이슈 #33 사용자 결정). tomb_ms·tomb_max는 예약 키라 경고만 (14_ §3.2)
+// ue_table (14_ §9 — 허용 범위는 10/29 이슈 #33 사용자 결정). tomb_*는 10/29까지 예약 키였으나 11/03 4단계 S-TMSI 이력 표 키가
+// 되어(확인 지점 ⑤) alloc_*와 함께 범위를 검사한다 (14_ §3.2·§9, 11/04 이슈 #74)
 void parse_ue_table(const json& e, UeTableConfig& c, std::vector<std::string>& warnings) {
   const std::string w = "ue_table.";
   if (!e.is_object()) throw ConfigErr("ue_table: not an object");
   warn_unknown(e,
-               {"max_ues", "recent_n", "stale_setup_ms", "closed_recent_max", "tomb_ms", "tomb_max", "ghost_k",
-                "ghost_margin", "ghost_hold_ms", "evict_protect_ms", "dl_unobserved_ms", "recent_keep_margin_ms"},
+               {"max_ues", "recent_n", "stale_setup_ms", "closed_recent_max", "tomb_ms", "tomb_max", "alloc_ms",
+                "alloc_max", "ghost_k", "ghost_margin", "ghost_hold_ms", "evict_protect_ms", "dl_unobserved_ms",
+                "recent_keep_margin_ms"},
                w, warnings);
-  for (const char* k : {"tomb_ms", "tomb_max"})
-    if (find(e, k)) warnings.push_back("reserved key " + w + k + " (not used)");
+  read_int_in(e, "tomb_ms", c.tomb_ms, 60000, 86400000, w);
+  read_int_in(e, "tomb_max", c.tomb_max, 100, 65536, w);
+  read_int_in(e, "alloc_ms", c.alloc_ms, 60000, 86400000, w);
+  read_int_in(e, "alloc_max", c.alloc_max, 100, 65536, w);
   read_int_in(e, "max_ues", c.max_ues, 100, 16384, w);
   read_int_in(e, "recent_n", c.recent_n, 1, 64, w);
   read_int_in(e, "stale_setup_ms", c.stale_setup_ms, 2000, 600000, w);
