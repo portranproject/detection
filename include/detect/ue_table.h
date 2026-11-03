@@ -41,6 +41,8 @@ enum class NasSecState { None, Unknown, Auth, AuthOk, AuthFail, Cmd, On, Rejecte
 // 보안 상태 이름 — 14_ §5.3·§5.4 철자(대문자). 3단계 경보 ues[].values의 rrc_sec·nas_sec (20_ §3.6·§4.6, 4_ §6.2)
 const char* to_string(RrcSecState s);
 const char* to_string(NasSecState s);
+// RRC 상태 이름 — 14_ §5.1 철자(대문자). 4단계 경보 ues[].values의 rrc_last (21_ §7.6, 11/04 AN-07)
+const char* to_string(RrcState s);
 
 // 항목이 닫힌 이유 (14_ §4.2). GhostPurge = 유령 정리(10/29 Q-56 해결, 이슈 #44) — 처리는 Evicted와 같다
 enum class CloseReason { Released, Reused, StaleSetup, Superseded, DuReset, Evicted, SessionReset, GhostPurge };
@@ -133,6 +135,9 @@ struct ConnRecord {
   RrcState rrc_last = RrcState::Unknown;  // 닫히기 직전 rrc·nas (INACTIVE였는지 포함)
   NasState nas_last = NasState::Unknown;
   bool accepted = false;            // 망 수락을 얻었나 (15_ §1.1)
+  // 이 연결에서 RRCReject(DL)를 봤나 (14_ §3.2 — 11/04 AN-07 사용자 결정). rrc_last로는 가르지 못한다 — 거절 뒤 CU가
+  // UEContextReleaseCommand로 DU 컨텍스트를 풀면 rrc가 RELEASING으로 덮인다(§5.1)
+  bool rejected = false;
   std::optional<std::string> est_cause;
   std::optional<std::string> reg_type;
   std::optional<std::string> id_type;

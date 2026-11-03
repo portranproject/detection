@@ -143,6 +143,13 @@ struct ShortRepeatConfig {
   int64_t clear_quiet_ms = 60000;  // clear_quiet_ms — 마지막 걸림 뒤 이만큼 새로 걸린 UE가 없으면 해제 (21_ §6.5)
 };
 
+// 4단계 룰 AN-07 같은 S-TMSI의 Setup 반복·Complete 없음 (21_ §7.4·§1.2). 설정 파일 rules.AN-07에 키가 없으면 이 기본값을 쓴다
+struct SetupRepeatConfig {
+  int64_t window_ms = 60000;       // window_ms — W, 같은 Part1의 미완료 연결을 세는 창. 거절 뒤 대기(waitTime)를 둔 재시도를 담는 폭
+  int64_t n_fail = 3;              // n_fail — N, 창 안 미완료 연결 수 문턱. 한두 번의 Msg4 실패는 정상 무선에서도 난다 (21_ §7.4)
+  int64_t clear_quiet_ms = 60000;  // clear_quiet_ms — 마지막 걸림 뒤 이만큼 새로 걸린 UE가 없으면 해제 (21_ §7.5)
+};
+
 // 설정 파일 전체 (4_ §1.2). rules는 룰 ID → 그 룰의 설정 객체(JSON 문자열)다 — 공통 파서는 넘기기만 하고
 // 룰별 파서(parse_bts_variant_config 등)가 키·범위를 검사한다 (Q-46, 결정 J4)
 struct DetectorConfig {
@@ -194,5 +201,6 @@ RuleConfigResult<SyncFailureConfig> parse_sync_failure_config(std::string_view j
 RuleConfigResult<SecReauthConfig> parse_sec_reauth_config(std::string_view json_text);
 RuleConfigResult<IdentityRequestConfig> parse_identity_request_config(std::string_view json_text);
 RuleConfigResult<ShortRepeatConfig> parse_short_repeat_config(std::string_view json_text);
+RuleConfigResult<SetupRepeatConfig> parse_setup_repeat_config(std::string_view json_text);
 
 }  // namespace detect

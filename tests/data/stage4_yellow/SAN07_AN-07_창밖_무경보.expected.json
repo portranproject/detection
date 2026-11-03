@@ -1,0 +1,7 @@
+{
+  "scenario": "SAN07_AN-07_창밖_무경보",
+  "description": "Q × 3을 61 s 간격 — 창 60 s 안에 늘 하나뿐 (AN07-T3)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

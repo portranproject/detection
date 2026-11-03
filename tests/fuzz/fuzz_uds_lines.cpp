@@ -15,6 +15,7 @@
 #include "detect/rules/nas_desync.h"
 #include "detect/rules/identity_request.h"
 #include "detect/rules/sec_reauth.h"
+#include "detect/rules/setup_repeat.h"
 #include "detect/rules/short_repeat.h"
 #include "detect/rules/sync_failure.h"
 #include "detect/rules/uplink_dos.h"
@@ -41,6 +42,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, std::size_t size) {
   engine.add_ue_rule(std::make_unique<SecReauthRule>());
   engine.add_ue_rule(std::make_unique<IdentityRequestRule>());
   engine.add_ue_rule(std::make_unique<ShortRepeatRule>());
+  engine.add_ue_rule(std::make_unique<SetupRepeatRule>());
   EvidenceQueue queue(16);
   EvidenceRecorder recorder(EvidenceConfig{}, queue);
   UdsServer server("fuzz-no-socket", kMaxLine);  // open()을 부르지 않는다 — 소켓·파일을 만들지 않음

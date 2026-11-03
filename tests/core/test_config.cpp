@@ -33,8 +33,8 @@ TEST(Config, RepoConfigFileParses) {
   EXPECT_EQ(r.config.socket_path, d.socket_path);
   EXPECT_EQ(r.config.max_line_bytes, d.max_line_bytes);
   // L3-01-V + 2단계 L3-20·L3-01-O·L3-21 (10/29 이슈 #33) + 3단계 L3-24·L3-14 (20_ §1.5) + 3단계로 올린 L3-06 (20_ §5.4)
-  // + 4단계 AN-01·AN-06a·AN-02·AN-04 (21_ §1.2)
-  ASSERT_EQ(r.config.rules.size(), 11u);
+  // + 4단계 AN-01·AN-06a·AN-02·AN-04·AN-07 (21_ §1.2)
+  ASSERT_EQ(r.config.rules.size(), 12u);
   ASSERT_TRUE(r.config.rules.count("L3-01-V"));
   BtsVariantConfigResult b = parse_bts_variant_config(r.config.rules.at("L3-01-V"));
   ASSERT_TRUE(b.ok) << b.error;
@@ -160,6 +160,15 @@ TEST(Config, RepoConfigFileParses) {
   EXPECT_EQ(srd.short_ms, 5000);
   EXPECT_EQ(srd.window_ms, 300000);
   EXPECT_EQ(srd.n_short, 3);
+  auto spr = parse_setup_repeat_config(r.config.rules.at("AN-07"));  // 21_ §7.4
+  ASSERT_TRUE(spr.ok) << spr.error;
+  EXPECT_TRUE(spr.warnings.empty());
+  const SetupRepeatConfig spd;
+  EXPECT_EQ(spr.config.window_ms, spd.window_ms);
+  EXPECT_EQ(spr.config.n_fail, spd.n_fail);
+  EXPECT_EQ(spr.config.clear_quiet_ms, spd.clear_quiet_ms);
+  EXPECT_EQ(spd.window_ms, 60000);
+  EXPECT_EQ(spd.n_fail, 3);
 }
 
 // 빠진 키는 기본값, 일부만 덮어쓰기
@@ -313,6 +322,8 @@ TEST(Config, Stage2RangeBoundaries) {
       {"AN-02", "clear_quiet_ms", 1000, 3600000},
       {"AN-04", "short_ms", 100, 600000},          {"AN-04", "window_ms", 1000, 600000},  // AN04-T8
       {"AN-04", "n_short", 2, 10000},              {"AN-04", "clear_quiet_ms", 1000, 3600000},
+      {"AN-07", "window_ms", 1000, 600000},        {"AN-07", "n_fail", 2, 10000},  // AN07-T7
+      {"AN-07", "clear_quiet_ms", 1000, 3600000},
   };
   auto accepts = [](const Range& r, int64_t v, std::string* error = nullptr) {
     const std::string obj = "{\"" + r.key + "\":" + std::to_string(v) + "}";
@@ -360,6 +371,10 @@ TEST(Config, Stage2RangeBoundaries) {
       err = c.error;
     } else if (r.section == "AN-04") {
       auto c = parse_short_repeat_config(obj);
+      ok = c.ok;
+      err = c.error;
+    } else if (r.section == "AN-07") {
+      auto c = parse_setup_repeat_config(obj);
       ok = c.ok;
       err = c.error;
     } else {
@@ -529,4 +544,14 @@ TEST(Config, Stage4ShortRepeat) {
   auto r = parse_short_repeat_config(R"({"n_fail":3})");
   ASSERT_TRUE(r.ok);
   EXPECT_EQ(r.warnings, (std::vector<std::string>{"unknown key rules.AN-04.n_fail (ignored)"}));
+}
+
+// AN07-T7 (21_ §7.8·§1.2): rules.AN-07 — n_fail 1(하한 2)·범위 밖·문자열은 오류(실행 파일은 종료 코드 1), 모르는 키는 경고만
+TEST(Config, Stage4SetupRepeat) {
+  EXPECT_FALSE(parse_setup_repeat_config(R"({"n_fail":1})").ok);
+  EXPECT_FALSE(parse_setup_repeat_config(R"({"window_ms":999})").ok);
+  EXPECT_FALSE(parse_setup_repeat_config(R"({"clear_quiet_ms":"60000"})").ok);
+  auto r = parse_setup_repeat_config(R"({"n_short":3})");
+  ASSERT_TRUE(r.ok);
+  EXPECT_EQ(r.warnings, (std::vector<std::string>{"unknown key rules.AN-07.n_short (ignored)"}));
 }

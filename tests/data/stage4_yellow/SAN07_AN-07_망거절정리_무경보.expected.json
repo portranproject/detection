@@ -1,0 +1,7 @@
+{
+  "scenario": "SAN07_AN-07_망거절정리_무경보",
+  "description": "RRCReject × 3, 해제 줄 없이 30 s 뒤 stale_setup으로 닫힘(rrc REJECTED) — 세지 않음 (AN07-T4)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

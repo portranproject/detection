@@ -1,0 +1,27 @@
+{
+  "scenario": "SAN07_AN-07_해제_CLEAR",
+  "description": "Q × 3 RAISE 뒤 마지막 걸림 + 60 s 이상인 첫 kpm2에 CLEAR (AN07-T7)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "AN-07",
+      "cell": 1,
+      "t_rel_ms": 23100,
+      "severity": "medium",
+      "alert_kind": "anomaly",
+      "candidates": [
+        "L3-11-V1",
+        "L3-11-V2"
+      ]
+    },
+    {
+      "kind": "CLEAR",
+      "rule": "AN-07",
+      "cell": 1,
+      "t_rel_ms": 83000,
+      "alert_kind": "anomaly"
+    }
+  ]
+}

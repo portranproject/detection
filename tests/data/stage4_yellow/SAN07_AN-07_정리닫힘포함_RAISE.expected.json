@@ -1,0 +1,20 @@
+{
+  "scenario": "SAN07_AN-07_정리닫힘포함_RAISE",
+  "description": "Q × 3 중 둘째가 해제 줄 없이 stale_setup(마지막 줄 + 30 s)으로 닫힘 — 센다. 셋째 닫힘 때는 K 2, 둘째가 닫히는 마감을 처리한 kpm2에서 RAISE (AN07-T6)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "AN-07",
+      "cell": 1,
+      "t_rel_ms": 41000,
+      "severity": "medium",
+      "alert_kind": "anomaly",
+      "candidates": [
+        "L3-11-V1",
+        "L3-11-V2"
+      ]
+    }
+  ]
+}

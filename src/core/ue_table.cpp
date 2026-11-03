@@ -35,6 +35,18 @@ const char* to_string(RrcSecState s) {
   return "?";
 }
 
+const char* to_string(RrcState s) {
+  switch (s) {
+    case RrcState::Setup: return "SETUP";
+    case RrcState::Unknown: return "UNKNOWN";
+    case RrcState::Rejected: return "REJECTED";
+    case RrcState::Connected: return "CONNECTED";
+    case RrcState::Releasing: return "RELEASING";
+    case RrcState::Inactive: return "INACTIVE";
+  }
+  return "?";
+}
+
 const char* to_string(NasSecState s) {
   switch (s) {
     case NasSecState::None: return "NONE";
@@ -521,6 +533,7 @@ void UeTable::add_record(const UeState& s, CloseReason reason, int64_t t, Deadli
   r.rrc_last = s.rrc;
   r.nas_last = s.nas;
   r.accepted = s.ever_accepted;
+  r.rejected = s.count(Proto::RRC, "RRCReject") > 0;
   r.est_cause = s.est_cause;
   r.reg_type = s.reg_type;
   r.id_type = s.id_type;

@@ -1,0 +1,7 @@
+{
+  "scenario": "SAN07_AN-07_망거절해제_무경보",
+  "description": "RRCSetup 대신 RRCReject + 같은 시각 UEContextReleaseCommand × 3 — rrc는 RELEASING으로 덮이지만 거절을 봐서 세지 않음 (11/04 사용자 결정, AN07-T4)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}
