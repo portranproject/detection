@@ -91,7 +91,7 @@ class UplinkDosRule : public UeRule {
     int64_t t_last_held = 0;
   };
 
-  bool is_failure(const UeEvt& evt) const;
+  bool is_failure(const UeEvt& evt, const UeState& before) const;
   void start(const UeId& id, int64_t t_f, const UeRuleCtx& ctx);
   AlertUe make_ue(const UeState& n, const Conn* c, const char* branch, std::vector<std::string> cond, int64_t t_hit,
                   std::optional<int64_t> closed_ms) const;
