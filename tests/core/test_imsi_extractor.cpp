@@ -258,7 +258,7 @@ TEST(ImsiExtractor, T04UnsolicitedRaise) {
   EXPECT_EQ(e.severity, Severity::Medium);
   EXPECT_FALSE(e.branch);
   EXPECT_EQ(e.cond, kCond);
-  EXPECT_TRUE(e.candidates.empty());
+  EXPECT_EQ(e.candidates, (std::vector<std::string>{"L3-28-V"}));  // #28 MNmap 중간자 변형 (20_ §3.1·§3.6, 4_ §6.3 #1)
   ASSERT_TRUE(e.conditions);
   EXPECT_EQ(*e.conditions, kPremise);
   EXPECT_EQ(e.values.dump(), R"({"extra":0,"held":0,"evicted":0})");
@@ -275,11 +275,11 @@ TEST(ImsiExtractor, T04UnsolicitedRaise) {
   EXPECT_FALSE(u.conditions);  // L3-24는 UE 칸에 싣지 않는다 (20_ §3.6)
   EXPECT_EQ(h.logs[0], "ALERT RAISE rule=L3-24 cell=1 t=" + std::to_string(kT0 + kB + 100) +
                            " ue=1/3/1 req=0 resp=1 rrc_sec=OFF nas_sec=NONE severity=medium mode=normal "
-                           "conditions=mitm_ul_relay candidates=");
+                           "conditions=mitm_ul_relay candidates=L3-28-V");
   const std::vector<std::string> recs = h.drain();
   ASSERT_FALSE(recs.empty());
   EXPECT_NE(recs[0].find(R"("stage":3,)"), std::string::npos);
-  EXPECT_NE(recs[0].find(R"("candidates":[],"conditions":["mitm_ul_relay"],"values")"), std::string::npos);
+  EXPECT_NE(recs[0].find(R"("candidates":["L3-28-V"],"conditions":["mitm_ul_relay"],"values")"), std::string::npos);
   EXPECT_EQ(count_phase(recs, "pre"), 5);      // RRCSetupRequest·RRCSetup·RRCSetupComplete·RegistrationRequest·응답
   EXPECT_EQ(count_phase(recs, "active"), 10);  // t0+105 인증 요청부터 등록 완료까지
 }

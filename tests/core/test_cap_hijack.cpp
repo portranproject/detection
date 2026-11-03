@@ -184,6 +184,7 @@ class Harness {
 
 const std::vector<std::string> kMitm = {"mitm_ul_relay"};
 const std::vector<std::string> kNone = {};
+const std::vector<std::string> kMnmap = {"L3-28-V"};  // 갈래 ① candidates (20_ §4.6)
 
 int count_phase(const std::vector<std::string>& recs, const std::string& phase) {
   return static_cast<int>(std::count_if(recs.begin(), recs.end(), [&](const std::string& r) {
@@ -213,7 +214,7 @@ TEST(CapHijack, T02NoCapabilityExchange) {
 
 // L14-T3: F에 C1 — K = t0+100에 갈래 ① RAISE. branch "1", medium, 전제 [mitm_ul_relay](경보·UE 칸), 값·로그 줄
 TEST(CapHijack, T03Branch1Raise) {
-  Harness h;
+  Harness h(true);
   h.play(F(kB, 3) + std::vector<L>{cap_info(kB + 98, 3)});
   h.tick_to(3000);
   ASSERT_EQ(h.alerts.size(), 1u);
@@ -226,7 +227,7 @@ TEST(CapHijack, T03Branch1Raise) {
   EXPECT_EQ(e.branch, std::optional<std::string>("1"));
   EXPECT_EQ(e.severity, Severity::Medium);
   EXPECT_EQ(e.cond, (std::vector<std::string>{"unsolicited"}));
-  EXPECT_TRUE(e.candidates.empty());
+  EXPECT_EQ(e.candidates, kMnmap);  // 갈래 ① — #28 MNmap 중간자 변형 (20_ §4.1·§4.6, 4_ §6.3 #1)
   ASSERT_TRUE(e.conditions);
   EXPECT_EQ(*e.conditions, kMitm);
   EXPECT_EQ(e.values.dump(), R"({"branch1_ues":1,"branch2_ues":0,"extra":0,"held":0,"evicted":0})");
@@ -240,7 +241,10 @@ TEST(CapHijack, T03Branch1Raise) {
   EXPECT_EQ(u.values.dump(), R"({"branch":"1","req":0,"resp":1,"rrc_sec":"OFF"})");
   EXPECT_EQ(h.logs[0], "ALERT RAISE rule=L3-14 cell=1 t=" + std::to_string(kT0 + kB + 100) +
                            " branch=1 ue=1/3/1 req=0 resp=1 rrc_sec=OFF severity=medium mode=normal "
-                           "conditions=mitm_ul_relay candidates=");
+                           "conditions=mitm_ul_relay candidates=L3-28-V");
+  const std::vector<std::string> recs = h.drain();
+  ASSERT_FALSE(recs.empty());
+  EXPECT_NE(recs[0].find(R"("candidates":["L3-28-V"],"conditions":["mitm_ul_relay"],"values")"), std::string::npos);
 }
 
 // L14-T4: C2 흐름 — K = t0+200에 갈래 ② RAISE. branch "2", high, 전제 [], t0+130 응답은 짝이라 갈래 ① 없음. 레코드 모양(20_ §4.6 예)
@@ -254,6 +258,7 @@ TEST(CapHijack, T04Branch2Raise) {
   EXPECT_EQ(e.branch, std::optional<std::string>("2"));
   EXPECT_EQ(e.severity, Severity::High);
   EXPECT_EQ(e.cond, (std::vector<std::string>{"enquiry_before_as_sec"}));
+  EXPECT_TRUE(e.candidates.empty());  // 갈래 ②를 만드는 다른 공격은 없다 (20_ §4.1)
   ASSERT_TRUE(e.conditions);
   EXPECT_EQ(*e.conditions, kNone);
   EXPECT_EQ(e.values.dump(), R"({"branch1_ues":0,"branch2_ues":1,"extra":0,"held":0,"evicted":0})");
@@ -341,7 +346,8 @@ TEST(CapHijack, T07SmcLostHeld) {
 }
 
 // L14-T8: 갈래 섞임 — A C1 → RAISE("1", medium, [mitm]), B C2 → 바로 UPDATE("2", high — 심각도 상승, 전제 합은 그대로라 conditions 없음) /
-// 순서를 바꿈 — B C2 → RAISE("2", high, []), A C1이 0.9 s 뒤 → 전제가 [mitm]로 바뀌어 바로 UPDATE(branch 그대로 "2")
+// 순서를 바꿈 — B C2 → RAISE("2", high, []), A C1이 0.9 s 뒤 → 전제가 [mitm]로 바뀌어 바로 UPDATE(branch 그대로 "2").
+// candidates는 RAISE를 일으킨 UE의 갈래 후보이고 update에는 싣지 않는다 — 앞은 [L3-28-V], 뒤는 [] (20_ §4.6, 14_ §8.3)
 TEST(CapHijack, T08MixedBranches) {
   {
     Harness h;
@@ -349,6 +355,7 @@ TEST(CapHijack, T08MixedBranches) {
     h.tick_to(3000);
     ASSERT_EQ(h.alerts.size(), 2u);
     EXPECT_EQ(h.alerts[0].branch, std::optional<std::string>("1"));
+    EXPECT_EQ(h.alerts[0].candidates, kMnmap);
     EXPECT_EQ(*h.alerts[0].conditions, kMitm);
     const AlertEvent& u = h.alerts[1];
     EXPECT_EQ(u.kind, AlertEventKind::Update);
@@ -368,6 +375,7 @@ TEST(CapHijack, T08MixedBranches) {
     h.tick_to(3000);
     ASSERT_EQ(h.alerts.size(), 2u);
     EXPECT_EQ(h.alerts[0].branch, std::optional<std::string>("2"));
+    EXPECT_TRUE(h.alerts[0].candidates.empty());
     EXPECT_EQ(*h.alerts[0].conditions, kNone);
     const AlertEvent& u = h.alerts[1];
     EXPECT_EQ(u.kind, AlertEventKind::Update);
