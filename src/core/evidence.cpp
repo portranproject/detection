@@ -35,7 +35,8 @@ std::string s_tmsi_str(uint64_t v) {
   return buf;
 }
 
-// ues[] 한 칸 (14_ §8.3 표 순서). 없는 식별 값은 null, peers는 비면 뺀다
+// ues[] 한 칸 (14_ §8.3 표 순서). 없는 식별 값은 null, peers는 비면 뺀다. conditions(3단계 L3-14 — 20_ §1.3)는 룰이
+// 채웠을 때만 peers 뒤·seq_range 앞에 (4_ §6.2 #2)
 ojson ue_record(const AlertUe& u) {
   ojson j;
   j["cell"] = u.cell;
@@ -49,6 +50,7 @@ ojson ue_record(const AlertUe& u) {
   j["values"] = u.values.is_null() ? ojson::object() : u.values;
   j["uncertain"] = u.uncertain;
   if (!u.peers.empty()) j["peers"] = u.peers;
+  if (u.conditions) j["conditions"] = *u.conditions;
   j["seq_range"] = u.seq_range ? seq_pair(*u.seq_range) : ojson(nullptr);
   j["evidence"] = u.evidence;
   return j;
@@ -59,6 +61,7 @@ ojson ue_record(const AlertUe& u) {
 // alert 레코드 — 공통 경보 형식 (14_ §8.3·§8.5, 4_ §6.1 #3·#4·#5). 겉모양(형식 판·룰·단계·단위·종류·셀·시각·
 // 심각도·모드·갈래)은 모든 룰이 같고, 룰마다 다른 것은 룰이 채운 values·params·refs·ues 안에만 있다. 키 순서는 14_ §8.3 표 순서:
 //  - raise: cond·candidates, 룰이 채웠으면 params·refs
+//  - conditions: 3단계 룰이 채웠을 때만(raise, 전제가 바뀐 update) candidates 뒤·values 앞 (20_ §1.3, 4_ §6.2 #2)
 //  - values: 비어 있지 않으면 어느 이벤트든 (1단계 C4의 uectx·max_conn, 결정 J5)
 //  - unit = "ue": raise·update에 ues(update는 새로 걸린 UE만), 모든 이벤트에 ues_total
 //  - clear·end: duration_ms와 내보낸·버린 증거 수, end면 reason
@@ -82,6 +85,7 @@ std::string alert_record_line(const AlertEvent& e, int64_t sent, int64_t dropped
     j["cond"] = e.cond;
     j["candidates"] = e.candidates;
   }
+  if (e.conditions) j["conditions"] = *e.conditions;
   if (!e.values.empty()) j["values"] = e.values;
   if (raise && !e.params.is_null()) j["params"] = e.params;
   if (raise && !e.refs.is_null()) j["refs"] = e.refs;

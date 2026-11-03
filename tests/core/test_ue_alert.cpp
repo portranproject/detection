@@ -134,3 +134,34 @@ TEST(UeAlertBook, EndInputLostAndSessionReset) {
   EXPECT_EQ(out[3].reason, "session_reset");
   EXPECT_FALSE(b.open(2));
 }
+
+// 단계 (4_ §6.2 #1, 14_ §8.3): 생성자에서 받은 stage를 모든 이벤트에 — 3단계 룰은 3. 기본값은 2(2단계 룰)
+TEST(UeAlertBook, StageFromConstructor) {
+  for (const char* kind : {"attack", "anomaly"}) {
+    UeAlertBook b("R", AlertConfig{}, kind, 3);
+    std::vector<AlertEvent> out;
+    b.add(1, ues({1}), Severity::Medium, 0, "S", 1, out);
+    b.add(1, ues({2}), Severity::High, 100, "S", 2, out);  // 심각도 상승 → 바로 UPDATE
+    b.add(2, ues({1}), Severity::Medium, 100, "S", 3, out);
+    b.clear(1, 200, out);
+    b.end_all("session_reset", out);
+    ASSERT_EQ(out.size(), 5u);
+    EXPECT_EQ(out[0].kind, AlertEventKind::Raise);
+    EXPECT_EQ(out[1].kind, AlertEventKind::Update);
+    EXPECT_EQ(out[2].kind, AlertEventKind::Raise);
+    EXPECT_EQ(out[3].kind, AlertEventKind::Clear);
+    EXPECT_EQ(out[4].kind, AlertEventKind::End);
+    for (const AlertEvent& e : out) {
+      EXPECT_EQ(e.stage, 3);
+      EXPECT_EQ(e.alert_kind, kind);
+      EXPECT_FALSE(e.conditions.has_value());  // 묶음은 conditions를 채우지 않는다 — 룰 몫 (20_ §1.3)
+    }
+  }
+  UeAlertBook d("R", AlertConfig{});
+  std::vector<AlertEvent> out;
+  d.add(1, ues({1}), Severity::Medium, 0, "S", 1, out);
+  d.end(1, 50, "input_lost", out);
+  ASSERT_EQ(out.size(), 2u);
+  EXPECT_EQ(out[0].stage, 2);
+  EXPECT_EQ(out[1].stage, 2);
+}

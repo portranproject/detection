@@ -24,6 +24,31 @@ const char* to_string(CloseReason r) {
   return "?";
 }
 
+const char* to_string(RrcSecState s) {
+  switch (s) {
+    case RrcSecState::Off: return "OFF";
+    case RrcSecState::Unknown: return "UNKNOWN";
+    case RrcSecState::Cmd: return "CMD";
+    case RrcSecState::On: return "ON";
+    case RrcSecState::Failed: return "FAILED";
+  }
+  return "?";
+}
+
+const char* to_string(NasSecState s) {
+  switch (s) {
+    case NasSecState::None: return "NONE";
+    case NasSecState::Unknown: return "UNKNOWN";
+    case NasSecState::Auth: return "AUTH";
+    case NasSecState::AuthOk: return "AUTH_OK";
+    case NasSecState::AuthFail: return "AUTH_FAIL";
+    case NasSecState::Cmd: return "CMD";
+    case NasSecState::On: return "ON";
+    case NasSecState::Rejected: return "REJECTED";
+  }
+  return "?";
+}
+
 int64_t UeState::count(Proto proto, const std::string& msg) const {
   auto it = cnt.find({proto, msg});
   return it == cnt.end() ? 0 : it->second;

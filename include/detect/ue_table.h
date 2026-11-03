@@ -38,6 +38,9 @@ enum class RrcState { Setup, Unknown, Rejected, Connected, Releasing, Inactive }
 enum class NasState { Unknown, RegInitiated, Registered, Deregistered, SrInitiated, DeregInitiated };
 enum class RrcSecState { Off, Unknown, Cmd, On, Failed };
 enum class NasSecState { None, Unknown, Auth, AuthOk, AuthFail, Cmd, On, Rejected };
+// 보안 상태 이름 — 14_ §5.3·§5.4 철자(대문자). 3단계 경보 ues[].values의 rrc_sec·nas_sec (20_ §3.6·§4.6, 4_ §6.2)
+const char* to_string(RrcSecState s);
+const char* to_string(NasSecState s);
 
 // 항목이 닫힌 이유 (14_ §4.2). GhostPurge = 유령 정리(10/29 Q-56 해결, 이슈 #44) — 처리는 Evicted와 같다
 enum class CloseReason { Released, Reused, StaleSetup, Superseded, DuReset, Evicted, SessionReset, GhostPurge };

@@ -152,3 +152,61 @@ TEST(AlertLog, UeUnitLinesMatchStage2Examples) {
   EXPECT_EQ(format_log_line(o),
             "ALERT UPDATE rule=L3-01-O cell=1 t=1793005265500 ues_new=4 ues_total=10 severity=high uectx=96/96");
 }
+
+// 3단계 conditions (20_ §1.3·§3.6·§4.6, 4_ §6.2 #2): 공통 골격이 RAISE는 mode= 뒤·candidates= 앞, UPDATE는 severity= 뒤에
+// 찍는다. 비어 있어도 'conditions='. 값이 없으면(nullopt) 찍지 않는다 — 1·2단계 줄은 그대로
+TEST(AlertLog, ConditionsLinesMatchStage3Examples) {
+  AlertEvent e;
+  e.rule = "L3-24";
+  e.stage = 3;
+  e.unit = "ue";
+  e.cell_id = 1;
+  e.t = 1793005200100;
+  e.kind = AlertEventKind::Raise;
+  e.conditions = std::vector<std::string>{"mitm_ul_relay"};
+  e.log_fields = {{"ue", "1/3/12"}, {"req", "0"}, {"resp", "1"}, {"rrc_sec", "OFF"}, {"nas_sec", "NONE"}};
+  EXPECT_EQ(format_log_line(e),
+            "ALERT RAISE rule=L3-24 cell=1 t=1793005200100 ue=1/3/12 req=0 resp=1 rrc_sec=OFF nas_sec=NONE "
+            "severity=medium mode=normal conditions=mitm_ul_relay candidates=");
+
+  // L3-24 UPDATE에는 conditions를 싣지 않는다 (20_ §3.6)
+  e.kind = AlertEventKind::Update;
+  e.conditions.reset();
+  e.log_fields.clear();
+  e.ues.resize(1);
+  e.ues_total = 2;
+  e.t = 1793005201000;
+  EXPECT_EQ(format_log_line(e), "ALERT UPDATE rule=L3-24 cell=1 t=1793005201000 ues_new=1 ues_total=2 severity=medium");
+
+  // L3-14 갈래 ② RAISE — 전제 없음은 'conditions=' (20_ §4.6)
+  AlertEvent b;
+  b.rule = "L3-14";
+  b.stage = 3;
+  b.unit = "ue";
+  b.cell_id = 1;
+  b.t = 1793005200200;
+  b.kind = AlertEventKind::Raise;
+  b.severity = Severity::High;
+  b.branch = "2";
+  b.conditions = std::vector<std::string>{};
+  b.log_fields = {{"branch", "2"}, {"ue", "1/3/12"}, {"req", "1"}, {"resp", "0"}, {"rrc_sec", "OFF"}};
+  EXPECT_EQ(format_log_line(b),
+            "ALERT RAISE rule=L3-14 cell=1 t=1793005200200 branch=2 ue=1/3/12 req=1 resp=0 rrc_sec=OFF severity=high "
+            "mode=normal conditions= candidates=");
+
+  // L3-14 UPDATE — 전제가 바뀌면 severity= 뒤에 (20_ §4.6)
+  b.kind = AlertEventKind::Update;
+  b.log_fields.clear();
+  b.conditions = std::vector<std::string>{"mitm_ul_relay"};
+  b.ues.resize(1);
+  b.ues_total = 2;
+  b.t = 1793005201200;
+  EXPECT_EQ(format_log_line(b),
+            "ALERT UPDATE rule=L3-14 cell=1 t=1793005201200 ues_new=1 ues_total=2 branch=2 severity=high "
+            "conditions=mitm_ul_relay");
+
+  // CLEAR·END는 conditions가 있어도 골격 그대로
+  b.kind = AlertEventKind::Clear;
+  b.duration_ms = 60000;
+  EXPECT_EQ(format_log_line(b), "ALERT CLEAR rule=L3-14 cell=1 t=1793005201200 duration_ms=60000 ues_total=2");
+}
