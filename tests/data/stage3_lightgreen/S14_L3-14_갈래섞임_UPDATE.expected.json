@@ -1,0 +1,29 @@
+{
+  "scenario": "S14_L3-14_갈래섞임_UPDATE",
+  "description": "UE A C1 → 갈래 ① RAISE, UE B C2(t0+520) → 심각도가 올라 바로 UPDATE(branch 2, high) (L14-T8)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-14",
+      "cell": 1,
+      "t_rel_ms": 1100,
+      "severity": "medium",
+      "branch": "1",
+      "alert_kind": "attack",
+      "conditions": [
+        "mitm_ul_relay"
+      ]
+    },
+    {
+      "kind": "UPDATE",
+      "rule": "L3-14",
+      "cell": 1,
+      "t_rel_ms": 1600,
+      "severity": "high",
+      "branch": "2",
+      "alert_kind": "attack"
+    }
+  ]
+}

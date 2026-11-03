@@ -1,0 +1,20 @@
+{
+  "scenario": "S14_L3-14_nia0_갈래1_RAISE",
+  "description": "RRC 보안 nia0 + t0+220 요청 없는 능력 응답 — K = t0+300에 갈래 ① RAISE (L14-T11)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-14",
+      "cell": 1,
+      "t_rel_ms": 1300,
+      "severity": "medium",
+      "branch": "1",
+      "alert_kind": "attack",
+      "conditions": [
+        "mitm_ul_relay"
+      ]
+    }
+  ]
+}

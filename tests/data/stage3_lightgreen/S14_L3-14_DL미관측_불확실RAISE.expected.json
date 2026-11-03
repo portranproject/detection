@@ -1,0 +1,16 @@
+{
+  "scenario": "S14_L3-14_DL미관측_불확실RAISE",
+  "description": "모든 kpm2 ue_evt_lost [\"DL\"], DL 줄 없음(F) — t0+175 응답이 보류돼 불확실 경보만 (L14-T16)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-14",
+      "cell": 1,
+      "t_rel_ms": 1200,
+      "severity": "medium",
+      "alert_kind": "anomaly"
+    }
+  ]
+}

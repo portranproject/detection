@@ -57,6 +57,10 @@ class UE3(gen_stage2.UE):
         # NAS 암호가 켜진 뒤의 줄 — 이름이 보이지 않는다(2_ §6.3, L24-T17)
         return self._line(t, "UL", "NAS", "ProtectedNAS", sht=2)
 
+    def rrc_smfailure(self, t):
+        # RRC SecurityModeFailure(UL) → rrc_sec FAILED (14_ §5.3, L14-T5)
+        return self._line(t, "UL", "RRC", "SecurityModeFailure")
+
     def release(self, t):
         self.ctx_release_cmd(t)
         return self.ctx_release_complete(t)
@@ -87,7 +91,7 @@ class UE3(gen_stage2.UE):
         return self
 
     # 기본 흐름 F (20_ §3.8). identity = 모르는 5G-GUTI 등록 뒤 AMF의 식별 요청·응답(L24-T2), skip = 뺄 메시지 이름
-    def flow_F(self, t0, guti=False, identity=False, integrity="nia2", cap=True, skip=(), rest_from=0):
+    def flow_F(self, t0, guti=False, identity=False, integrity="nia2", cap=True, skip=(), rest_from=0, until=None):
         steps = [
             (0, "RRCSetupRequest", lambda t: self.setup_req(t)),
             (0, "RRCSetup", lambda t: self.setup(t)),
@@ -112,10 +116,16 @@ class UE3(gen_stage2.UE):
         steps += [(190, "RegistrationAccept", lambda t: self.reg_accept(t)),
                   (200, "RegistrationComplete", lambda t: self.reg_complete(t))]
         for dt, name, add in steps:
-            if name in skip or dt < rest_from:
+            if name in skip or dt < rest_from or (until is not None and dt >= until):
                 continue
             add(t0 + dt)
         return self
+
+    # C2 흐름 (20_ §4.8): F에서 t0+160·t0+175를 빼고 RRC 보안 모드 명령 전 t0+120에 CU 능력 요청 → t0+130 UE 응답
+    def c2(self, t0, until=None):
+        self.flow_F(t0, cap=False, until=until)
+        self.cap_enq(t0 + 120)
+        return self.cap_info(t0 + 130)
 
     # DL을 보지 못하는 분석 엔진(ue_evt_lost 늘 "DL") — DL 줄을 모두 뺀다(L24-T22)
     def drop_dl(self):
@@ -163,6 +173,23 @@ def raise24(sc, t_rel):
 
 def held24(sc, t_rel):
     return sc.alert("RAISE", t_rel, R24, severity="medium", alert_kind="anomaly")
+
+
+R14 = "L3-14"
+
+
+def raise14(sc, t_rel, branch, conditions):
+    sev = "high" if branch == "2" else "medium"
+    return sc.alert("RAISE", t_rel, R14, severity=sev, branch=branch, alert_kind="attack", conditions=conditions)
+
+
+def update14(sc, t_rel, branch, conditions=None):
+    sev = "high" if branch == "2" else "medium"
+    return sc.alert("UPDATE", t_rel, R14, severity=sev, branch=branch, alert_kind="attack", conditions=conditions)
+
+
+def held14(sc, t_rel):
+    return sc.alert("RAISE", t_rel, R14, severity="medium", alert_kind="anomaly")
 
 
 # ============ L3-24 하향 IMSI 추출 (20_ §3.8 L24-T1~T26 — T23 밀어내기·T25 설정·T26 결정성은 단위 시험) ============
@@ -389,10 +416,12 @@ def s24_ngap_unlinked():
 
 def s24_dl_unobserved():
     sc = Scenario3("S24_L3-24_DL미관측_불확실RAISE",
-                   "모든 kpm2 ue_evt_lost [\"DL\"], DL 줄 없음(T2) — 응답이 보류돼 불확실 경보만 (L24-T22)", 3000)
+                   "모든 kpm2 ue_evt_lost [\"DL\"], DL 줄 없음(T2) — 응답이 보류돼 불확실 경보만 (L24-T22). "
+                   "t0+175 능력 응답도 rrc_sec OFF·R 0이라 L3-14 불확실 경보가 같은 칸에 함께 남 (L14-T16)", 3000)
     sc.ue(3).flow_F(B, guti=True, identity=True).drop_dl()
     sc.lost_all(["DL"])
     held24(sc, K(B + 100))
+    held14(sc, K(B + 175))   # 등록 순서 L3-24 → L3-14 (20_ §0)
     return sc
 
 
@@ -413,6 +442,197 @@ def s24_duplicate():
     return sc
 
 
+# ============ L3-14 UE 능력 탈취 (20_ §4.8 L14-T1~T21 — T18 밀어내기·T20 설정·T21 결정성은 단위 시험) ============
+
+def s14_normal():
+    sc = Scenario3("S14_L3-14_정상흐름_무경보", "F + 해제 — 능력 요청은 RRC 보안 뒤, 응답은 짝이 있음 (L14-T1)", 3000)
+    sc.ue(3).flow_F(B).release(B + 1000)
+    return sc
+
+
+def s14_no_cap():
+    sc = Scenario3("S14_L3-14_능력교환없음_무경보", "AMF가 단말 능력을 줘 능력 요청·응답이 없음 (L14-T2)", 3000)
+    sc.ue(3).flow_F(B, cap=False)
+    return sc
+
+
+def s14_branch1():
+    sc = Scenario3("S14_L3-14_요청없는능력응답_갈래1_RAISE",
+                   "F + t0+98 요청 없는 UECapabilityInformation — K = t0+100에 갈래 ① RAISE, medium, 전제 mitm_ul_relay (L14-T3)",
+                   3000)
+    sc.ue(3).flow_F(B).cap_info(B + 98)
+    raise14(sc, K(B + 98), "1", MITM)
+    return sc
+
+
+def s14_branch2():
+    sc = Scenario3("S14_L3-14_보안전능력요청_갈래2_RAISE",
+                   "C2 — CU가 RRC 보안 모드 명령 전 t0+120에 능력 요청 → K = t0+200에 갈래 ② RAISE, high, 전제 없음 (L14-T4)",
+                   3000)
+    sc.ue(3).c2(B)
+    raise14(sc, K(B + 120), "2", [])
+    return sc
+
+
+def s14_cmd():
+    sc = Scenario3("S14_L3-14_보안명령뒤요청_무경보", "능력 요청이 RRC 보안 모드 명령 뒤·완료 전(t0+145, CMD) — 후보 없음 (L14-T5)",
+                   3000)
+    sc.ue(3).flow_F(B, cap=False).cap_enq(B + 145)
+    return sc
+
+
+def s14_failed():
+    sc = Scenario3("S14_L3-14_보안실패뒤요청_갈래2_RAISE",
+                   "RRC SecurityModeFailure(t0+145) 뒤 t0+150 능력 요청(FAILED) — K = t0+200에 갈래 ② RAISE (L14-T5)", 3000)
+    sc.ue(3).flow_F(B, cap=False, skip=("RrcSecurityModeComplete",)).rrc_smfailure(B + 145).cap_enq(B + 150)
+    raise14(sc, K(B + 150), "2", [])
+    return sc
+
+
+def s14_on():
+    sc = Scenario3("S14_L3-14_보안완료뒤요청_무경보", "능력 요청이 RRC 보안 모드 완료 뒤(t0+155, ON) — 후보 없음 (L14-T5)", 3000)
+    sc.ue(3).flow_F(B, cap=False).cap_enq(B + 155)
+    return sc
+
+
+def s14_enq_lost():
+    sc = Scenario3("S14_L3-14_능력요청줄로스_무경보",
+                   "F에서 t0+160 능력 요청 줄을 빼고 그 창 양방향 로스 — t0+175 응답은 AS 무결성 뒤라 후보 아님 (L14-T6)", 3000)
+    sc.ue(3).flow_F(B, skip=("UECapabilityEnquiry",))
+    sc.lost(B + 100, ["UL", "DL"])
+    return sc
+
+
+def s14_smc_lost():
+    sc = Scenario3("S14_L3-14_보안명령줄로스_불확실RAISE",
+                   "F에서 RRC SecurityModeCommand 줄을 빼고 그 창 양방향 로스 — t0+160 능력 요청이 갈래 ② 후보 → 보류 → "
+                   "K = t0+200에 불확실 경보 (L14-T7)", 3000)
+    sc.ue(3).flow_F(B, skip=("RrcSecurityModeCommand",))
+    sc.lost(B + 100, ["UL", "DL"])
+    held14(sc, K(B + 160))
+    return sc
+
+
+def _mixed(sc):
+    sc.ue(1).flow_F(B).cap_info(B + 98)
+    sc.ue(2).c2(B + 400)
+
+
+def s14_mixed():
+    sc = Scenario3("S14_L3-14_갈래섞임_UPDATE",
+                   "UE A C1 → 갈래 ① RAISE, UE B C2(t0+520) → 심각도가 올라 바로 UPDATE(branch 2, high) (L14-T8)", 3000)
+    _mixed(sc)
+    raise14(sc, K(B + 98), "1", MITM)
+    update14(sc, K(B + 520), "2")
+    return sc
+
+
+def s14_mixed_reversed():
+    sc = Scenario3("S14_L3-14_갈래섞임역순_전제UPDATE",
+                   "UE B C2 → 갈래 ② RAISE(전제 없음), 0.9 s 뒤 UE A C1 → 전제가 mitm_ul_relay로 바뀌어 바로 UPDATE (L14-T8)",
+                   3000)
+    sc.ue(2).c2(B)
+    sc.ue(1).flow_F(B + 1000).cap_info(B + 1098)
+    raise14(sc, K(B + 120), "2", [])
+    update14(sc, K(B + 1098), "2", MITM)
+    return sc
+
+
+def s14_both_branches():
+    sc = Scenario3("S14_L3-14_한연결두갈래_RAISE-UPDATE",
+                   "C2 + t0+135 요청 없는 능력 응답 — 같은 칸에서 갈래 ② RAISE 직후 전제 변화로 UPDATE (L14-T9)", 3000)
+    sc.ue(3).c2(B).cap_info(B + 135)
+    raise14(sc, K(B + 120), "2", [])
+    update14(sc, K(B + 135), "2", MITM)
+    return sc
+
+
+def s14_once():
+    sc = Scenario3("S14_L3-14_연결당한번_RAISE", "C2 + t0+125 보안 전 능력 요청 하나 더 — 갈래 ② 걸림 1번(extra 1) (L14-T10)",
+                   3000)
+    sc.ue(3).c2(B).cap_enq(B + 125)
+    raise14(sc, K(B + 120), "2", [])
+    return sc
+
+
+def s14_nia0():
+    sc = Scenario3("S14_L3-14_nia0_갈래1_RAISE", "RRC 보안 nia0 + t0+220 요청 없는 능력 응답 — K = t0+300에 갈래 ① RAISE (L14-T11)",
+                   3000)
+    sc.ue(3).flow_F(B, integrity="nia0").cap_info(B + 220)
+    raise14(sc, K(B + 220), "1", MITM)
+    return sc
+
+
+def s14_cu_misconfig():
+    sc = Scenario3("S14_L3-14_CU설정오류5UE_UPDATE",
+                   "5개 UE가 200 ms 간격으로 모두 C2 — RAISE(첫 UE) + 1 s 모음 UPDATE (L14-T12)", 3000)
+    for i in range(5):
+        sc.ue(10 + i).c2(B + 200 * i)
+    raise14(sc, K(B + 120), "2", [])
+    update14(sc, K(B + 120) + 1000, "2")
+    return sc
+
+
+def s14_mid_join():
+    sc = Scenario3("S14_L3-14_중간합류_무경보", "첫 줄이 UECapabilityInformation 또는 UECapabilityEnquiry(mid_join) (L14-T13)",
+                   3000)
+    sc.ue(5).cap_info(B + 50)
+    sc.ue(6).cap_enq(B + 50)
+    return sc
+
+
+def s14_closed():
+    sc = Scenario3("S14_L3-14_마감전해제_갈래2_RAISE",
+                   "C2 흐름에서 t0+150 해제(released) — 마감 때 판정해 K = t0+200에 갈래 ② RAISE (L14-T14)", 3000)
+    sc.ue(3).c2(B, until=140).release(B + 150)
+    raise14(sc, K(B + 120), "2", [])
+    return sc
+
+
+def s14_late():
+    sc = Scenario3("S14_L3-14_늦은응답줄_무경보", "C1 줄(t_ms t0+98)이 t0+100 kpm2 뒤에 도착 — late, 판정 없음 (L14-T15)", 3000)
+    sc.ue(3).head(B).cap_info(B + 98)
+    sc.late_msgs = {"UECapabilityInformation"}
+    return sc
+
+
+def s14_dl_unobserved():
+    sc = Scenario3("S14_L3-14_DL미관측_불확실RAISE",
+                   "모든 kpm2 ue_evt_lost [\"DL\"], DL 줄 없음(F) — t0+175 응답이 보류돼 불확실 경보만 (L14-T16)", 3000)
+    sc.ue(3).flow_F(B).drop_dl()
+    sc.lost_all(["DL"])
+    held14(sc, K(B + 175))
+    return sc
+
+
+def s14_clear():
+    sc = Scenario3("S14_L3-14_해제_CLEAR",
+                   "L14-T8 앞 경우 뒤 마지막 걸림(B의 t_e = t0+520) + 60 s 이상인 첫 kpm2에 CLEAR, branch 2 (L14-T17)", 62000)
+    _mixed(sc)
+    raise14(sc, K(B + 98), "1", MITM)
+    update14(sc, K(B + 520), "2")
+    sc.alert("CLEAR", K(B + 520 + 60000 - 1), R14, branch="2", alert_kind="attack")
+    return sc
+
+
+def s14_order_after_sec():
+    sc = Scenario3("S14_L3-14_보안뒤순서위반_무경보",
+                   "RRC 보안 뒤 같은 창에서 능력 응답(t0+175)이 요청(t0+160)보다 먼저 옴 — AS 무결성 뒤라 흡수 (L14-T19)", 3000)
+    u = sc.ue(3).flow_F(B, cap=False).cap_info(B + 175)
+    u.out_of_order(B + 175, B + 160, "DL", "RRC", "UECapabilityEnquiry")
+    return sc
+
+
+def s14_order_before_sec():
+    sc = Scenario3("S14_L3-14_보안전순서위반_RAISE-UPDATE",
+                   "RRC 보안 전 t0+120 응답·t0+125 요청 — 갈래 ① RAISE 직후 같은 칸 갈래 ② UPDATE, 오탐을 기록해 두는 시험 (L14-T19)",
+                   3000)
+    sc.ue(3).flow_F(B, cap=False).cap_info(B + 120).cap_enq(B + 125)
+    raise14(sc, K(B + 120), "1", MITM)
+    update14(sc, K(B + 125), "2")
+    return sc
+
+
 SCENARIOS = [
     s24_normal, s24_guti_identity, s24_retx_once, s24_retx_twice, s24_raise, s24_unexpected_f,
     s24_after_normal_identity, s24_extra, s24_two_in_window, s24_request_lost, s24_loss_before_start,
@@ -420,6 +640,9 @@ SCENARIOS = [
     s24_after_as_integrity, s24_nia0, s24_smc_cmd, s24_protected_nas, s24_clear, s24_clear_extra, s24_two_ues,
     s24_held_more_waiting, s24_held_more_decided, s24_ngap_unlinked, s24_dl_unobserved, s24_order_violation,
     s24_duplicate,
+    s14_normal, s14_no_cap, s14_branch1, s14_branch2, s14_cmd, s14_failed, s14_on, s14_enq_lost, s14_smc_lost,
+    s14_mixed, s14_mixed_reversed, s14_both_branches, s14_once, s14_nia0, s14_cu_misconfig, s14_mid_join, s14_closed,
+    s14_late, s14_dl_unobserved, s14_clear, s14_order_after_sec, s14_order_before_sec,
 ]
 
 

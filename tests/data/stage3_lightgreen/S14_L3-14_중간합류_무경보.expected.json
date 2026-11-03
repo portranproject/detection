@@ -1,0 +1,7 @@
+{
+  "scenario": "S14_L3-14_중간합류_무경보",
+  "description": "첫 줄이 UECapabilityInformation 또는 UECapabilityEnquiry(mid_join) (L14-T13)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}
