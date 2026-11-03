@@ -21,6 +21,16 @@ std::vector<std::string> premise(bool mitm) {
   return mitm ? std::vector<std::string>{kPremise} : std::vector<std::string>{};
 }
 
+// 갈래별 후보 (20_ §4.1·§4.6): 갈래 ①의 모양은 #28 MNmap 중간자 변형(L3-28-V)도 만든다 — 11/03 결정으로 이 룰이 받는다
+// (4단계 코드 작성 직전에 반영, 4_ §6.3 #1). 갈래 ②(CU의 보안 전 요청)를 만드는 다른 공격은 없다.
+// 경보의 candidates는 실린 UE들 갈래 후보의 합이다 (L3-20과 같은 방식)
+constexpr const char* kCandMnmap = "L3-28-V";
+
+void add_candidates(const AlertUe& u, std::vector<std::string>& out) {
+  if (u.values.at("branch").get<std::string>() != "1") return;
+  if (std::find(out.begin(), out.end(), kCandMnmap) == out.end()) out.push_back(kCandMnmap);
+}
+
 }  // namespace
 
 CapHijackRule::CapHijackRule(CapHijackConfig cfg, AlertConfig alert)
@@ -125,7 +135,8 @@ void CapHijackRule::hit(const LookbackMarks::Decision& dc, int64_t now, const Ue
 
 // L3-14 값 채우기 (20_ §4.6): branch는 모든 이벤트에 그때의 갈래로(갈래 ②가 한 번이라도 걸렸으면 "2" — L3-21과 같음),
 // raise·update에 values(branch1_ues·branch2_ues·extra는 경보가 열린 뒤 누적, held·evicted는 raise면 직전 clear_quiet_ms 이동 창·
-// update면 누적), raise에 cond(RAISE를 일으킨 UE의 것)·candidates []·conditions(실린 UE들의 합)·params·로그 필드,
+// update면 누적), raise에 cond(RAISE를 일으킨 UE의 것)·candidates(실린 UE들 갈래 후보의 합 — 갈래 ① L3-28-V)·
+// conditions(실린 UE들의 합)·params·로그 필드,
 // 전제가 바뀐 update에 conditions
 void CapHijackRule::decorate(std::size_t from, RuleOutput& out, bool premise_changed) {
   for (std::size_t i = from; i < out.alerts.size(); ++i) {
@@ -147,6 +158,7 @@ void CapHijackRule::decorate(std::size_t from, RuleOutput& out, bool premise_cha
     const AlertUe& u = e.ues.front();
     e.cond = u.cond;
     e.candidates.clear();
+    for (const AlertUe& x : e.ues) add_candidates(x, e.candidates);
     e.conditions = premise(c.premise_mitm);
     e.params["clear_quiet_ms"] = cfg_.clear_quiet_ms;
     // 로그 줄 (20_ §4.6): branch= ue=cell/du_ue_id/uid req= resp= rrc_sec= — RAISE 골격은 branch를 찍지 않아 룰이 맨 앞에 넣는다

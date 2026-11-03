@@ -13,6 +13,9 @@ constexpr const char* kReq = "IdentityRequest";    // 짝인 요청 q (NAS DL)
 constexpr const char* kResp = "IdentityResponse";  // 응답 m (NAS UL)
 constexpr const char* kTag = "unsolicited";        // 표시 tag (20_ §1.2-3)
 constexpr const char* kPremise = "mitm_ul_relay";  // 전제 — 중간자가 UE 응답을 정상 망으로 넘김 (20_ §1.3)
+// 같은 모양을 만드는 다른 공격 — #28 MNmap 중간자 변형(여러 UE에 식별·능력 요청을 반복 주입하고 응답을 넘김).
+// 11/03 결정으로 이 룰이 받는다(20_ §3.1·§3.6, 4단계 코드 작성 직전에 반영 — 4_ §6.3 #1)
+constexpr const char* kCandMnmap = "L3-28-V";
 
 std::string ue_name(int64_t cell, int64_t du_ue_id, int64_t uid) {
   return std::to_string(cell) + "/" + std::to_string(du_ue_id) + "/" + std::to_string(uid);
@@ -89,7 +92,7 @@ void ImsiExtractorRule::hit(const LookbackMarks::Decision& dc, int64_t now, cons
 }
 
 // L3-24 값 채우기 (20_ §3.6): raise·update에 values(extra·held·evicted — raise의 held·evicted는 직전 clear_quiet_ms 이동 창,
-// update는 경보가 열린 뒤 누적), raise에 cond(RAISE를 일으킨 UE의 것)·candidates [](같은 모양을 만드는 다른 공격이 없다)·
+// update는 경보가 열린 뒤 누적), raise에 cond(RAISE를 일으킨 UE의 것)·candidates [L3-28-V](#28 MNmap 중간자 변형, 20_ §3.1)·
 // conditions [mitm_ul_relay](바뀌지 않으므로 update에는 싣지 않는다)·params·로그 필드. 갈래가 없어 branch는 뺀다
 void ImsiExtractorRule::decorate(std::size_t from, RuleOutput& out) {
   for (std::size_t i = from; i < out.alerts.size(); ++i) {
@@ -104,7 +107,7 @@ void ImsiExtractorRule::decorate(std::size_t from, RuleOutput& out) {
 
     const AlertUe& u = e.ues.front();
     e.cond = u.cond;
-    e.candidates.clear();
+    e.candidates = {kCandMnmap};
     e.conditions = std::vector<std::string>{kPremise};
     e.params["clear_quiet_ms"] = cfg_.clear_quiet_ms;
     // 로그 줄 (20_ §3.6): ue=cell/du_ue_id/uid req=R resp=A+1 rrc_sec= nas_sec=
