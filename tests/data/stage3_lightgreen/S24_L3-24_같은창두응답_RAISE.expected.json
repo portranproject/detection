@@ -1,0 +1,19 @@
+{
+  "scenario": "S24_L3-24_같은창두응답_RAISE",
+  "description": "같은 창 t0+60·t0+98에 요청 없는 응답 둘 — RAISE 1번(extra 1) (L24-T8)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-24",
+      "cell": 1,
+      "t_rel_ms": 1100,
+      "severity": "medium",
+      "alert_kind": "attack",
+      "conditions": [
+        "mitm_ul_relay"
+      ]
+    }
+  ]
+}

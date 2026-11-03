@@ -1,6 +1,6 @@
 // 퍼즈 하네스 — UdsServer::on_data 줄 분리 + Engine::feed_line 전체 경로 (2_ §1 줄 길이 상한·결정 G5, 4_ §3 처리 흐름;
 // 16_ W-19 — 이슈 #52). 입력 바이트를 첫 바이트가 정한 크기(1~200)의 뭉치로 나눠 소켓 없이 on_data에 넣는다 —
-// 부분 줄·줄 상한(4,096) 초과·다음 줄바꿈까지 버리기 경로가 걸린다. 줄은 네 룰(기본 설정)이 든 엔진과 증거 기록기
+// 부분 줄·줄 상한(4,096) 초과·다음 줄바꿈까지 버리기 경로가 걸린다. 줄은 실행 파일과 같은 룰(기본 설정)이 든 엔진과 증거 기록기
 // (작은 큐 — 넘침 경로)로 가고, 끝에 입력 침묵(3_ §8)도 한 번 넣는다. 보는 것은 크래시·UB·누수·멈춤뿐이고 판정의 옳고
 // 그름은 보지 않는다(그것은 시나리오 시험의 몫)
 #include "detect/engine.h"
@@ -10,6 +10,7 @@
 #include "detect/rules/auth_stall.h"
 #include "detect/rules/blind_dos.h"
 #include "detect/rules/bts_variant.h"
+#include "detect/rules/imsi_extractor.h"
 #include "detect/rules/uplink_dos.h"
 
 #include <algorithm>
@@ -27,6 +28,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, std::size_t size) {
   engine.add_ue_rule(std::make_unique<BlindDosRule>());
   engine.add_ue_rule(std::make_unique<AuthStallRule>());
   engine.add_ue_rule(std::make_unique<UplinkDosRule>());
+  engine.add_ue_rule(std::make_unique<ImsiExtractorRule>());
   EvidenceQueue queue(16);
   EvidenceRecorder recorder(EvidenceConfig{}, queue);
   UdsServer server("fuzz-no-socket", kMaxLine);  // open()을 부르지 않는다 — 소켓·파일을 만들지 않음

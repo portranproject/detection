@@ -32,7 +32,7 @@ TEST(Config, RepoConfigFileParses) {
   const DetectorConfig d;
   EXPECT_EQ(r.config.socket_path, d.socket_path);
   EXPECT_EQ(r.config.max_line_bytes, d.max_line_bytes);
-  ASSERT_EQ(r.config.rules.size(), 4u);  // L3-01-V + 2단계 L3-20·L3-01-O·L3-21 (10/29 이슈 #33)
+  ASSERT_EQ(r.config.rules.size(), 5u);  // L3-01-V + 2단계 L3-20·L3-01-O·L3-21 (10/29 이슈 #33) + 3단계 L3-24 (20_ §1.5)
   ASSERT_TRUE(r.config.rules.count("L3-01-V"));
   BtsVariantConfigResult b = parse_bts_variant_config(r.config.rules.at("L3-01-V"));
   ASSERT_TRUE(b.ok) << b.error;
@@ -103,6 +103,12 @@ TEST(Config, RepoConfigFileParses) {
   EXPECT_EQ(up.config.reg_repeat, pd.reg_repeat);
   EXPECT_EQ(up.config.clear_quiet_ms, pd.clear_quiet_ms);
   EXPECT_EQ(up.config.ignore_causes, pd.ignore_causes);
+  // 3단계 키도 구조체 기본값과 같다 (20_ §1.5, 4_ §6.2 #3)
+  auto ie = parse_imsi_extractor_config(r.config.rules.at("L3-24"));
+  ASSERT_TRUE(ie.ok) << ie.error;
+  EXPECT_TRUE(ie.warnings.empty());
+  EXPECT_EQ(ie.config.clear_quiet_ms, ImsiExtractorConfig{}.clear_quiet_ms);
+  EXPECT_EQ(ImsiExtractorConfig{}.clear_quiet_ms, 60000);
 }
 
 // 빠진 키는 기본값, 일부만 덮어쓰기
@@ -244,6 +250,7 @@ TEST(Config, Stage2RangeBoundaries) {
       {"L3-01-O", "clear_quiet_ms", 1000, 3600000}, {"L3-21", "window_ms", 1000, 600000},
       {"L3-21", "n_fail", 1, 10000},                {"L3-21", "fail_accept_wait_ms", 100, 60000},
       {"L3-21", "reg_repeat", 2, 100},              {"L3-21", "clear_quiet_ms", 1000, 3600000},
+      {"L3-24", "clear_quiet_ms", 1000, 3600000},  // 3단계 (20_ §1.5, L24-T25)
   };
   auto accepts = [](const Range& r, int64_t v, std::string* error = nullptr) {
     const std::string obj = "{\"" + r.key + "\":" + std::to_string(v) + "}";
@@ -263,6 +270,10 @@ TEST(Config, Stage2RangeBoundaries) {
       err = c.error;
     } else if (r.section == "L3-01-O") {
       auto c = parse_auth_stall_config(obj);
+      ok = c.ok;
+      err = c.error;
+    } else if (r.section == "L3-24") {
+      auto c = parse_imsi_extractor_config(obj);
       ok = c.ok;
       err = c.error;
     } else {
@@ -340,4 +351,18 @@ TEST(Config, Stage2UnknownAndReservedKeys) {
   EXPECT_EQ(up.warnings, (std::vector<std::string>{"unknown key rules.L3-21.n_fails (ignored)"}));
   EXPECT_EQ(parse_blind_dos_config(R"({"accept_wait":1})").warnings.size(), 1u);
   EXPECT_EQ(parse_auth_stall_config(R"({"n_stal":1})").warnings.size(), 1u);
+}
+
+// L24-T25 (20_ §3.8·§1.5): rules.L3-24.clear_quiet_ms — 999·3,600,001·문자열은 오류(실행 파일은 종료 코드 1), 모르는 키는 경고만
+TEST(Config, Stage3ImsiExtractor) {
+  EXPECT_TRUE(parse_imsi_extractor_config(R"({"clear_quiet_ms":1000})").ok);
+  EXPECT_TRUE(parse_imsi_extractor_config(R"({"clear_quiet_ms":3600000})").ok);
+  EXPECT_FALSE(parse_imsi_extractor_config(R"({"clear_quiet_ms":999})").ok);
+  EXPECT_FALSE(parse_imsi_extractor_config(R"({"clear_quiet_ms":3600001})").ok);
+  EXPECT_FALSE(parse_imsi_extractor_config(R"({"clear_quiet_ms":"60000"})").ok);
+  EXPECT_FALSE(parse_imsi_extractor_config(R"({"clear_quiet_ms":60000.5})").ok);
+  auto r = parse_imsi_extractor_config(R"({"clear_quiet":1})");
+  ASSERT_TRUE(r.ok);
+  EXPECT_EQ(r.warnings, (std::vector<std::string>{"unknown key rules.L3-24.clear_quiet (ignored)"}));
+  EXPECT_EQ(r.config.clear_quiet_ms, 60000);
 }

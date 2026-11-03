@@ -93,6 +93,12 @@ struct UplinkDosConfig {
   std::vector<int64_t> ignore_causes;   // ignore_causes — 실패로 세지 않을 Reject의 5GMM 원인값. 기본 끔 (15_ §5.2)
 };
 
+// 룰 L3-24 하향 IMSI 추출 (20_ §3.4·§1.5). 설정 파일 rules.L3-24에 키가 없으면 이 기본값을 쓴다 (4_ §1.2).
+// 대기 시간 키는 없다 — 마감 = 응답 시각 + 1 ms는 입력 순서에서 나온 값이라 바꾸면 판정이 틀어진다(20_ §1.2-3)
+struct ImsiExtractorConfig {
+  int64_t clear_quiet_ms = 60000;  // clear_quiet_ms — 마지막 걸림 뒤 이만큼 새로 걸린 UE가 없으면 해제 (20_ §3.5)
+};
+
 // 설정 파일 전체 (4_ §1.2). rules는 룰 ID → 그 룰의 설정 객체(JSON 문자열)다 — 공통 파서는 넘기기만 하고
 // 룰별 파서(parse_bts_variant_config 등)가 키·범위를 검사한다 (Q-46, 결정 J4)
 struct DetectorConfig {
@@ -134,5 +140,7 @@ BtsVariantConfigResult parse_bts_variant_config(std::string_view json_text);
 RuleConfigResult<BlindDosConfig> parse_blind_dos_config(std::string_view json_text);
 RuleConfigResult<AuthStallConfig> parse_auth_stall_config(std::string_view json_text);
 RuleConfigResult<UplinkDosConfig> parse_uplink_dos_config(std::string_view json_text);
+// 3단계 룰 L3-24 (20_ §1.5 표 — 타입·허용 범위)
+RuleConfigResult<ImsiExtractorConfig> parse_imsi_extractor_config(std::string_view json_text);
 
 }  // namespace detect

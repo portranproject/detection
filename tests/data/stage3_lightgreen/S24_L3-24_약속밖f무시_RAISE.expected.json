@@ -1,0 +1,19 @@
+{
+  "scenario": "S24_L3-24_약속밖f무시_RAISE",
+  "description": "T4에서 응답 줄에 약속에 없는 f(id_type IMEI) — 무시, 같은 RAISE (L24-T5)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-24",
+      "cell": 1,
+      "t_rel_ms": 1100,
+      "severity": "medium",
+      "alert_kind": "attack",
+      "conditions": [
+        "mitm_ul_relay"
+      ]
+    }
+  ]
+}

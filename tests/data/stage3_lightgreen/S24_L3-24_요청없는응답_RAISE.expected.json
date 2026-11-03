@@ -1,0 +1,19 @@
+{
+  "scenario": "S24_L3-24_요청없는응답_RAISE",
+  "description": "F + t0+98 요청 없는 IdentityResponse — K = t0+100에 RAISE, medium, 전제 mitm_ul_relay (L24-T4)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-24",
+      "cell": 1,
+      "t_rel_ms": 1100,
+      "severity": "medium",
+      "alert_kind": "attack",
+      "conditions": [
+        "mitm_ul_relay"
+      ]
+    }
+  ]
+}

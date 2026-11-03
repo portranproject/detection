@@ -1,0 +1,26 @@
+{
+  "scenario": "S24_L3-24_extra는해제를안늦춤_CLEAR",
+  "description": "보안 전 연결에 t0+98 걸림 + t0+30,000 같은 연결 extra — 해제 시각 그대로 (L24-T18)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-24",
+      "cell": 1,
+      "t_rel_ms": 1100,
+      "severity": "medium",
+      "alert_kind": "attack",
+      "conditions": [
+        "mitm_ul_relay"
+      ]
+    },
+    {
+      "kind": "CLEAR",
+      "rule": "L3-24",
+      "cell": 1,
+      "t_rel_ms": 61100,
+      "alert_kind": "attack"
+    }
+  ]
+}

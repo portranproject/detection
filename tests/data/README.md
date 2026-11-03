@@ -8,12 +8,12 @@
 | `scenarios/` | 룰 동작 시나리오 T1~T24 (3_ §9) |
 | `stage1/` | 1단계 표 II kpm2 (UE 컨텍스트 고갈 룰) |
 | `stage2_green/` | 2단계 녹색 4종 (kpm2 + ue_evt) |
-| `stage3_lightgreen/` | 3단계 연한 녹색 5종 |
+| `stage3_lightgreen/` | 3단계 — 룰 2개 L3-24(#24 하향 IMSI 추출)·L3-14(#14 UE 능력 탈취), `kpm2` + `ue_evt`(명세 `20_` §3.8·§4.8, 11/03). #9·#19·#23은 3단계 룰이 없다(L3-09 탐지 안 함, #19·#23 원형은 L3-20이 받음). 합성 생성기 `tools/gen_stage3.py`로 채운다(아래 절) |
 | `stage4_yellow/` | 4단계 노란색 12종 |
 | `captured/` | 실측 녹화 (회귀 테스트용) |
 
 - 파일명: `<시나리오·공격ID>_<짧은 설명>.jsonl`, 기대 결과는 같은 이름 `.expected.json`.
-- 생성: `tools/gen_kpm2.py`(합성) / `tools/ocu_log_to_kpm2.py`(실측 변환).
+- 생성: `tools/gen_kpm2.py`(1단계 합성) / `tools/gen_stage2.py`(2단계 합성) / `tools/gen_stage3.py`(3단계 합성) / `tools/ocu_log_to_kpm2.py`(실측 변환).
 
 ## `stage2_green/` 파일 요건 (10/29 이슈 #33)
 
@@ -39,3 +39,17 @@
 - **`late_until` 만료 (1, 이슈 #46 — `14_` §4.3, `15_` L01-T21):** `순서역전1줄_만료뒤_RAISE` — 같은 5대가 17 s 뒤 두 번째 AuthenticationRequest에 무응답 → 마감이 `late_until` 뒤라 고착 5건, RAISE 20.0 s. 생성기 옵션은 `Scenario.late_msgs`·`Scenario.drop_lost`. 상태표 포화는 기본 설정으로 재현되지 않아 단위 테스트(`tests/core/test_auth_stall.cpp` `SaturationStopsVerdicts_CurrentBehavior`, 상한 100)로 둔다.
 
 #3 Null 암호·무결성(L3-03)과 #20 IDLE형(L3-20-V2)은 탐지 대상이 아니므로(사용자 결정 10/29, `15_` §3·§2.1) 공격 시나리오를 두지 않는다. L3-20 IDLE형은 '경보 없음' 반례(`S20_L3-20_IDLE_무경보`)로만 둔다.
+
+## `stage3_lightgreen/` 파일 요건 (11/03 이슈 #60 — `20_` §3.8·§4.8, `4_` §6.2 #5·#6)
+
+`tests/core/test_scenarios.cpp`가 이 폴더를 실행 파일과 같은 룰 구성(1단계 + 2단계 세 룰 + 3단계 룰, 기본값)으로 재생해 같은 이름 `.expected.json`과 비교한다(`Stage3Scenario`). ctest `data.scenarios`가 이 폴더도 매번 돈다. 요건은 `stage2_green/`과 같고 다른 것만 적는다.
+
+- **경보 시각은 정확히 비교한다.** 3단계 판정은 '판정할 줄이 든 창의 `kpm2`'(마감 = 줄 시각 + 1 ms, `20_` §1.2-3)로 시각이 정확히 정해진다.
+- `.expected.json`의 `alerts` 항목에 **`conditions`**(3단계 성립 전제 배열, `20_` §1.3)를 적으면 그 이벤트에 그 값이 실렸는지 비교한다. 공격 경보 RAISE는 `["mitm_ul_relay"]`, 불확실 경보(`alert_kind` anomaly)에는 싣지 않는다.
+- **생성:** `python3 tools/gen_stage3.py [출력 폴더]`. 2단계 생성기 `gen_stage2.py`의 `UE`·`Scenario` 틀을 그대로 쓰고 3단계 메시지 4개와 기본 흐름 F(`20_` §3.8)를 더했다. 기대 경보 시각은 생성기가 계산하지 않고 명세 식 K(t)(t를 품은 창의 `t_end`)로 손 계산한 값이다. 연결 시작 t0 = 1000(상대 ms).
+- 파일명은 `S<룰 번호>_<룰 ID>_<설명>_<결과>`, 대응 명세 시험은 설명 끝 괄호(`20_` §3.8 L24-T·§4.8 L14-T).
+
+### 현재 들어 있는 시나리오 (30개 — 생성기)
+
+- **L3-24 하향 IMSI 추출 (30):** 정상흐름·모르는GUTI식별·AMF재전송(늦은응답1회·두번응답)·AS무결성뒤응답·NAS암호·중간합류·늦은응답줄·NGAP미연결(무경보) / 요청없는응답·약속밖f무시·정상식별뒤추가응답·같은연결추가응답·같은창두응답·연결전로스·UL로스·창경계응답·같은창해제·nia0·보안명령뒤완료전(RAISE) / 두UE UPDATE / 해제·extra는해제를안늦춤(CLEAR) / 요청줄로스·연결뒤로스·보류연결추가응답(대기중·결정뒤)·DL미관측(불확실 경보 RAISE) / 순서위반·응답중복(RAISE — 분석 엔진 전제를 어긴 입력의 오탐을 기록해 두는 시험, `20_` §3.7).
+- 데이터로 두지 않은 L3-24 시험은 단위 시험(`tests/core/test_imsi_extractor.cpp`)에만 있다 — L24-T23(상태표 밀어내기, 상한 100), L24-T26(재생 결정성), L24-T25(설정, `test_config.cpp`).

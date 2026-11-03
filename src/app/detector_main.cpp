@@ -14,6 +14,7 @@
 #include "detect/rules/auth_stall.h"
 #include "detect/rules/blind_dos.h"
 #include "detect/rules/bts_variant.h"
+#include "detect/rules/imsi_extractor.h"
 #include "detect/rules/uplink_dos.h"
 
 #include <atomic>
@@ -155,13 +156,16 @@ int main(int argc, char** argv) {
   BlindDosConfig blind_dos;
   AuthStallConfig auth_stall;
   UplinkDosConfig uplink_dos;
+  ImsiExtractorConfig imsi_extractor;
   if (!read_rule(cfg, BtsVariantRule::kId, parse_bts_variant_config, bts) ||
       !read_rule(cfg, BlindDosRule::kId, parse_blind_dos_config, blind_dos) ||
       !read_rule(cfg, AuthStallRule::kId, parse_auth_stall_config, auth_stall) ||
-      !read_rule(cfg, UplinkDosRule::kId, parse_uplink_dos_config, uplink_dos))
+      !read_rule(cfg, UplinkDosRule::kId, parse_uplink_dos_config, uplink_dos) ||
+      !read_rule(cfg, ImsiExtractorRule::kId, parse_imsi_extractor_config, imsi_extractor))
     return 1;
   for (const auto& [id, _] : cfg.rules)
-    if (id != BtsVariantRule::kId && id != BlindDosRule::kId && id != AuthStallRule::kId && id != UplinkDosRule::kId)
+    if (id != BtsVariantRule::kId && id != BlindDosRule::kId && id != AuthStallRule::kId && id != UplinkDosRule::kId &&
+        id != ImsiExtractorRule::kId)
       log_err("WARN", "unknown rule id rules." + id + " (ignored)");
 
   // 엔진·룰·증거 (4_ §3). 버퍼 크기는 W와 pre_slots에서 정한다 (3_ §3·§7.1)
@@ -177,6 +181,8 @@ int main(int argc, char** argv) {
   engine.add_ue_rule(std::make_unique<BlindDosRule>(blind_dos, cfg.alert));
   engine.add_ue_rule(std::make_unique<AuthStallRule>(auth_stall, cfg.alert));
   engine.add_ue_rule(std::make_unique<UplinkDosRule>(uplink_dos, cfg.alert));
+  // 3단계 룰 (20_). 2단계 다음, L3-24 → L3-14 순서 (20_ §0, 4_ §6.2 #3). 2단계와 같이 hello.ue_evt가 있을 때만 돈다
+  engine.add_ue_rule(std::make_unique<ImsiExtractorRule>(imsi_extractor, cfg.alert));
 
   EvidenceQueue queue(cfg.evidence.queue_max);
   EvidenceRecorder recorder(cfg.evidence, queue, cfg.alert);

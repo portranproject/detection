@@ -1,0 +1,7 @@
+{
+  "scenario": "S24_L3-24_NGAP미연결_무경보",
+  "description": "du_ue_id null IdentityResponse(via NGAP) — UE 항목에 붙지 않음 (L24-T21)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}
