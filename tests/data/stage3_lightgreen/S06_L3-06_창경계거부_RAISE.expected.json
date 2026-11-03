@@ -1,0 +1,19 @@
+{
+  "scenario": "S06_L3-06_창경계거부_RAISE",
+  "description": "거부 t_r = t0+100(앞 창 t_end) — K = t0+200에 RAISE (L06-T12)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-06",
+      "cell": 1,
+      "t_rel_ms": 1200,
+      "severity": "medium",
+      "alert_kind": "attack",
+      "conditions": [
+        "mitm_ul_relay"
+      ]
+    }
+  ]
+}

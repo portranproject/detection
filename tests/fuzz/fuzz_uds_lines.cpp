@@ -12,6 +12,7 @@
 #include "detect/rules/bts_variant.h"
 #include "detect/rules/cap_hijack.h"
 #include "detect/rules/imsi_extractor.h"
+#include "detect/rules/nas_desync.h"
 #include "detect/rules/uplink_dos.h"
 
 #include <algorithm>
@@ -31,6 +32,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, std::size_t size) {
   engine.add_ue_rule(std::make_unique<UplinkDosRule>());
   engine.add_ue_rule(std::make_unique<ImsiExtractorRule>());
   engine.add_ue_rule(std::make_unique<CapHijackRule>());
+  engine.add_ue_rule(std::make_unique<NasDesyncRule>());
   EvidenceQueue queue(16);
   EvidenceRecorder recorder(EvidenceConfig{}, queue);
   UdsServer server("fuzz-no-socket", kMaxLine);  // open()을 부르지 않는다 — 소켓·파일을 만들지 않음

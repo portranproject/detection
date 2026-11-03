@@ -2,7 +2,7 @@
 // 3단계 '되돌아보는 판정'의 공통 바탕 (20_ §1.2, 4_ §6.2 #4). 2단계 룰은 '요청 뒤 T 안에 응답이 오는가'를 앞으로 기다리지만,
 // 3단계 룰은 '이 응답 앞에 요청이 있었는가'(L3-24·L3-14 갈래 ①)·'이 요청 앞에 보안이 섰는가'(L3-14 갈래 ②)를 되돌아본다.
 // 판정 시점(판정할 줄이 든 창의 kpm2 — 마감 = 줄 시각 + 1 ms)·보류(연결 시작 뒤 DL 로스)·연결당 한 번·표시의 생애가 같아
-// 여기 한 곳에 둔다. 4단계 AN-06b(요청 없는 Security Mode Reject)도 같은 구조다 (8_ '명세 작성')
+// 여기 한 곳에 둔다. 3단계로 올린 L3-06(요청 없는 Security Mode Reject — 옛 4단계 AN-06b)도 같은 구조다 (20_ §5)
 
 #include "detect/deadline_queue.h"
 #include "detect/ue_rule.h"
@@ -16,6 +16,7 @@
 #include <optional>
 #include <string>
 #include <tuple>
+#include <vector>
 
 namespace detect {
 
@@ -28,6 +29,10 @@ bool as_integrity_on(const UeState& before);
 // 짝인 요청 수 R = cnt[req] ≤ 이미 본 응답 수 A = cnt[resp]. '한 번이라도 요청이 있었나'가 아니라 횟수로 맞춘다 —
 // 정상 식별 절차 뒤 다시 주입하면 요청 1·응답 2가 되고, AMF 재전송에 여러 번 답해도 응답 수가 요청 수를 넘지 않는다
 bool unsolicited(const UeState& before, Proto proto, const std::string& req, const std::string& resp);
+// 응답 집합판 (20_ §1.2 m/q 표·§5.3, 11/03 L3-06): 요청에 대한 정상 응답이 둘 이상인 절차에서는 A = 집합 안 메시지 cnt의 합이다 —
+// NAS 보안 모드 명령의 응답은 Complete와 Reject 둘이라, 정상 명령 → Complete 뒤 주입된 명령의 Reject를 R 1·A 1로 잡는다
+bool unsolicited(const UeState& before, Proto proto, const std::string& req, const std::vector<std::string>& resps);
+int64_t count_any(const UeState& n, Proto proto, const std::vector<std::string>& msgs);
 
 // 되돌아보는 판정의 표시 (20_ §1.2 '표시의 생애'). 룰이 하나씩 갖고, 표시는 항목 (키, uid)와 tag(갈래 — L3-14는
 // unsolicited·pre_sec_enquiry)마다 하나다. 상태는 대기(마감 처리 전)와 결정됨(걸림·보류)이고, 결정된 표시는 마감에서 지우지

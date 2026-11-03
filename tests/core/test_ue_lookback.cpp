@@ -87,6 +87,30 @@ TEST(UeLookback, UnsolicitedCountsByProto) {
   EXPECT_TRUE(unsol(rrc));
 }
 
+// 응답 집합 (20_ §1.2 m/q 표·§5.3 — L3-06): A = Complete + Reject. 정상 명령 → Complete(R 1, A 1) 뒤 Reject는 요청 없는 응답,
+// 정상 명령 → UE 거부(R 1, A 0)는 아니다. RRC의 SecurityModeComplete는 NAS 집합에 들지 않는다
+TEST(UeLookback, UnsolicitedResponseSet) {
+  const std::vector<std::string> set = {"SecurityModeComplete", "SecurityModeReject"};
+  auto smc = [&](int64_t cmd, int64_t cpl, int64_t rej) {
+    UeState s;
+    if (cmd) s.cnt[{Proto::NAS, "SecurityModeCommand"}] = cmd;
+    if (cpl) s.cnt[{Proto::NAS, "SecurityModeComplete"}] = cpl;
+    if (rej) s.cnt[{Proto::NAS, "SecurityModeReject"}] = rej;
+    return s;
+  };
+  EXPECT_TRUE(unsolicited(smc(0, 0, 0), Proto::NAS, "SecurityModeCommand", set));   // 보안 전 주입 (J1)
+  EXPECT_FALSE(unsolicited(smc(1, 0, 0), Proto::NAS, "SecurityModeCommand", set));  // 정상 거부
+  EXPECT_TRUE(unsolicited(smc(1, 1, 0), Proto::NAS, "SecurityModeCommand", set));   // 정상 완료 뒤 주입 (J2)
+  EXPECT_FALSE(unsolicited(smc(2, 0, 1), Proto::NAS, "SecurityModeCommand", set));  // 재전송마다 거부
+  EXPECT_EQ(count_any(smc(1, 1, 2), Proto::NAS, set), 3);
+  UeState rrc = smc(1, 0, 0);
+  rrc.cnt[{Proto::RRC, "SecurityModeComplete"}] = 1;
+  EXPECT_FALSE(unsolicited(rrc, Proto::NAS, "SecurityModeCommand", set));
+  // 응답 하나짜리 함수는 집합 {resp}와 같다
+  EXPECT_EQ(unsol(counts(1, 1)), unsolicited(counts(1, 1), Proto::NAS, "IdentityRequest",
+                                             std::vector<std::string>{"IdentityResponse"}));
+}
+
 // §1.2-2·3: 표시가 없으면 대기 표시 + 마감 t + 1(DL). 같은 (키, uid, tag)에 또 오면 extra만 — 연결당 한 번. tag(갈래)는 따로
 TEST(UeLookback, StartOncePerConnectionAndTag) {
   Ctx c;

@@ -1,0 +1,7 @@
+{
+  "scenario": "S06_L3-06_늦은거부줄_무경보",
+  "description": "J1 줄(t_ms t0+98)이 t0+100 kpm2 뒤에 도착 — late, 판정 없음 (L06-T15)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

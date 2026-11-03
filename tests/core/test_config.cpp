@@ -32,7 +32,8 @@ TEST(Config, RepoConfigFileParses) {
   const DetectorConfig d;
   EXPECT_EQ(r.config.socket_path, d.socket_path);
   EXPECT_EQ(r.config.max_line_bytes, d.max_line_bytes);
-  ASSERT_EQ(r.config.rules.size(), 6u);  // L3-01-V + 2단계 L3-20·L3-01-O·L3-21 (10/29 이슈 #33) + 3단계 L3-24·L3-14 (20_ §1.5)
+  // L3-01-V + 2단계 L3-20·L3-01-O·L3-21 (10/29 이슈 #33) + 3단계 L3-24·L3-14 (20_ §1.5) + 3단계로 올린 L3-06 (20_ §5.4)
+  ASSERT_EQ(r.config.rules.size(), 7u);
   ASSERT_TRUE(r.config.rules.count("L3-01-V"));
   BtsVariantConfigResult b = parse_bts_variant_config(r.config.rules.at("L3-01-V"));
   ASSERT_TRUE(b.ok) << b.error;
@@ -114,6 +115,12 @@ TEST(Config, RepoConfigFileParses) {
   EXPECT_TRUE(ch.warnings.empty());
   EXPECT_EQ(ch.config.clear_quiet_ms, CapHijackConfig{}.clear_quiet_ms);
   EXPECT_EQ(CapHijackConfig{}.clear_quiet_ms, 60000);
+  // 3단계로 올린 L3-06 (20_ §5.4)
+  auto nd = parse_nas_desync_config(r.config.rules.at("L3-06"));
+  ASSERT_TRUE(nd.ok) << nd.error;
+  EXPECT_TRUE(nd.warnings.empty());
+  EXPECT_EQ(nd.config.clear_quiet_ms, NasDesyncConfig{}.clear_quiet_ms);
+  EXPECT_EQ(NasDesyncConfig{}.clear_quiet_ms, 60000);
 }
 
 // 빠진 키는 기본값, 일부만 덮어쓰기
@@ -257,6 +264,7 @@ TEST(Config, Stage2RangeBoundaries) {
       {"L3-21", "reg_repeat", 2, 100},              {"L3-21", "clear_quiet_ms", 1000, 3600000},
       {"L3-24", "clear_quiet_ms", 1000, 3600000},  // 3단계 (20_ §1.5, L24-T25)
       {"L3-14", "clear_quiet_ms", 1000, 3600000},  // 3단계 (20_ §1.5, L14-T20)
+      {"L3-06", "clear_quiet_ms", 1000, 3600000},  // 3단계로 올린 L3-06 (20_ §5.4, L06-T20)
   };
   auto accepts = [](const Range& r, int64_t v, std::string* error = nullptr) {
     const std::string obj = "{\"" + r.key + "\":" + std::to_string(v) + "}";
@@ -284,6 +292,10 @@ TEST(Config, Stage2RangeBoundaries) {
       err = c.error;
     } else if (r.section == "L3-14") {
       auto c = parse_cap_hijack_config(obj);
+      ok = c.ok;
+      err = c.error;
+    } else if (r.section == "L3-06") {
+      auto c = parse_nas_desync_config(obj);
       ok = c.ok;
       err = c.error;
     } else {
@@ -387,4 +399,18 @@ TEST(Config, Stage3CapHijack) {
   auto r = parse_cap_hijack_config(R"({"branch2":true})");
   ASSERT_TRUE(r.ok);
   EXPECT_EQ(r.warnings, (std::vector<std::string>{"unknown key rules.L3-14.branch2 (ignored)"}));
+}
+
+// L06-T20 (20_ §5.8·§5.4): rules.L3-06.clear_quiet_ms — 범위 밖·문자열·실수는 오류(실행 파일은 종료 코드 1), 모르는 키는 경고만
+TEST(Config, Stage3NasDesync) {
+  EXPECT_TRUE(parse_nas_desync_config(R"({"clear_quiet_ms":1000})").ok);
+  EXPECT_TRUE(parse_nas_desync_config(R"({"clear_quiet_ms":3600000})").ok);
+  EXPECT_FALSE(parse_nas_desync_config(R"({"clear_quiet_ms":999})").ok);
+  EXPECT_FALSE(parse_nas_desync_config(R"({"clear_quiet_ms":3600001})").ok);
+  EXPECT_FALSE(parse_nas_desync_config(R"({"clear_quiet_ms":"60000"})").ok);
+  EXPECT_FALSE(parse_nas_desync_config(R"({"clear_quiet_ms":60000.5})").ok);
+  auto r = parse_nas_desync_config(R"({"wait_ms":1})");
+  ASSERT_TRUE(r.ok);
+  EXPECT_EQ(r.warnings, (std::vector<std::string>{"unknown key rules.L3-06.wait_ms (ignored)"}));
+  EXPECT_EQ(r.config.clear_quiet_ms, 60000);
 }

@@ -176,6 +176,13 @@ void parse_cap_hijack(const json& r, CapHijackConfig& c, std::vector<std::string
   read_int_in(r, "clear_quiet_ms", c.clear_quiet_ms, 1000, 3600000, w);
 }
 
+// rules."L3-06" (20_ §5.4) — 키는 해제 시간 하나. 범위는 3단계 공통(20_ §1.5)
+void parse_nas_desync(const json& r, NasDesyncConfig& c, std::vector<std::string>& warnings) {
+  const std::string w = "rules.L3-06.";
+  warn_unknown(r, {"clear_quiet_ms"}, w, warnings);
+  read_int_in(r, "clear_quiet_ms", c.clear_quiet_ms, 1000, 3600000, w);
+}
+
 // ue_table (14_ §9 — 허용 범위는 10/29 이슈 #33 사용자 결정). tomb_ms·tomb_max는 예약 키라 경고만 (14_ §3.2)
 void parse_ue_table(const json& e, UeTableConfig& c, std::vector<std::string>& warnings) {
   const std::string w = "ue_table.";
@@ -310,6 +317,10 @@ RuleConfigResult<ImsiExtractorConfig> parse_imsi_extractor_config(std::string_vi
 
 RuleConfigResult<CapHijackConfig> parse_cap_hijack_config(std::string_view json_text) {
   return parse_rule<CapHijackConfig>(json_text, "L3-14", parse_cap_hijack);
+}
+
+RuleConfigResult<NasDesyncConfig> parse_nas_desync_config(std::string_view json_text) {
+  return parse_rule<NasDesyncConfig>(json_text, "L3-06", parse_nas_desync);
 }
 
 }  // namespace detect

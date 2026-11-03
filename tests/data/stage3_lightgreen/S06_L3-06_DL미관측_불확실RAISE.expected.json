@@ -1,0 +1,16 @@
+{
+  "scenario": "S06_L3-06_DL미관측_불확실RAISE",
+  "description": "모든 kpm2 ue_evt_lost [\"DL\"], DL 줄 없음 — 정상 거부(T2)의 거부가 R 0으로 후보가 되나 보류돼 불확실 경보만 (20_ §5.7)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-06",
+      "cell": 1,
+      "t_rel_ms": 1200,
+      "severity": "medium",
+      "alert_kind": "anomaly"
+    }
+  ]
+}
