@@ -45,6 +45,7 @@ add_library(detect
   src/core/rules/identity_request.cpp
   src/core/rules/short_repeat.cpp
   src/core/rules/setup_repeat.cpp
+  src/core/rules/known_reg_burst.cpp
   src/core/evidence.cpp
   src/core/evidence_queue.cpp
   src/core/config.cpp

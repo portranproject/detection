@@ -1,0 +1,7 @@
+{
+  "scenario": "SAN08_AN-08_초기등록5UE_무경보",
+  "description": "5 UE의 첫 등록(initial, RegistrationAccept로 S1~S5 할당) — 걸림 없음 (AN08-T1)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

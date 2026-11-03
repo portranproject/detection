@@ -1,0 +1,20 @@
+{
+  "scenario": "SAN08_AN-08_재시도뒤4UE_RAISE",
+  "description": "S1의 재시도 5번 뒤 S2~S5가 창 안에 이동 등록 — 서로 다른 S-TMSI 5로 RAISE(S1 칸 하나, 경보 값 extra 4) (11/04 사용자 결정, AN08-T8)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "AN-08",
+      "cell": 1,
+      "t_rel_ms": 71100,
+      "severity": "medium",
+      "alert_kind": "anomaly",
+      "candidates": [
+        "L3-17-OV",
+        "L3-26-O"
+      ]
+    }
+  ]
+}

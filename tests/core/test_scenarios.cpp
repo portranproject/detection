@@ -14,6 +14,7 @@
 #include "detect/rules/bts_variant.h"
 #include "detect/rules/cap_hijack.h"
 #include "detect/rules/imsi_extractor.h"
+#include "detect/rules/known_reg_burst.h"
 #include "detect/rules/nas_desync.h"
 #include "detect/rules/identity_request.h"
 #include "detect/rules/sec_reauth.h"
@@ -84,6 +85,7 @@ std::vector<AlertEvent> replay(const std::string& path) {
   engine.add_ue_rule(std::make_unique<IdentityRequestRule>());
   engine.add_ue_rule(std::make_unique<ShortRepeatRule>());
   engine.add_ue_rule(std::make_unique<SetupRepeatRule>());
+  engine.add_ue_rule(std::make_unique<KnownRegBurstRule>());
   std::ifstream in(path);
   std::string line;
   std::vector<AlertEvent> alerts;

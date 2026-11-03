@@ -67,6 +67,8 @@
 "\"RRCReject\""
 "\"RRCSetup\""
 "\"UEContextReleaseComplete\""
+"\"reg_type\":\"mobility\""
+"\"RegistrationAccept\""
 "\"F1Reset\""
 "\"f\""
 "\"s_tmsi\":\"0x"

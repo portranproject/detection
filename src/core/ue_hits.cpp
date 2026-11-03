@@ -22,11 +22,11 @@ void refresh(AlertUe& u, const UeState& s) {
 HitWindow::HitWindow(std::string rule, AlertConfig alert, int64_t window_ms, int64_t n, int64_t clear_quiet_ms)
     : window_ms_(window_ms), n_(n), clear_quiet_ms_(clear_quiet_ms), book_(std::move(rule), alert, "anomaly", 4) {}
 
-bool HitWindow::hit(const UeId& id, AlertUe u, bool force) {
+bool HitWindow::hit(const UeId& id, AlertUe u, bool force, std::optional<UeId> ref) {
   if (conns_.count(id)) return false;
   const int64_t cell = id.first.cell_id;
   conns_[id] = Conn{cell, false};
-  cells_[cell].fresh.push_back(Hit{id, std::move(u), {}, force});
+  cells_[cell].fresh.push_back(Hit{id, ref.value_or(id), std::move(u), {}, force});
   return true;
 }
 
@@ -46,13 +46,14 @@ void HitWindow::add(const UeId& id, const std::string& name, int64_t n) {
     if (h.id == id) h.acc[name] += n;
 }
 
+// 아직 kpm2를 거치지 않은 걸림 가운데 이 연결을 가리키는 것(ref)은 마지막 상태로 식별·uncertain을 채운다. 걸림 키가 연결이면
+// 연결 기록도 지운다 — S-TMSI 키(AN-08)는 룰이 회복 때 forget으로 지운다
 void HitWindow::on_close(const UeState& last) {
   const UeId id{last.key, last.uid};
-  auto it = conns_.find(id);
-  if (it == conns_.end()) return;
-  for (Hit& h : cells_[it->second.cell].fresh)
-    if (h.id == id) refresh(h.u, last);
-  conns_.erase(it);
+  if (auto c = cells_.find(last.key.cell_id); c != cells_.end())
+    for (Hit& h : c->second.fresh)
+      if (h.ref == id) refresh(h.u, last);
+  conns_.erase(id);
 }
 
 // 경보에 실림 — 쌓아 둔 누적 수를 경보 값에 더하고, 그 뒤 누적 수는 바로 더하게 표시한다. 해제 기준 시각을 올린다
@@ -75,7 +76,7 @@ void HitWindow::tick(int64_t cell, int64_t t, bool input_lost, const UeRuleCtx& 
   fn(from);
 
   for (Hit& h : c.fresh) {
-    if (const UeState* s = ctx.table.find(h.id.first); s && s->uid == h.id.second) refresh(h.u, *s);
+    if (const UeState* s = ctx.table.find(h.ref.first); s && s->uid == h.ref.second) refresh(h.u, *s);
     c.win.push_back(h);
     while (c.win.front().u.t_hit <= h.u.t_hit - window_ms_) c.win.pop_front();
     const bool sat = h.force || static_cast<int64_t>(c.win.size()) >= n_;
@@ -116,11 +117,14 @@ int64_t HitWindow::window(int64_t cell) const {
 }
 
 int64_t HitWindow::window_with(int64_t cell, const std::string& cond) const {
+  return window_if(cell, [&](const AlertUe& u) { return std::find(u.cond.begin(), u.cond.end(), cond) != u.cond.end(); });
+}
+
+int64_t HitWindow::window_if(int64_t cell, const std::function<bool(const AlertUe&)>& pred) const {
   auto it = cells_.find(cell);
   if (it == cells_.end()) return 0;
-  return static_cast<int64_t>(std::count_if(it->second.win.begin(), it->second.win.end(), [&](const Hit& h) {
-    return std::find(h.u.cond.begin(), h.u.cond.end(), cond) != h.u.cond.end();
-  }));
+  return static_cast<int64_t>(
+      std::count_if(it->second.win.begin(), it->second.win.end(), [&](const Hit& h) { return pred(h.u); }));
 }
 
 int64_t HitWindow::count(int64_t cell, const std::string& name) const {

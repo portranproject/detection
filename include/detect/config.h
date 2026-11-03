@@ -150,6 +150,14 @@ struct SetupRepeatConfig {
   int64_t clear_quiet_ms = 60000;  // clear_quiet_ms — 마지막 걸림 뒤 이만큼 새로 걸린 UE가 없으면 해제 (21_ §7.5)
 };
 
+// 4단계 룰 AN-08 기존 UE들의 재등록 급증 (21_ §8.4·§1.2). 설정 파일 rules.AN-08에 키가 없으면 이 기본값을 쓴다
+struct KnownRegBurstConfig {
+  int64_t window_ms = 60000;       // window_ms — W, 셀 창. 가짜 TAC 방송에 셀의 UE들이 수십 초 안에 몰린다 (21_ §8.4)
+  int64_t n_reg = 5;               // n_reg — N, 창 안 이동 등록 UE(서로 다른 S-TMSI) 수 문턱. 2단계 셀 문턱과 같은 규모
+  int64_t known_ms = 600000;       // known_ms — K, '최근 본 UE'의 폭 — 이력 표 보관(tomb_ms 10분)과 같게
+  int64_t clear_quiet_ms = 60000;  // clear_quiet_ms — 마지막 성립 뒤 이만큼 새 성립이 없으면 해제 (21_ §8.5)
+};
+
 // 설정 파일 전체 (4_ §1.2). rules는 룰 ID → 그 룰의 설정 객체(JSON 문자열)다 — 공통 파서는 넘기기만 하고
 // 룰별 파서(parse_bts_variant_config 등)가 키·범위를 검사한다 (Q-46, 결정 J4)
 struct DetectorConfig {
@@ -202,5 +210,6 @@ RuleConfigResult<SecReauthConfig> parse_sec_reauth_config(std::string_view json_
 RuleConfigResult<IdentityRequestConfig> parse_identity_request_config(std::string_view json_text);
 RuleConfigResult<ShortRepeatConfig> parse_short_repeat_config(std::string_view json_text);
 RuleConfigResult<SetupRepeatConfig> parse_setup_repeat_config(std::string_view json_text);
+RuleConfigResult<KnownRegBurstConfig> parse_known_reg_burst_config(std::string_view json_text);
 
 }  // namespace detect

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """합성 ue_evt+kpm2 4단계 시나리오(.jsonl)와 기대 경보(.expected.json) 생성기.
 
-명세: 4단계 룰 21_탐지엔진_4단계-노란색룰_명세서.md(AN-01 §3.8·AN-06a §4.8·AN-02 §5.8·AN-04 §6.8·AN-07 §7.8 — 뒤 룰은 구현 이슈마다 더함),
+명세: 4단계 룰 21_탐지엔진_4단계-노란색룰_명세서.md(AN-01 §3.8·AN-06a §4.8·AN-02 §5.8·AN-04 §6.8·AN-07 §7.8·AN-08 §8.8),
 입력 2_ §6,
 상태·경보 14_.
 실행: python3 tools/gen_stage4.py [출력 폴더]  (기본 tests/data/stage4_yellow/).
 tests/core/test_scenarios.cpp가 이 폴더를 실행 파일과 같은 룰 구성(1~4단계, 기본값)으로 재생해 같은 이름 .expected.json과
 비교한다(Stage4Scenario, 시각 정확 비교). 3단계 생성기 gen_stage3.py의 UE3·Scenario3·기본 흐름 F·K(t)를 그대로 쓰고
-4단계 흐름(AN-01 동기 실패 흐름 S·AN-06a 재등장 흐름 R·AN-02 등록 흐름 G·AN-04 짧은 연결 흐름 P·AN-07 미완료 흐름 Q)과 기대 경보의 candidates(4단계는 후보가 경보의
+4단계 흐름(AN-01 동기 실패 흐름 S·AN-06a 재등장 흐름 R·AN-02 등록 흐름 G·AN-04 짧은 연결 흐름 P·AN-07 미완료 흐름 Q·AN-08 이동 등록 흐름 M)과 기대 경보의 candidates(4단계는 후보가 경보의
 뜻이다, 21_ §1)만 더한다.
 
 기대 경보 시각은 명세 식으로 손 계산한 값이다(3단계와 같은 방식):
@@ -19,7 +19,7 @@ tests/core/test_scenarios.cpp가 이 폴더를 실행 파일과 같은 룰 구�
 재생은 설정 기본값(AN-01 n_sync 1·AN-06a n_reauth 1)이라 문턱을 바꾼 시험(AN01-T6·T7·AN06a-T6)·밀어내기·설정·결정성은
 단위 시험만이다. AN-04 창 밖(AN04-T3 둘째 — 400 s 넘는 데이터)·유령 정리 닫힘(AN04-T7 — 기본값으로는 유령 17개 필요)도 단위
 시험만이고, 재생은 같은 '판정하지 않는 닫힘' 갈래인 du_reset(F1Reset)으로 본다. AN-07의 reused 닫힘·회복 뒤 다시 걸림도 단위
-시험만이다.
+시험만이다. AN-08의 known_ms 만료·RRC 또는 NAS·같은 연결 재전송·mid_join·로스·회복도 단위 시험만이다.
 """
 
 import os
@@ -36,6 +36,7 @@ S_ALLOC = "0x0123456789ab"    # 이 망이 RegistrationAccept로 준 S-TMSI (AN-
 S_UNKNOWN = "0x00fedcba9876"  # 모르는 S-TMSI
 S_SHORT = "0x00000a0b0c0d"    # 짧은 연결을 반복하는 S-TMSI (AN-04 짧은 연결 흐름 P)
 S_SHORT2 = "0x0000fedcba98"   # 둘째 S-TMSI (AN-04 UPDATE)
+S_MOB = ["0x0000b000000%d" % i for i in range(1, 6)]  # AN-08 이동 등록 흐름 M의 S1~S5
 
 
 def part1_of(s):
@@ -119,6 +120,24 @@ class UE4(gen_stage3.UE3):
         self.setup_complete(t0 + 10, s_tmsi=s)
         self.ctx_release_cmd(t0 + 5995)
         return self.ctx_release_complete(t0 + 6000)
+
+    # 이동 등록 흐름 M의 뒷부분 (21_ §8.8): RRCSetupRequest(Part1) → RRCSetupComplete(s) → t0+20 RegistrationRequest(reg_type, 5G-GUTI,
+    # s) → 시작 + length에 해제. 길이를 AN-04 short_ms(5 s)보다 길게 둔다 — 같은 S-TMSI의 짧은 연결이 쌓이면 AN-04에 걸린다
+    def flow_mob(self, t0, s, reg_type="mobility", length=6000):
+        self.setup_req(t0, random=False, part1=part1_of(s))
+        self.setup(t0)
+        self.setup_complete(t0 + 10, s_tmsi=s)
+        self.reg_req(t0 + 20, reg_type=reg_type, id_type="5G-GUTI", s_tmsi=s)
+        return self.release(t0 + length)
+
+    # 할당 기억 없이 UE가 낸 S-TMSI만 남기는 연결 (AN08-T5): RRCSetupComplete·ServiceRequest에 s → ServiceAccept → 1 s에 해제
+    def flow_ue_stmsi(self, t0, s):
+        self.setup_req(t0)
+        self.setup(t0)
+        self.setup_complete(t0 + 10, s_tmsi=s)
+        self.svc_req(t0 + 20, s_tmsi=s)
+        self.svc_accept(t0 + 30)
+        return self.release(t0 + 1000)
 
     def rrc_reject(self, t):
         # RRCReject(DL) → rrc REJECTED (14_ §5.1). 뒤에 UEContextReleaseCommand가 오면 RELEASING으로 덮인다
@@ -600,6 +619,127 @@ def san07_clear():
     return sc
 
 
+# ============ AN-08 기존 UE들의 재등록 급증 (21_ §8.8 AN08-T1~T8 — known_ms·RRC 또는 NAS·설정·결정성·회복은 단위 시험) ============
+
+RAN08 = "AN-08"
+CAND08 = ["L3-17-OV", "L3-26-O"]
+M0 = 21000   # 이동 등록 시작 — 첫 등록(1~10 s) 뒤 (명세 M의 '2분 뒤'를 줄임 — known_ms 10분 안이면 같다)
+
+
+def an08(sc, kind, t_rel):
+    return sc.alert(kind, t_rel, RAN08, severity="medium" if kind in ("RAISE", "UPDATE") else None, alert_kind="anomaly",
+                    candidates=CAND08 if kind == "RAISE" else None)
+
+
+def alloc_all(sc, accept=True):
+    """흐름 M의 앞부분: S1~S5가 B부터 2 s 간격으로 첫 등록(du 1~5). accept면 RegistrationAccept가 Si를 줌(할당 기억), 아니면 UE가 낸
+    S-TMSI의 연결 레코드만(AN08-T5)."""
+    for i in range(5):
+        u = sc.ue(1 + i)
+        u.flow_alloc(B + 2000 * i, s=S_MOB[i]) if accept else u.flow_ue_stmsi(B + 2000 * i, S_MOB[i])
+
+
+def mob_all(sc, n=5, gap=10000, reg_type="mobility"):
+    """흐름 M의 뒷부분: S1~Sn이 M0부터 gap 간격으로 이동 등록(du 11~). 마지막 걸림(등록 요청) 시각을 돌려준다."""
+    for i in range(n):
+        sc.ue(11 + i).flow_mob(M0 + gap * i, S_MOB[i], reg_type=reg_type)
+    return M0 + gap * (n - 1) + 20
+
+
+def san08_initial():
+    sc = Scenario4("SAN08_AN-08_초기등록5UE_무경보", "5 UE의 첫 등록(initial, RegistrationAccept로 S1~S5 할당) — 걸림 없음 (AN08-T1)",
+                   12000)
+    alloc_all(sc)
+    return sc
+
+
+def san08_five():
+    sc = Scenario4("SAN08_AN-08_이동등록5UE_RAISE",
+                   "M — S1~S5를 할당받은 5 UE가 20 s 뒤부터 10 s 간격으로 이동 등록(5G-GUTI Si) — 5번째에서 서로 다른 S-TMSI 5, "
+                   "RAISE (AN08-T2)", 68000)
+    alloc_all(sc)
+    t = mob_all(sc)
+    an08(sc, "RAISE", K(t))
+    return sc
+
+
+def san08_four():
+    sc = Scenario4("SAN08_AN-08_이동등록4UE_무경보", "M에서 4 UE만 — 창 안 4 (AN08-T3)", 58000)
+    alloc_all(sc)
+    mob_all(sc, n=4)
+    return sc
+
+
+def san08_outside():
+    sc = Scenario4("SAN08_AN-08_창밖_무경보", "M에서 5번째가 첫째의 61 s 뒤 — 창 안 4 (AN08-T3)", 89000)
+    alloc_all(sc)
+    mob_all(sc, n=4)
+    sc.ue(15).flow_mob(M0 + 61000, S_MOB[4])
+    return sc
+
+
+def san08_periodic():
+    sc = Scenario4("SAN08_AN-08_주기등록_무경보", "M에서 reg_type periodic — 세지 않음 (AN08-T4)", 68000)
+    alloc_all(sc)
+    mob_all(sc, reg_type="periodic")
+    return sc
+
+
+def san08_initial_again():
+    sc = Scenario4("SAN08_AN-08_초기재접속_무경보", "M에서 reg_type initial(재시작 뒤 일제 재접속) — 세지 않음 (AN08-T4)", 68000)
+    alloc_all(sc)
+    mob_all(sc, reg_type="initial")
+    return sc
+
+
+def san08_history():
+    sc = Scenario4("SAN08_AN-08_이력만_RAISE",
+                   "할당 기억 없이(RegistrationAccept 없음) UE가 낸 S-TMSI의 연결 레코드만 있는 5 UE의 이동 등록 — known history로 "
+                   "세어 RAISE (AN08-T5)", 68000)
+    alloc_all(sc, accept=False)
+    t = mob_all(sc)
+    an08(sc, "RAISE", K(t))
+    return sc
+
+
+def san08_unknown():
+    sc = Scenario4("SAN08_AN-08_처음보는STMSI_무경보", "처음 보는 S-TMSI 5개의 이동 등록 — 최근 본 UE가 아님 (AN08-T6)", 68000)
+    mob_all(sc)
+    return sc
+
+
+def san08_retries():
+    sc = Scenario4("SAN08_AN-08_한UE재시도_무경보",
+                   "S1이 이동 등록을 10 s 간격 5번(실패 뒤 T3511 재시도 — 연결마다 새 du) — 서로 다른 S-TMSI 1 (11/04 사용자 결정, "
+                   "AN08-T8)", 70000)
+    alloc_all(sc)
+    for k in range(5):
+        sc.ue(20 + k).flow_mob(M0 + 10000 * k, S_MOB[0])
+    return sc
+
+
+def san08_retries_then_four():
+    sc = Scenario4("SAN08_AN-08_재시도뒤4UE_RAISE",
+                   "S1의 재시도 5번 뒤 S2~S5가 창 안에 이동 등록 — 서로 다른 S-TMSI 5로 RAISE(S1 칸 하나, 경보 값 extra 4) "
+                   "(11/04 사용자 결정, AN08-T8)", 78000)
+    alloc_all(sc)
+    for k in range(5):
+        sc.ue(20 + k).flow_mob(M0 + 10000 * k, S_MOB[0])
+    for i in range(1, 5):
+        sc.ue(30 + i).flow_mob(M0 + 42000 + 2000 * i, S_MOB[i])
+    an08(sc, "RAISE", K(M0 + 42000 + 2000 * 4 + 20))
+    return sc
+
+
+def san08_clear():
+    sc = Scenario4("SAN08_AN-08_해제_CLEAR", "M RAISE 뒤 마지막 성립 + 60 s 이상인 첫 kpm2에 CLEAR (AN08-T7)", 123000)
+    alloc_all(sc)
+    t = mob_all(sc)
+    an08(sc, "RAISE", K(t))
+    an08(sc, "CLEAR", K(t + 60000 - 1))
+    return sc
+
+
 SCENARIOS = [
     san01_normal, san01_raise, san01_second_failure, san01_mac_failure, san01_no_cause, san01_mid_join, san01_loss,
     san01_clear, san01_two_ues,
@@ -611,6 +751,8 @@ SCENARIOS = [
     san04_clear,
     san07_connected, san07_three, san07_two, san07_outside, san07_reject_release, san07_reject_stale, san07_random,
     san07_stale, san07_du_reset, san07_two_part1, san07_clear,
+    san08_initial, san08_five, san08_four, san08_outside, san08_periodic, san08_initial_again, san08_history,
+    san08_unknown, san08_retries, san08_retries_then_four, san08_clear,
 ]
 
 

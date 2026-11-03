@@ -16,6 +16,7 @@
 #include "detect/rules/bts_variant.h"
 #include "detect/rules/cap_hijack.h"
 #include "detect/rules/imsi_extractor.h"
+#include "detect/rules/known_reg_burst.h"
 #include "detect/rules/nas_desync.h"
 #include "detect/rules/identity_request.h"
 #include "detect/rules/sec_reauth.h"
@@ -171,6 +172,7 @@ int main(int argc, char** argv) {
   IdentityRequestConfig identity_request;
   ShortRepeatConfig short_repeat;
   SetupRepeatConfig setup_repeat;
+  KnownRegBurstConfig known_reg_burst;
   if (!read_rule(cfg, BtsVariantRule::kId, parse_bts_variant_config, bts) ||
       !read_rule(cfg, BlindDosRule::kId, parse_blind_dos_config, blind_dos) ||
       !read_rule(cfg, AuthStallRule::kId, parse_auth_stall_config, auth_stall) ||
@@ -182,13 +184,14 @@ int main(int argc, char** argv) {
       !read_rule(cfg, SecReauthRule::kId, parse_sec_reauth_config, sec_reauth) ||
       !read_rule(cfg, IdentityRequestRule::kId, parse_identity_request_config, identity_request) ||
       !read_rule(cfg, ShortRepeatRule::kId, parse_short_repeat_config, short_repeat) ||
-      !read_rule(cfg, SetupRepeatRule::kId, parse_setup_repeat_config, setup_repeat))
+      !read_rule(cfg, SetupRepeatRule::kId, parse_setup_repeat_config, setup_repeat) ||
+      !read_rule(cfg, KnownRegBurstRule::kId, parse_known_reg_burst_config, known_reg_burst))
     return 1;
   for (const auto& [id, _] : cfg.rules)
     if (id != BtsVariantRule::kId && id != BlindDosRule::kId && id != AuthStallRule::kId && id != UplinkDosRule::kId &&
         id != ImsiExtractorRule::kId && id != CapHijackRule::kId && id != NasDesyncRule::kId &&
         id != SyncFailureRule::kId && id != SecReauthRule::kId && id != IdentityRequestRule::kId &&
-        id != ShortRepeatRule::kId && id != SetupRepeatRule::kId)
+        id != ShortRepeatRule::kId && id != SetupRepeatRule::kId && id != KnownRegBurstRule::kId)
       log_err("WARN", "unknown rule id rules." + id + " (ignored)");
 
   // 엔진·룰·증거 (4_ §3). 버퍼 크기는 W와 pre_slots에서 정한다 (3_ §3·§7.1)
@@ -216,6 +219,7 @@ int main(int argc, char** argv) {
   engine.add_ue_rule(std::make_unique<IdentityRequestRule>(identity_request, cfg.alert));
   engine.add_ue_rule(std::make_unique<ShortRepeatRule>(short_repeat, cfg.alert));
   engine.add_ue_rule(std::make_unique<SetupRepeatRule>(setup_repeat, cfg.alert));
+  engine.add_ue_rule(std::make_unique<KnownRegBurstRule>(known_reg_burst, cfg.alert));
 
   EvidenceQueue queue(cfg.evidence.queue_max);
   EvidenceRecorder recorder(cfg.evidence, queue, cfg.alert);
