@@ -128,6 +128,13 @@ struct SecReauthConfig {
   int64_t clear_quiet_ms = 60000;  // clear_quiet_ms — 마지막 걸림 뒤 이만큼 새로 걸린 UE가 없으면 해제 (21_ §4.5)
 };
 
+// 4단계 룰 AN-02 식별 요청 증가 (21_ §5.4·§1.2). 설정 파일 rules.AN-02에 키가 없으면 이 기본값을 쓴다 (4_ §1.2)
+struct IdentityRequestConfig {
+  int64_t window_ms = 60000;       // window_ms — W, 갈래 ② 셀 창. 식별 요청은 등록마다 많아야 하나 (21_ §5.4)
+  int64_t n_idreq = 5;             // n_idreq — N, 창 안 식별 요청 연결 수 문턱. 2단계 셀 문턱과 같은 규모 (21_ §5.4)
+  int64_t clear_quiet_ms = 60000;  // clear_quiet_ms — 마지막 성립 뒤 이만큼 새 성립이 없으면 해제 (21_ §5.5)
+};
+
 // 설정 파일 전체 (4_ §1.2). rules는 룰 ID → 그 룰의 설정 객체(JSON 문자열)다 — 공통 파서는 넘기기만 하고
 // 룰별 파서(parse_bts_variant_config 등)가 키·범위를 검사한다 (Q-46, 결정 J4)
 struct DetectorConfig {
@@ -177,5 +184,6 @@ RuleConfigResult<NasDesyncConfig> parse_nas_desync_config(std::string_view json_
 // 4단계 룰 (21_ §1.2 표 — 타입·허용 범위)
 RuleConfigResult<SyncFailureConfig> parse_sync_failure_config(std::string_view json_text);
 RuleConfigResult<SecReauthConfig> parse_sec_reauth_config(std::string_view json_text);
+RuleConfigResult<IdentityRequestConfig> parse_identity_request_config(std::string_view json_text);
 
 }  // namespace detect

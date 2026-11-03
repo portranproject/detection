@@ -1,0 +1,7 @@
+{
+  "scenario": "SAN02_AN-02_모르는GUTI_무경보",
+  "description": "B가 모르는 GUTI(RRC·NAS 모두 S′)로 등록 → IdentityRequest — 갈래 ① 없음, 갈래 ② 수 1 (AN02-T3)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

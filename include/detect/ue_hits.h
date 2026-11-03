@@ -34,8 +34,12 @@ class HitWindow {
 
   // 걸림 (§1.1): 그 연결이 이미 걸렸으면 아무것도 하지 않고 false — 연결당 한 번(룰은 add로 누적 수만 늘린다). u의 cond·
   // t_hit·values는 룰이 걸릴 때 값으로 채운다. 식별·uncertain은 kpm2에서 그때 상태표 항목으로 다시 채운다 — 같은 창의 로스 표시는
-  // 그 창 kpm2가 와서야 붙기 때문이다(14_ §7 kpm2 ②)
-  bool hit(const UeId& id, AlertUe u);
+  // 그 창 kpm2가 와서야 붙기 때문이다(14_ §7 kpm2 ②). force면 창 안 수가 N 미만이어도 이 걸림으로 성립한다 — 한 룰 안에 UE 하나로
+  // RAISE하는 갈래와 셀 개수 갈래가 함께 있을 때(AN-02 갈래 ①·②, 21_ §5.3). RAISE에는 어느 쪽이든 그때 창 안 걸림을 모두 싣는다
+  bool hit(const UeId& id, AlertUe u, bool force = false);
+  // 해제 기준 (21_ §3.5·§5.5): 기본은 경보에 실린 마지막 걸림 시각. true면 마지막 '성립'(force 걸림 또는 창 안 수 ≥ N) 시각 —
+  // 성립하지 않은 걸림은 경보에 실려도 해제를 늦추지 않는다(AN-02)
+  void set_clear_on_satisfied(bool v) { clear_on_satisfied_ = v; }
   bool hit_before(const UeId& id) const;  // 열린 연결이 이미 걸렸나
   // 걸린 연결의 누적 수 (§1.1): 그 연결이 열린 경보에 실렸으면 바로 경보 값에, 아직 실리지 않았으면 걸림에 쌓아 두었다가
   // 실릴 때 함께 더한다
@@ -52,6 +56,7 @@ class HitWindow {
 
   // decorate가 읽는 값
   int64_t window(int64_t cell) const;                                // 가장 최근 걸림 기준 창 안 걸린 연결 수
+  int64_t window_with(int64_t cell, const std::string& cond) const;  // 그중 UE cond에 cond가 있는 수 (AN-02 known_w)
   int64_t count(int64_t cell, const std::string& name) const;       // 열린 경보에 실린 연결의 누적 수
   int64_t evicted(int64_t cell, bool raise, int64_t t);              // raise면 직전 clear_quiet_ms 이동 창, 아니면 경보가 열린 뒤 누적
   bool open(int64_t cell) const { return book_.open(cell); }
@@ -61,11 +66,13 @@ class HitWindow {
     UeId id;
     AlertUe u;
     std::map<std::string, int64_t> acc;  // 경보에 실리기 전에 쌓인 누적 수
+    bool force = false;                  // 이 걸림만으로 성립 (hit의 force)
   };
   struct Cell {
     std::vector<Hit> fresh;                     // 이번 kpm2 전에 적은 걸림
     std::deque<Hit> win;                        // 가장 최근 걸림 기준 (t − W, t] 안 걸림 (성립 전 포함)
     int64_t t_hit_last = 0;                     // 경보에 실린 마지막 걸림 시각 — CLEAR 기준 (21_ §3.5)
+    int64_t t_sat = 0;                          // 마지막 성립 시각 — clear_on_satisfied면 CLEAR 기준 (21_ §5.5)
     std::map<std::string, int64_t> counts;      // 경보가 열린 뒤 누적 수
     int64_t evicted_seen = 0;                   // 상태표 셀별 누적 evicted 중 이미 적은 수
     int64_t evicted_open = 0;                   // 경보가 열린 뒤 밀어내기 수
@@ -83,6 +90,7 @@ class HitWindow {
   int64_t window_ms_;
   int64_t n_;
   int64_t clear_quiet_ms_;
+  bool clear_on_satisfied_ = false;
   UeAlertBook book_;
   std::map<int64_t, Cell> cells_;
   std::map<UeId, Conn> conns_;  // 걸린 열린 연결

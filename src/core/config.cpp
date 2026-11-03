@@ -200,6 +200,15 @@ void parse_sec_reauth(const json& r, SecReauthConfig& c, std::vector<std::string
   read_int_in(r, "clear_quiet_ms", c.clear_quiet_ms, 1000, 3600000, w);
 }
 
+// rules."AN-02" (21_ §1.2·§5.4)
+void parse_identity_request(const json& r, IdentityRequestConfig& c, std::vector<std::string>& warnings) {
+  const std::string w = "rules.AN-02.";
+  warn_unknown(r, {"window_ms", "n_idreq", "clear_quiet_ms"}, w, warnings);
+  read_int_in(r, "window_ms", c.window_ms, 1000, 600000, w);
+  read_int_in(r, "n_idreq", c.n_idreq, 1, 10000, w);
+  read_int_in(r, "clear_quiet_ms", c.clear_quiet_ms, 1000, 3600000, w);
+}
+
 // ue_table (14_ §9 — 허용 범위는 10/29 이슈 #33 사용자 결정). tomb_*는 10/29까지 예약 키였으나 11/03 4단계 S-TMSI 이력 표 키가
 // 되어(확인 지점 ⑤) alloc_*와 함께 범위를 검사한다 (14_ §3.2·§9, 11/04 이슈 #74)
 void parse_ue_table(const json& e, UeTableConfig& c, std::vector<std::string>& warnings) {
@@ -350,6 +359,10 @@ RuleConfigResult<SyncFailureConfig> parse_sync_failure_config(std::string_view j
 
 RuleConfigResult<SecReauthConfig> parse_sec_reauth_config(std::string_view json_text) {
   return parse_rule<SecReauthConfig>(json_text, "AN-06a", parse_sec_reauth);
+}
+
+RuleConfigResult<IdentityRequestConfig> parse_identity_request_config(std::string_view json_text) {
+  return parse_rule<IdentityRequestConfig>(json_text, "AN-02", parse_identity_request);
 }
 
 }  // namespace detect

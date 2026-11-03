@@ -166,3 +166,38 @@ TEST(HitWindow, CloseRefreshesIdentity) {
   EXPECT_EQ(r.t_hit, 100);
   EXPECT_EQ(r.values.dump(), R"({"cause":21})");
 }
+
+// force 걸림 (21_ §5.3 — AN-02 갈래 ①): 창 안 수가 N 미만이어도 이 걸림으로 RAISE하고, 그때 창 안 걸림을 모두 싣는다.
+// 조건별 수 window_with는 창 안 걸림 가운데 그 cond를 가진 수
+TEST(HitWindow, ForceHitRaisesWithWindow) {
+  H h(5);
+  h.w.hit(uid(1), ue(1, 100));
+  h.tick(200);
+  EXPECT_TRUE(h.out.empty());
+  AlertUe k = ue(2, 300);
+  k.cond = {"known"};
+  h.w.hit(uid(2), k, true);
+  h.tick(400);
+  ASSERT_EQ(h.out.size(), 1u);
+  EXPECT_EQ(h.out[0].kind, AlertEventKind::Raise);
+  EXPECT_EQ(h.out[0].ues.size(), 2u);
+  EXPECT_EQ(h.w.window(1), 2);
+  EXPECT_EQ(h.w.window_with(1, "known"), 1);
+  EXPECT_EQ(h.w.window_with(1, "hit"), 1);
+}
+
+// 해제 기준 (21_ §5.5): clear_on_satisfied면 성립하지 않은 걸림(창 안 수 < N, force 아님)은 경보에 실려도 해제를 늦추지 않는다 /
+// 기본(마지막 걸림)이면 늦춘다
+TEST(HitWindow, ClearOnSatisfiedIgnoresUnsatisfiedHits) {
+  for (bool on : {true, false}) {
+    H h(5, 1000, 60000);
+    h.w.set_clear_on_satisfied(on);
+    h.w.hit(uid(1), ue(1, 100), true);  // 성립 — RAISE
+    h.tick(200);
+    h.w.hit(uid(2), ue(2, 30000));      // 창(1 s) 안 1개 — 성립 아님, 경보에 UPDATE로 실림
+    h.tick(30100);
+    h.tick(60100);
+    const bool cleared = h.out.back().kind == AlertEventKind::Clear;
+    EXPECT_EQ(cleared, on) << on;  // on이면 첫 걸림 + 60 s에 CLEAR, 아니면 둘째 걸림 + 60 s까지 열림
+  }
+}

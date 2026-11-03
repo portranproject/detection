@@ -1,0 +1,20 @@
+{
+  "scenario": "SAN02_AN-02_공격모양RRC원래값_RAISE",
+  "description": "중간자가 NAS 등록 요청의 GUTI만 모르는 값으로 바꿈 — RRC S-TMSI는 원래 값(할당됨)이라 갈래 ① RAISE (11/04 결정, AN02-T9)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "AN-02",
+      "cell": 1,
+      "t_rel_ms": 5100,
+      "severity": "medium",
+      "branch": "1",
+      "alert_kind": "anomaly",
+      "candidates": [
+        "L3-25-OV"
+      ]
+    }
+  ]
+}
