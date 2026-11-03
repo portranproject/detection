@@ -1,0 +1,19 @@
+{
+  "scenario": "S24_L3-24_응답중복_RAISE",
+  "description": "T2에서 응답 줄이 두 번 옴 — 둘째 때 R 1·A 1 → RAISE, 오탐을 기록해 두는 시험 (L24-T24)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-24",
+      "cell": 1,
+      "t_rel_ms": 1200,
+      "severity": "medium",
+      "alert_kind": "attack",
+      "conditions": [
+        "mitm_ul_relay"
+      ]
+    }
+  ]
+}

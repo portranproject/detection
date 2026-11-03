@@ -1,0 +1,27 @@
+{
+  "scenario": "S24_L3-24_두UE_UPDATE",
+  "description": "UE A는 T4, UE B는 t0+500에 같은 공격 — RAISE + 1 s 모음 UPDATE, 심각도 그대로 (L24-T19)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-24",
+      "cell": 1,
+      "t_rel_ms": 1100,
+      "severity": "medium",
+      "alert_kind": "attack",
+      "conditions": [
+        "mitm_ul_relay"
+      ]
+    },
+    {
+      "kind": "UPDATE",
+      "rule": "L3-24",
+      "cell": 1,
+      "t_rel_ms": 2100,
+      "severity": "medium",
+      "alert_kind": "attack"
+    }
+  ]
+}

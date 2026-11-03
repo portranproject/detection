@@ -31,10 +31,12 @@ add_library(detect
   src/core/deadline_queue.cpp
   src/core/ue_evidence.cpp
   src/core/ue_alert.cpp
+  src/core/ue_lookback.cpp
   src/core/rules/bts_variant.cpp
   src/core/rules/blind_dos.cpp
   src/core/rules/auth_stall.cpp
   src/core/rules/uplink_dos.cpp
+  src/core/rules/imsi_extractor.cpp
   src/core/evidence.cpp
   src/core/evidence_queue.cpp
   src/core/config.cpp

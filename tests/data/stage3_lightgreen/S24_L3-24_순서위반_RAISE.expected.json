@@ -1,0 +1,19 @@
+{
+  "scenario": "S24_L3-24_순서위반_RAISE",
+  "description": "같은 창에서 요청 줄(t0+95)이 응답 줄(t0+97) 뒤에 옴 — RAISE, 오탐을 기록해 두는 시험 (L24-T24)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-24",
+      "cell": 1,
+      "t_rel_ms": 1100,
+      "severity": "medium",
+      "alert_kind": "attack",
+      "conditions": [
+        "mitm_ul_relay"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "scenario": "S24_L3-24_AMF재전송_늦은응답1회_무경보",
+  "description": "IdentityRequest t0+95·t0+3095, 응답 t0+3100 한 번. 응답 때 R 2·A 0 (L24-T3)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

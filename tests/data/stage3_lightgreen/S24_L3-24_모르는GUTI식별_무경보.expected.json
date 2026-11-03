@@ -1,0 +1,7 @@
+{
+  "scenario": "S24_L3-24_모르는GUTI식별_무경보",
+  "description": "모르는 5G-GUTI로 등록 → AMF IdentityRequest(t0+95) → 응답(t0+100). 응답 때 R 1·A 0 (L24-T2)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

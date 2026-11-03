@@ -1,0 +1,7 @@
+{
+  "scenario": "S24_L3-24_AS무결성뒤응답_무경보",
+  "description": "F 뒤 t0+220 요청 없는 응답 — AS 무결성(nia2) 뒤라 후보 없음 (L24-T16)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

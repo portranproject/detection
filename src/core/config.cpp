@@ -162,6 +162,13 @@ void parse_uplink_dos(const json& r, UplinkDosConfig& c, std::vector<std::string
   }
 }
 
+// rules."L3-24" (20_ §1.5·§3.4) — 키는 해제 시간 하나
+void parse_imsi_extractor(const json& r, ImsiExtractorConfig& c, std::vector<std::string>& warnings) {
+  const std::string w = "rules.L3-24.";
+  warn_unknown(r, {"clear_quiet_ms"}, w, warnings);
+  read_int_in(r, "clear_quiet_ms", c.clear_quiet_ms, 1000, 3600000, w);
+}
+
 // ue_table (14_ §9 — 허용 범위는 10/29 이슈 #33 사용자 결정). tomb_ms·tomb_max는 예약 키라 경고만 (14_ §3.2)
 void parse_ue_table(const json& e, UeTableConfig& c, std::vector<std::string>& warnings) {
   const std::string w = "ue_table.";
@@ -288,6 +295,10 @@ RuleConfigResult<AuthStallConfig> parse_auth_stall_config(std::string_view json_
 
 RuleConfigResult<UplinkDosConfig> parse_uplink_dos_config(std::string_view json_text) {
   return parse_rule<UplinkDosConfig>(json_text, "L3-21", parse_uplink_dos);
+}
+
+RuleConfigResult<ImsiExtractorConfig> parse_imsi_extractor_config(std::string_view json_text) {
+  return parse_rule<ImsiExtractorConfig>(json_text, "L3-24", parse_imsi_extractor);
 }
 
 }  // namespace detect
