@@ -192,6 +192,14 @@ void parse_sync_failure(const json& r, SyncFailureConfig& c, std::vector<std::st
   read_int_in(r, "clear_quiet_ms", c.clear_quiet_ms, 1000, 3600000, w);
 }
 
+// rules."AN-06a" (21_ §1.2·§4.4)
+void parse_sec_reauth(const json& r, SecReauthConfig& c, std::vector<std::string>& warnings) {
+  const std::string w = "rules.AN-06a.";
+  warn_unknown(r, {"n_reauth", "clear_quiet_ms"}, w, warnings);
+  read_int_in(r, "n_reauth", c.n_reauth, 1, 100, w);
+  read_int_in(r, "clear_quiet_ms", c.clear_quiet_ms, 1000, 3600000, w);
+}
+
 // ue_table (14_ §9 — 허용 범위는 10/29 이슈 #33 사용자 결정). tomb_ms·tomb_max는 예약 키라 경고만 (14_ §3.2)
 void parse_ue_table(const json& e, UeTableConfig& c, std::vector<std::string>& warnings) {
   const std::string w = "ue_table.";
@@ -334,6 +342,10 @@ RuleConfigResult<NasDesyncConfig> parse_nas_desync_config(std::string_view json_
 
 RuleConfigResult<SyncFailureConfig> parse_sync_failure_config(std::string_view json_text) {
   return parse_rule<SyncFailureConfig>(json_text, "AN-01", parse_sync_failure);
+}
+
+RuleConfigResult<SecReauthConfig> parse_sec_reauth_config(std::string_view json_text) {
+  return parse_rule<SecReauthConfig>(json_text, "AN-06a", parse_sec_reauth);
 }
 
 }  // namespace detect

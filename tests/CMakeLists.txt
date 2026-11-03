@@ -31,6 +31,7 @@ add_executable(detect_tests
   core/test_nas_desync.cpp
   core/test_ue_hits.cpp
   core/test_sync_failure.cpp
+  core/test_sec_reauth.cpp
   io/test_uds_server.cpp
   io/test_file_replay.cpp
 )

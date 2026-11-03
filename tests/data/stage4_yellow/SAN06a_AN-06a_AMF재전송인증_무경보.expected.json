@@ -1,0 +1,7 @@
+{
+  "scenario": "SAN06a_AN-06a_AMF재전송인증_무경보",
+  "description": "t0+118 응답 없이 t0+6,105에 인증 요청 재전송 — 갱신 전 AUTH라 걸림 없음 (AN06a-T4)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

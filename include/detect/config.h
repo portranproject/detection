@@ -117,6 +117,12 @@ struct SyncFailureConfig {
   int64_t clear_quiet_ms = 60000;  // clear_quiet_ms — 마지막 걸림 뒤 이만큼 새로 걸린 UE가 없으면 해제 (21_ §3.5)
 };
 
+// 4단계 룰 AN-06a 보안 수립 뒤 재인증·SMC 재등장 (21_ §4.4·§1.2). 설정 파일 rules.AN-06a에 키가 없으면 이 기본값을 쓴다 (4_ §1.2)
+struct SecReauthConfig {
+  int64_t n_reauth = 1;            // n_reauth — N, 연결당 보안 뒤 재등장 수 문턱. 이 AMF는 정상에서 0회 (21_ §4.4, 5_ §16)
+  int64_t clear_quiet_ms = 60000;  // clear_quiet_ms — 마지막 걸림 뒤 이만큼 새로 걸린 UE가 없으면 해제 (21_ §4.5)
+};
+
 // 설정 파일 전체 (4_ §1.2). rules는 룰 ID → 그 룰의 설정 객체(JSON 문자열)다 — 공통 파서는 넘기기만 하고
 // 룰별 파서(parse_bts_variant_config 등)가 키·범위를 검사한다 (Q-46, 결정 J4)
 struct DetectorConfig {
@@ -165,5 +171,6 @@ RuleConfigResult<CapHijackConfig> parse_cap_hijack_config(std::string_view json_
 RuleConfigResult<NasDesyncConfig> parse_nas_desync_config(std::string_view json_text);
 // 4단계 룰 (21_ §1.2 표 — 타입·허용 범위)
 RuleConfigResult<SyncFailureConfig> parse_sync_failure_config(std::string_view json_text);
+RuleConfigResult<SecReauthConfig> parse_sec_reauth_config(std::string_view json_text);
 
 }  // namespace detect

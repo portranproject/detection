@@ -1,0 +1,19 @@
+{
+  "scenario": "SAN06a_AN-06a_보안뒤재인증_RAISE",
+  "description": "R — t0+1,250 인증 요청(갱신 전 nas_sec ON) 걸림, K = t0+1,300에 RAISE(kind anomaly, 후보 L3-06-O1). t0+1,270 NAS SMC는 갱신 전 AUTH_OK라 재등장 아님 (AN06a-T2)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "AN-06a",
+      "cell": 1,
+      "t_rel_ms": 2300,
+      "severity": "medium",
+      "alert_kind": "anomaly",
+      "candidates": [
+        "L3-06-O1"
+      ]
+    }
+  ]
+}

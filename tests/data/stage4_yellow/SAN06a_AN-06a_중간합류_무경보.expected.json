@@ -1,0 +1,7 @@
+{
+  "scenario": "SAN06a_AN-06a_중간합류_무경보",
+  "description": "첫 줄이 AuthenticationRequest(mid_join) — nas_sec UNKNOWN이라 걸림 없음 (AN06a-T7)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}
