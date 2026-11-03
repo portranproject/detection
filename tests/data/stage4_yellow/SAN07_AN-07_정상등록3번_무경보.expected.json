@@ -1,0 +1,7 @@
+{
+  "scenario": "SAN07_AN-07_정상등록3번_무경보",
+  "description": "같은 Part1로 Setup·Complete까지 가는 6 s 접속 × 3 — CONNECTED라 세지 않음(6 s라 AN-04 짧은 연결도 아님) (AN07-T1)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

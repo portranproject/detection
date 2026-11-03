@@ -1,0 +1,7 @@
+{
+  "scenario": "SAN07_AN-07_DU리셋닫힘_무경보",
+  "description": "Q × 3 중 둘째가 해제 줄 없이 F1Reset(du_reset)으로 닫힘 — 판정하지 않는 닫힘이라 세지 않아 K 2 (11/04 결정)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

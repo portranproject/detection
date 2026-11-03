@@ -1,7 +1,7 @@
 // UE 상태표·마감 목록·2단계 분배 테스트 — 14_ §10 공통 테스트 U-T1~U-T29(U-T26·U-T27은 이슈 #44 유령 정리·보호 무리, U-T28은 이슈 #46 late_until, U-T29는 이슈 #48 진단),
 // 입력 침묵의 엔진 몫(이슈 #50 — 소켓 통합 시험 U-T31은 tests/integration).
 // U-T13(1단계 alert 형식 이전)은 이슈 #17에서 확인했고, U-T20(경보당 증거 UE 상한)은 UE 증거 이슈에서 한다.
-// S-TMSI 이력 표(14_ §3.2 — U-T1·U-T11의 기억 표 부분, U-T32~U-T35)는 11/04 이슈 #74.
+// S-TMSI 이력 표(14_ §3.2 — U-T1·U-T11의 기억 표 부분, U-T32~U-T35)는 11/04 이슈 #74, 레코드 rejected(U-T36)는 이슈 #80.
 // 대기 표시가 필요한 시험은 15_ 룰의 대기 규칙(14_ §2.4·§6)을 그대로 따르는 테스트용 룰(WaitRule)로 한다
 #include "detect/engine.h"
 
@@ -1205,4 +1205,38 @@ TEST(UeTable, UT35RulesRead) {
   ASSERT_EQ(mj.size(), 1u);
   EXPECT_TRUE(mj[0]->mid_join);
   EXPECT_FALSE(mj[0]->loss);
+}
+
+// U-T36 (14_ §3.2 — 11/04 AN-07 사용자 결정): 레코드 rejected는 그 연결에서 RRCReject를 봤는지다. 거절 뒤 CU가
+// UEContextReleaseCommand로 DU 컨텍스트를 풀면 rrc는 RELEASING으로 덮이지만 rejected는 true / 해제 줄 없이 stale_setup으로 닫힌
+// 거절도 true(rrc_last REJECTED) / RRCSetup 뒤 Complete 없이 해제된 연결은 false
+TEST(UeTable, UT36RecordRejected) {
+  Harness h;
+  h.rrc(0, 3, "UL", "RRCSetupRequest", part1(kS));
+  h.rrc(0, 3, "DL", "RRCReject");
+  h.f1ap(0, 3, "DL", "UEContextReleaseCommand");
+  h.f1ap(5, 3, "UL", "UEContextReleaseComplete");
+  const auto a = h.engine.ue_table().history_part1(kS & kPart1Mask, 0);
+  ASSERT_EQ(a.size(), 1u);
+  EXPECT_EQ(a[0]->rrc_last, RrcState::Releasing);
+  EXPECT_TRUE(a[0]->rejected);
+  EXPECT_FALSE(a[0]->connected);
+
+  h.rrc(1000, 4, "UL", "RRCSetupRequest", part1(kS2));
+  h.rrc(1000, 4, "DL", "RRCReject");
+  h.tick_to(32000);
+  const auto b = h.engine.ue_table().history_part1(kS2 & kPart1Mask, 0);
+  ASSERT_EQ(b.size(), 1u);
+  EXPECT_EQ(b[0]->reason, CloseReason::StaleSetup);
+  EXPECT_EQ(b[0]->rrc_last, RrcState::Rejected);
+  EXPECT_TRUE(b[0]->rejected);
+
+  h.rrc(33000, 5, "UL", "RRCSetupRequest", part1(kS));
+  h.rrc(33000, 5, "DL", "RRCSetup");
+  h.f1ap(35000, 5, "DL", "UEContextReleaseCommand");
+  h.f1ap(35005, 5, "UL", "UEContextReleaseComplete");
+  const auto c = h.engine.ue_table().history_part1(kS & kPart1Mask, kT0 + 1000);
+  ASSERT_EQ(c.size(), 1u);
+  EXPECT_FALSE(c[0]->rejected);
+  EXPECT_FALSE(c[0]->connected);
 }

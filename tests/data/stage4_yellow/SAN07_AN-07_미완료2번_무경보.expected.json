@@ -1,0 +1,7 @@
+{
+  "scenario": "SAN07_AN-07_미완료2번_무경보",
+  "description": "Q × 2 — K 2 < n_fail 3 (AN07-T3)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

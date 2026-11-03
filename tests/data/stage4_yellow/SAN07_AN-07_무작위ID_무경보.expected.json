@@ -1,0 +1,7 @@
+{
+  "scenario": "SAN07_AN-07_무작위ID_무경보",
+  "description": "randomValue로 Q × 3 — Part1이 없어 잇지 못함, 1단계 몫 (AN07-T5)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

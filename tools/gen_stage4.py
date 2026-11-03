@@ -1,23 +1,25 @@
 #!/usr/bin/env python3
 """합성 ue_evt+kpm2 4단계 시나리오(.jsonl)와 기대 경보(.expected.json) 생성기.
 
-명세: 4단계 룰 21_탐지엔진_4단계-노란색룰_명세서.md(AN-01 §3.8·AN-06a §4.8·AN-02 §5.8·AN-04 §6.8 — 뒤 룰은 구현 이슈마다 더함),
+명세: 4단계 룰 21_탐지엔진_4단계-노란색룰_명세서.md(AN-01 §3.8·AN-06a §4.8·AN-02 §5.8·AN-04 §6.8·AN-07 §7.8 — 뒤 룰은 구현 이슈마다 더함),
 입력 2_ §6,
 상태·경보 14_.
 실행: python3 tools/gen_stage4.py [출력 폴더]  (기본 tests/data/stage4_yellow/).
 tests/core/test_scenarios.cpp가 이 폴더를 실행 파일과 같은 룰 구성(1~4단계, 기본값)으로 재생해 같은 이름 .expected.json과
 비교한다(Stage4Scenario, 시각 정확 비교). 3단계 생성기 gen_stage3.py의 UE3·Scenario3·기본 흐름 F·K(t)를 그대로 쓰고
-4단계 흐름(AN-01 동기 실패 흐름 S·AN-06a 재등장 흐름 R·AN-02 등록 흐름 G·AN-04 짧은 연결 흐름 P)과 기대 경보의 candidates(4단계는 후보가 경보의
+4단계 흐름(AN-01 동기 실패 흐름 S·AN-06a 재등장 흐름 R·AN-02 등록 흐름 G·AN-04 짧은 연결 흐름 P·AN-07 미완료 흐름 Q)과 기대 경보의 candidates(4단계는 후보가 경보의
 뜻이다, 21_ §1)만 더한다.
 
 기대 경보 시각은 명세 식으로 손 계산한 값이다(3단계와 같은 방식):
  - 연결 시작 t0 = 1000(창 시작). K(t) = t를 품은 창의 t_end — 걸림이 든 창의 kpm2에서 RAISE(21_ §1.1)
  - UPDATE = 새 UE가 걸린 뒤 RAISE·UPDATE에서 update_min_ms(1,000) 이상인 첫 kpm2(14_ §8.2)
  - CLEAR = 경보에 실린 마지막 걸림 + clear_quiet_ms(60,000) 이상인 첫 kpm2(21_ §3.5)
- - AN-04는 연결이 닫힐 때 판정한다 — 걸림 = 닫힌 시각(해제 완료 줄), RAISE = 그 시각이 든 창의 kpm2(21_ §1.3)
+ - AN-04·AN-07은 연결이 닫힐 때 판정한다 — 걸림 = 닫힌 시각(해제 완료 줄), RAISE = 그 시각이 든 창의 kpm2(21_ §1.3).
+   stale_setup으로 닫히면 닫힌 시각 = 마감(마지막 줄 + 30 s)이고 그 마감을 처리한 kpm2(t_end = 마감)에서 RAISE
 재생은 설정 기본값(AN-01 n_sync 1·AN-06a n_reauth 1)이라 문턱을 바꾼 시험(AN01-T6·T7·AN06a-T6)·밀어내기·설정·결정성은
 단위 시험만이다. AN-04 창 밖(AN04-T3 둘째 — 400 s 넘는 데이터)·유령 정리 닫힘(AN04-T7 — 기본값으로는 유령 17개 필요)도 단위
-시험만이고, 재생은 같은 '판정하지 않는 닫힘' 갈래인 du_reset(F1Reset)으로 본다.
+시험만이고, 재생은 같은 '판정하지 않는 닫힘' 갈래인 du_reset(F1Reset)으로 본다. AN-07의 reused 닫힘·회복 뒤 다시 걸림도 단위
+시험만이다.
 """
 
 import os
@@ -91,6 +93,36 @@ class UE4(gen_stage3.UE3):
         self.rrc_release(t0 + length - 10)
         self.ctx_release_cmd(t0 + length - 5)
         return self.ctx_release_complete(t0 + length)
+
+    # 미완료 흐름 Q (21_ §7.8): 같은 Part1로 RRCSetupRequest → RRCSetup → (Complete 없음) → 시작 + 2 s에 CU의 UEContextReleaseCommand/
+    # Complete. random이면 randomValue(AN07-T5), reject면 RRCSetup 대신 RRCReject — OCUDU는 거절을 UE 컨텍스트 해제로 보내므로 같은
+    # 시각에 UEContextReleaseCommand, 5 ms 뒤 완료(AN07-T4, 11/04). release가 False면 해제 줄이 없다(stale_setup으로 닫힘)
+    def flow_Q(self, t0, s=S_SHORT, random=False, reject=False, release=True):
+        self.setup_req(t0, random=random, part1=None if random else part1_of(s))
+        if reject:
+            self.rrc_reject(t0)
+            if release:
+                self.ctx_release_cmd(t0)
+                self.ctx_release_complete(t0 + 5)
+            return self
+        self.setup(t0)
+        if release:
+            self.ctx_release_cmd(t0 + 1995)
+            self.ctx_release_complete(t0 + 2000)
+        return self
+
+    # 같은 Part1로 연결까지 가는 정상 접속 — Setup·Complete 뒤 6 s에 해제 (AN07-T1). 길이를 AN-04 short_ms(5 s)보다 길게 둔다 —
+    # 같은 S-TMSI의 짧은 연결 3번은 AN-04에 걸린다
+    def flow_connected(self, t0, s=S_SHORT):
+        self.setup_req(t0, random=False, part1=part1_of(s))
+        self.setup(t0)
+        self.setup_complete(t0 + 10, s_tmsi=s)
+        self.ctx_release_cmd(t0 + 5995)
+        return self.ctx_release_complete(t0 + 6000)
+
+    def rrc_reject(self, t):
+        # RRCReject(DL) → rrc REJECTED (14_ §5.1). 뒤에 UEContextReleaseCommand가 오면 RELEASING으로 덮인다
+        return self._line(t, "DL", "RRC", "RRCReject")
 
     def ctx_release_req(self, t, cause="radioNetwork:rl-failure"):
         # UEContextReleaseRequest(UL) — DU가 먼저 해제를 요청(UE가 사라짐). f.cause가 상태표 rel_req_cause (14_ §2.2, AN-04 #33)
@@ -459,6 +491,115 @@ def san04_clear():
     return sc
 
 
+# ============ AN-07 같은 S-TMSI의 Setup 반복·Complete 없음 (21_ §7.8 AN07-T1~T7 — reused·회복·설정·결정성은 단위 시험) ============
+
+RAN07 = "AN-07"
+CAND07 = ["L3-11-V1", "L3-11-V2"]
+
+
+def an07(sc, kind, t_rel):
+    return sc.alert(kind, t_rel, RAN07, severity="medium" if kind in ("RAISE", "UPDATE") else None, alert_kind="anomaly",
+                    candidates=CAND07 if kind == "RAISE" else None)
+
+
+def q_n(sc, n, t0, gap, du0, s=S_SHORT, **kw):
+    """같은 Part1의 Q를 n번 (시작 t0, 간격 gap, du는 du0부터). 마지막 연결이 해제 줄로 닫힌 시각을 돌려준다."""
+    for i in range(n):
+        sc.ue(du0 + i).flow_Q(t0 + gap * i, s=s, **kw)
+    return t0 + gap * (n - 1) + 2000
+
+
+def san07_connected():
+    sc = Scenario4("SAN07_AN-07_정상등록3번_무경보",
+                   "같은 Part1로 Setup·Complete까지 가는 6 s 접속 × 3 — CONNECTED라 세지 않음(6 s라 AN-04 짧은 연결도 아님) (AN07-T1)",
+                   30000)
+    for i in range(3):
+        sc.ue(10 + i).flow_connected(B + 10000 * i)
+    return sc
+
+
+def san07_three():
+    sc = Scenario4("SAN07_AN-07_미완료3번_RAISE",
+                   "Q × 3(Complete 없이 2 s 뒤 CU 해제, 10 s 간격) — 3번째 닫힘에서 K 3, RAISE 후보 L3-11-V1·V2 (AN07-T2)", 25000)
+    t_end = q_n(sc, 3, B, 10000, 10)
+    an07(sc, "RAISE", K(t_end))
+    return sc
+
+
+def san07_two():
+    sc = Scenario4("SAN07_AN-07_미완료2번_무경보", "Q × 2 — K 2 < n_fail 3 (AN07-T3)", 15000)
+    q_n(sc, 2, B, 10000, 10)
+    return sc
+
+
+def san07_outside():
+    sc = Scenario4("SAN07_AN-07_창밖_무경보", "Q × 3을 61 s 간격 — 창 60 s 안에 늘 하나뿐 (AN07-T3)", 127000)
+    q_n(sc, 3, B, 61000, 10)
+    return sc
+
+
+def san07_reject_release():
+    sc = Scenario4("SAN07_AN-07_망거절해제_무경보",
+                   "RRCSetup 대신 RRCReject + 같은 시각 UEContextReleaseCommand × 3 — rrc는 RELEASING으로 덮이지만 거절을 봐서 "
+                   "세지 않음 (11/04 사용자 결정, AN07-T4)", 25000)
+    q_n(sc, 3, B, 10000, 10, reject=True)
+    return sc
+
+
+def san07_reject_stale():
+    sc = Scenario4("SAN07_AN-07_망거절정리_무경보",
+                   "RRCReject × 3, 해제 줄 없이 30 s 뒤 stale_setup으로 닫힘(rrc REJECTED) — 세지 않음 (AN07-T4)", 53000)
+    q_n(sc, 3, B, 10000, 10, reject=True, release=False)
+    return sc
+
+
+def san07_random():
+    sc = Scenario4("SAN07_AN-07_무작위ID_무경보", "randomValue로 Q × 3 — Part1이 없어 잇지 못함, 1단계 몫 (AN07-T5)", 25000)
+    q_n(sc, 3, B, 10000, 10, random=True)
+    return sc
+
+
+def san07_stale():
+    sc = Scenario4("SAN07_AN-07_정리닫힘포함_RAISE",
+                   "Q × 3 중 둘째가 해제 줄 없이 stale_setup(마지막 줄 + 30 s)으로 닫힘 — 센다. 셋째 닫힘 때는 K 2, 둘째가 닫히는 "
+                   "마감을 처리한 kpm2에서 RAISE (AN07-T6)", 43000)
+    sc.ue(10).flow_Q(B)
+    sc.ue(11).flow_Q(B + 10000, release=False)
+    sc.ue(12).flow_Q(B + 20000)
+    an07(sc, "RAISE", B + 10000 + 30000)   # 마감 41,000 = 그 kpm2의 t_end
+    return sc
+
+
+def san07_du_reset():
+    sc = Scenario4("SAN07_AN-07_DU리셋닫힘_무경보",
+                   "Q × 3 중 둘째가 해제 줄 없이 F1Reset(du_reset)으로 닫힘 — 판정하지 않는 닫힘이라 세지 않아 K 2 (11/04 결정)",
+                   25000)
+    sc.ue(10).flow_Q(B)
+    sc.ue(11).flow_Q(B + 10000, release=False)
+    sc.add_raw(B + 11000, {"type": "f1_evt", "t_ms": T0 + B + 11000, "msg": "F1Reset", "cells": [1], "du_ue_ids": [11]})
+    sc.ue(12).flow_Q(B + 20000)
+    return sc
+
+
+def san07_two_part1():
+    sc = Scenario4("SAN07_AN-07_두Part1_UPDATE",
+                   "Part1 하나 × 4(RAISE, 4번째는 경보 값 extra — 11/04 결정) + 둘째 Part1 × 3(25 s부터) — 둘째가 걸린 칸에 UPDATE",
+                   49000)
+    q_n(sc, 4, B, 10000, 10)
+    t2 = q_n(sc, 3, 25000, 10000, 20, s=S_SHORT2)
+    an07(sc, "RAISE", K(B + 20000 + 2000))
+    an07(sc, "UPDATE", K(t2))
+    return sc
+
+
+def san07_clear():
+    sc = Scenario4("SAN07_AN-07_해제_CLEAR", "Q × 3 RAISE 뒤 마지막 걸림 + 60 s 이상인 첫 kpm2에 CLEAR (AN07-T7)", 84000)
+    t_end = q_n(sc, 3, B, 10000, 10)
+    an07(sc, "RAISE", K(t_end))
+    an07(sc, "CLEAR", K(t_end + 60000 - 1))
+    return sc
+
+
 SCENARIOS = [
     san01_normal, san01_raise, san01_second_failure, san01_mac_failure, san01_no_cause, san01_mid_join, san01_loss,
     san01_clear, san01_two_ues,
@@ -468,6 +609,8 @@ SCENARIOS = [
     san02_clear,
     san04_long, san04_three, san04_two, san04_du_release, san04_four, san04_part1, san04_du_reset, san04_two_stmsi,
     san04_clear,
+    san07_connected, san07_three, san07_two, san07_outside, san07_reject_release, san07_reject_stale, san07_random,
+    san07_stale, san07_du_reset, san07_two_part1, san07_clear,
 ]
 
 
