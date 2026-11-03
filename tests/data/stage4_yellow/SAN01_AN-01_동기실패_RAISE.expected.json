@@ -1,0 +1,19 @@
+{
+  "scenario": "SAN01_AN-01_동기실패_RAISE",
+  "description": "S — t0+118 동기 실패(#21) 걸림, K = t0+200에 RAISE(kind anomaly, 후보 L3-07-OV). t0+160 재인증은 경보 값 reauth 1 (AN01-T2)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "AN-01",
+      "cell": 1,
+      "t_rel_ms": 1200,
+      "severity": "medium",
+      "alert_kind": "anomaly",
+      "candidates": [
+        "L3-07-OV"
+      ]
+    }
+  ]
+}

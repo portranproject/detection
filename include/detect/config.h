@@ -110,6 +110,13 @@ struct NasDesyncConfig {
   int64_t clear_quiet_ms = 60000;  // clear_quiet_ms — 마지막 걸림 뒤 이만큼 새로 걸린 UE가 없으면 해제 (20_ §5.5)
 };
 
+// 4단계 룰 AN-01 인증 동기 실패 재인증 (21_ §3.4·§1.2). 설정 파일 rules.AN-01에 키가 없으면 이 기본값을 쓴다 (4_ §1.2)
+struct SyncFailureConfig {
+  int64_t window_ms = 60000;       // window_ms — W, 셀 창. N = 1이면 쓰이지 않고 N > 1일 때 '반복'을 재는 폭 (21_ §3.4)
+  int64_t n_sync = 1;              // n_sync — N, 창 안 동기 실패 연결 수 문턱. 표적 공격은 피해자 한 명 (21_ §3.3-3)
+  int64_t clear_quiet_ms = 60000;  // clear_quiet_ms — 마지막 걸림 뒤 이만큼 새로 걸린 UE가 없으면 해제 (21_ §3.5)
+};
+
 // 설정 파일 전체 (4_ §1.2). rules는 룰 ID → 그 룰의 설정 객체(JSON 문자열)다 — 공통 파서는 넘기기만 하고
 // 룰별 파서(parse_bts_variant_config 등)가 키·범위를 검사한다 (Q-46, 결정 J4)
 struct DetectorConfig {
@@ -156,5 +163,7 @@ RuleConfigResult<ImsiExtractorConfig> parse_imsi_extractor_config(std::string_vi
 RuleConfigResult<CapHijackConfig> parse_cap_hijack_config(std::string_view json_text);
 // 3단계로 올린 룰 L3-06 (20_ §5.4 — 4단계 AN-06b였음)
 RuleConfigResult<NasDesyncConfig> parse_nas_desync_config(std::string_view json_text);
+// 4단계 룰 (21_ §1.2 표 — 타입·허용 범위)
+RuleConfigResult<SyncFailureConfig> parse_sync_failure_config(std::string_view json_text);
 
 }  // namespace detect

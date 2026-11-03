@@ -183,6 +183,15 @@ void parse_nas_desync(const json& r, NasDesyncConfig& c, std::vector<std::string
   read_int_in(r, "clear_quiet_ms", c.clear_quiet_ms, 1000, 3600000, w);
 }
 
+// rules."AN-01" (21_ §1.2·§3.4) — 4단계 룰 ID는 AN- 접두사를 그대로 쓴다
+void parse_sync_failure(const json& r, SyncFailureConfig& c, std::vector<std::string>& warnings) {
+  const std::string w = "rules.AN-01.";
+  warn_unknown(r, {"window_ms", "n_sync", "clear_quiet_ms"}, w, warnings);
+  read_int_in(r, "window_ms", c.window_ms, 1000, 600000, w);
+  read_int_in(r, "n_sync", c.n_sync, 1, 10000, w);
+  read_int_in(r, "clear_quiet_ms", c.clear_quiet_ms, 1000, 3600000, w);
+}
+
 // ue_table (14_ §9 — 허용 범위는 10/29 이슈 #33 사용자 결정). tomb_ms·tomb_max는 예약 키라 경고만 (14_ §3.2)
 void parse_ue_table(const json& e, UeTableConfig& c, std::vector<std::string>& warnings) {
   const std::string w = "ue_table.";
@@ -321,6 +330,10 @@ RuleConfigResult<CapHijackConfig> parse_cap_hijack_config(std::string_view json_
 
 RuleConfigResult<NasDesyncConfig> parse_nas_desync_config(std::string_view json_text) {
   return parse_rule<NasDesyncConfig>(json_text, "L3-06", parse_nas_desync);
+}
+
+RuleConfigResult<SyncFailureConfig> parse_sync_failure_config(std::string_view json_text) {
+  return parse_rule<SyncFailureConfig>(json_text, "AN-01", parse_sync_failure);
 }
 
 }  // namespace detect
