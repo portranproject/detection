@@ -33,6 +33,7 @@ add_executable(detect_tests
   core/test_sync_failure.cpp
   core/test_sec_reauth.cpp
   core/test_identity_request.cpp
+  core/test_short_repeat.cpp
   io/test_uds_server.cpp
   io/test_file_replay.cpp
 )

@@ -135,6 +135,14 @@ struct IdentityRequestConfig {
   int64_t clear_quiet_ms = 60000;  // clear_quiet_ms — 마지막 성립 뒤 이만큼 새 성립이 없으면 해제 (21_ §5.5)
 };
 
+// 4단계 룰 AN-04 같은 UE의 짧은 연결 반복 (21_ §6.4·§1.2). 설정 파일 rules.AN-04에 키가 없으면 이 기본값을 쓴다 (4_ §1.2)
+struct ShortRepeatConfig {
+  int64_t short_ms = 5000;         // short_ms — S, 짧은 연결 기준. 페이징에 답한 뒤 할 일 없는 접속은 곧 해제 (21_ §6.4)
+  int64_t window_ms = 300000;      // window_ms — W, 같은 S-TMSI의 짧은 연결을 세는 창. 이력 표 보관(10분)보다 짧게
+  int64_t n_short = 3;             // n_short — N, 창 안 짧은 연결 수 문턱. 2번은 정상에서도 흔하다
+  int64_t clear_quiet_ms = 60000;  // clear_quiet_ms — 마지막 걸림 뒤 이만큼 새로 걸린 UE가 없으면 해제 (21_ §6.5)
+};
+
 // 설정 파일 전체 (4_ §1.2). rules는 룰 ID → 그 룰의 설정 객체(JSON 문자열)다 — 공통 파서는 넘기기만 하고
 // 룰별 파서(parse_bts_variant_config 등)가 키·범위를 검사한다 (Q-46, 결정 J4)
 struct DetectorConfig {
@@ -185,5 +193,6 @@ RuleConfigResult<NasDesyncConfig> parse_nas_desync_config(std::string_view json_
 RuleConfigResult<SyncFailureConfig> parse_sync_failure_config(std::string_view json_text);
 RuleConfigResult<SecReauthConfig> parse_sec_reauth_config(std::string_view json_text);
 RuleConfigResult<IdentityRequestConfig> parse_identity_request_config(std::string_view json_text);
+RuleConfigResult<ShortRepeatConfig> parse_short_repeat_config(std::string_view json_text);
 
 }  // namespace detect
