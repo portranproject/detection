@@ -33,8 +33,8 @@ TEST(Config, RepoConfigFileParses) {
   EXPECT_EQ(r.config.socket_path, d.socket_path);
   EXPECT_EQ(r.config.max_line_bytes, d.max_line_bytes);
   // L3-01-V + 2단계 L3-20·L3-01-O·L3-21 (10/29 이슈 #33) + 3단계 L3-24·L3-14 (20_ §1.5) + 3단계로 올린 L3-06 (20_ §5.4)
-  // + 4단계 AN-01·AN-06a·AN-02 (21_ §1.2)
-  ASSERT_EQ(r.config.rules.size(), 10u);
+  // + 4단계 AN-01·AN-06a·AN-02·AN-04 (21_ §1.2)
+  ASSERT_EQ(r.config.rules.size(), 11u);
   ASSERT_TRUE(r.config.rules.count("L3-01-V"));
   BtsVariantConfigResult b = parse_bts_variant_config(r.config.rules.at("L3-01-V"));
   ASSERT_TRUE(b.ok) << b.error;
@@ -149,6 +149,17 @@ TEST(Config, RepoConfigFileParses) {
   EXPECT_EQ(ir.config.clear_quiet_ms, ird.clear_quiet_ms);
   EXPECT_EQ(ird.window_ms, 60000);
   EXPECT_EQ(ird.n_idreq, 5);
+  auto srr = parse_short_repeat_config(r.config.rules.at("AN-04"));  // 21_ §6.4
+  ASSERT_TRUE(srr.ok) << srr.error;
+  EXPECT_TRUE(srr.warnings.empty());
+  const ShortRepeatConfig srd;
+  EXPECT_EQ(srr.config.short_ms, srd.short_ms);
+  EXPECT_EQ(srr.config.window_ms, srd.window_ms);
+  EXPECT_EQ(srr.config.n_short, srd.n_short);
+  EXPECT_EQ(srr.config.clear_quiet_ms, srd.clear_quiet_ms);
+  EXPECT_EQ(srd.short_ms, 5000);
+  EXPECT_EQ(srd.window_ms, 300000);
+  EXPECT_EQ(srd.n_short, 3);
 }
 
 // 빠진 키는 기본값, 일부만 덮어쓰기
@@ -300,6 +311,8 @@ TEST(Config, Stage2RangeBoundaries) {
       {"AN-06a", "n_reauth", 1, 100},              {"AN-06a", "clear_quiet_ms", 1000, 3600000},  // AN06a-T10
       {"AN-02", "window_ms", 1000, 600000},        {"AN-02", "n_idreq", 1, 10000},  // AN02-T8
       {"AN-02", "clear_quiet_ms", 1000, 3600000},
+      {"AN-04", "short_ms", 100, 600000},          {"AN-04", "window_ms", 1000, 600000},  // AN04-T8
+      {"AN-04", "n_short", 2, 10000},              {"AN-04", "clear_quiet_ms", 1000, 3600000},
   };
   auto accepts = [](const Range& r, int64_t v, std::string* error = nullptr) {
     const std::string obj = "{\"" + r.key + "\":" + std::to_string(v) + "}";
@@ -343,6 +356,10 @@ TEST(Config, Stage2RangeBoundaries) {
       err = c.error;
     } else if (r.section == "AN-02") {
       auto c = parse_identity_request_config(obj);
+      ok = c.ok;
+      err = c.error;
+    } else if (r.section == "AN-04") {
+      auto c = parse_short_repeat_config(obj);
       ok = c.ok;
       err = c.error;
     } else {
@@ -502,4 +519,14 @@ TEST(Config, Stage4IdentityRequest) {
   auto r = parse_identity_request_config(R"({"n_sync":1})");
   ASSERT_TRUE(r.ok);
   EXPECT_EQ(r.warnings, (std::vector<std::string>{"unknown key rules.AN-02.n_sync (ignored)"}));
+}
+
+// AN04-T8 (21_ §6.8·§1.2): rules.AN-04 — n_short 1(하한 2)·범위 밖·문자열은 오류(실행 파일은 종료 코드 1), 모르는 키는 경고만
+TEST(Config, Stage4ShortRepeat) {
+  EXPECT_FALSE(parse_short_repeat_config(R"({"n_short":1})").ok);
+  EXPECT_FALSE(parse_short_repeat_config(R"({"short_ms":99})").ok);
+  EXPECT_FALSE(parse_short_repeat_config(R"({"window_ms":"300000"})").ok);
+  auto r = parse_short_repeat_config(R"({"n_fail":3})");
+  ASSERT_TRUE(r.ok);
+  EXPECT_EQ(r.warnings, (std::vector<std::string>{"unknown key rules.AN-04.n_fail (ignored)"}));
 }

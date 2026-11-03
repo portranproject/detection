@@ -1,0 +1,29 @@
+{
+  "scenario": "SAN04_AN-04_두STMSI_UPDATE",
+  "description": "S × 4(RAISE, 4번째는 extra) + 둘째 S-TMSI × 3(45 s부터) — 둘째가 걸린 칸에 UPDATE (AN04-T5)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "AN-04",
+      "cell": 1,
+      "t_rel_ms": 42300,
+      "severity": "medium",
+      "alert_kind": "anomaly",
+      "candidates": [
+        "L3-02-Oa",
+        "L3-34-OV",
+        "L3-12-V"
+      ]
+    },
+    {
+      "kind": "UPDATE",
+      "rule": "AN-04",
+      "cell": 1,
+      "t_rel_ms": 86300,
+      "severity": "medium",
+      "alert_kind": "anomaly"
+    }
+  ]
+}

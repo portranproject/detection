@@ -17,6 +17,7 @@
 #include "detect/rules/nas_desync.h"
 #include "detect/rules/identity_request.h"
 #include "detect/rules/sec_reauth.h"
+#include "detect/rules/short_repeat.h"
 #include "detect/rules/sync_failure.h"
 #include "detect/rules/uplink_dos.h"
 
@@ -80,6 +81,7 @@ std::vector<AlertEvent> replay(const std::string& path) {
   engine.add_ue_rule(std::make_unique<SyncFailureRule>());  // 4단계 (21_) — L3-06 다음
   engine.add_ue_rule(std::make_unique<SecReauthRule>());
   engine.add_ue_rule(std::make_unique<IdentityRequestRule>());
+  engine.add_ue_rule(std::make_unique<ShortRepeatRule>());
   std::ifstream in(path);
   std::string line;
   std::vector<AlertEvent> alerts;

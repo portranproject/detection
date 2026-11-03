@@ -1,0 +1,7 @@
+{
+  "scenario": "SAN04_AN-04_긴세션3번_무경보",
+  "description": "같은 S-TMSI가 6 s 세션(> short_ms 5 s)을 20 s 간격 3번 — 짧은 연결이 아님 (AN04-T1)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

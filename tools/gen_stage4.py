@@ -1,20 +1,23 @@
 #!/usr/bin/env python3
 """합성 ue_evt+kpm2 4단계 시나리오(.jsonl)와 기대 경보(.expected.json) 생성기.
 
-명세: 4단계 룰 21_탐지엔진_4단계-노란색룰_명세서.md(AN-01 §3.8·AN-06a §4.8·AN-02 §5.8 — 뒤 룰은 구현 이슈마다 더함), 입력 2_ §6,
+명세: 4단계 룰 21_탐지엔진_4단계-노란색룰_명세서.md(AN-01 §3.8·AN-06a §4.8·AN-02 §5.8·AN-04 §6.8 — 뒤 룰은 구현 이슈마다 더함),
+입력 2_ §6,
 상태·경보 14_.
 실행: python3 tools/gen_stage4.py [출력 폴더]  (기본 tests/data/stage4_yellow/).
 tests/core/test_scenarios.cpp가 이 폴더를 실행 파일과 같은 룰 구성(1~4단계, 기본값)으로 재생해 같은 이름 .expected.json과
 비교한다(Stage4Scenario, 시각 정확 비교). 3단계 생성기 gen_stage3.py의 UE3·Scenario3·기본 흐름 F·K(t)를 그대로 쓰고
-4단계 흐름(AN-01 동기 실패 흐름 S·AN-06a 재등장 흐름 R·AN-02 등록 흐름 G)과 기대 경보의 candidates(4단계는 후보가 경보의
+4단계 흐름(AN-01 동기 실패 흐름 S·AN-06a 재등장 흐름 R·AN-02 등록 흐름 G·AN-04 짧은 연결 흐름 P)과 기대 경보의 candidates(4단계는 후보가 경보의
 뜻이다, 21_ §1)만 더한다.
 
 기대 경보 시각은 명세 식으로 손 계산한 값이다(3단계와 같은 방식):
  - 연결 시작 t0 = 1000(창 시작). K(t) = t를 품은 창의 t_end — 걸림이 든 창의 kpm2에서 RAISE(21_ §1.1)
  - UPDATE = 새 UE가 걸린 뒤 RAISE·UPDATE에서 update_min_ms(1,000) 이상인 첫 kpm2(14_ §8.2)
  - CLEAR = 경보에 실린 마지막 걸림 + clear_quiet_ms(60,000) 이상인 첫 kpm2(21_ §3.5)
+ - AN-04는 연결이 닫힐 때 판정한다 — 걸림 = 닫힌 시각(해제 완료 줄), RAISE = 그 시각이 든 창의 kpm2(21_ §1.3)
 재생은 설정 기본값(AN-01 n_sync 1·AN-06a n_reauth 1)이라 문턱을 바꾼 시험(AN01-T6·T7·AN06a-T6)·밀어내기·설정·결정성은
-단위 시험만이다.
+단위 시험만이다. AN-04 창 밖(AN04-T3 둘째 — 400 s 넘는 데이터)·유령 정리 닫힘(AN04-T7 — 기본값으로는 유령 17개 필요)도 단위
+시험만이고, 재생은 같은 '판정하지 않는 닫힘' 갈래인 du_reset(F1Reset)으로 본다.
 """
 
 import os
@@ -29,6 +32,8 @@ from gen_stage3 import B, K  # noqa: E402
 SYNCH_FAILURE = 21  # 5GMM 원인값 #21 synch failure (21_ §3.1)
 S_ALLOC = "0x0123456789ab"    # 이 망이 RegistrationAccept로 준 S-TMSI (AN-02 등록 흐름 G)
 S_UNKNOWN = "0x00fedcba9876"  # 모르는 S-TMSI
+S_SHORT = "0x00000a0b0c0d"    # 짧은 연결을 반복하는 S-TMSI (AN-04 짧은 연결 흐름 P)
+S_SHORT2 = "0x0000fedcba98"   # 둘째 S-TMSI (AN-04 UPDATE)
 
 
 def part1_of(s):
@@ -69,6 +74,27 @@ class UE4(gen_stage3.UE3):
         self.setup(t0)
         self.setup_complete(t0 + 91, s_tmsi=rrc_s if rrc_full else None)
         return self.reg_req(t0 + 91, id_type="5G-GUTI", s_tmsi=nas_s)
+
+    # 짧은 연결 흐름 P (21_ §6.8): 같은 S-TMSI s로 RRCSetupRequest(Part1, est) → RRCSetupComplete(s) → ServiceRequest(s) →
+    # ServiceAccept → RRCRelease → 시작 + length에 해제 완료. full이 False면 RRC·NAS에 48비트가 없고 Part1만(AN04-T6),
+    # du_release면 해제 전에 DU의 UEContextReleaseRequest(rl-failure)(AN04-T4), release가 False면 해제 줄이 없다(AN04-T7)
+    def flow_P(self, t0, s=S_SHORT, est="mt-Access", full=True, length=1200, du_release=False, release=True):
+        self.setup_req(t0, random=False, part1=part1_of(s), est=est)
+        self.setup(t0)
+        self.setup_complete(t0 + 10, s_tmsi=s if full else None)
+        self.svc_req(t0 + 20, s_tmsi=s if full else None)
+        self.svc_accept(t0 + 30)
+        if not release:
+            return self
+        if du_release:
+            self.ctx_release_req(t0 + length - 20)
+        self.rrc_release(t0 + length - 10)
+        self.ctx_release_cmd(t0 + length - 5)
+        return self.ctx_release_complete(t0 + length)
+
+    def ctx_release_req(self, t, cause="radioNetwork:rl-failure"):
+        # UEContextReleaseRequest(UL) — DU가 먼저 해제를 요청(UE가 사라짐). f.cause가 상태표 rel_req_cause (14_ §2.2, AN-04 #33)
+        return self._line(t, "UL", "F1AP", "UEContextReleaseRequest", {"cause": cause})
 
 
 class Scenario4(gen_stage3.Scenario3):
@@ -337,6 +363,102 @@ def san02_clear():
     return sc
 
 
+# ============ AN-04 같은 UE의 짧은 연결 반복 (21_ §6.8 AN04-T1~T8 — 창 밖·유령 정리·설정·결정성·회복은 단위 시험) ============
+
+RAN04 = "AN-04"
+CAND04_PAGING = ["L3-02-Oa", "L3-34-OV", "L3-12-V"]
+
+
+def an04(sc, kind, t_rel, candidates=None):
+    return sc.alert(kind, t_rel, RAN04, severity="medium" if kind in ("RAISE", "UPDATE") else None, alert_kind="anomaly",
+                    candidates=candidates)
+
+
+def p_n(sc, n, t0, gap, du0, s=S_SHORT, **kw):
+    """같은 S-TMSI s의 P를 n번 (시작 t0, 간격 gap, du는 du0부터). 마지막 연결이 닫힌 시각을 돌려준다."""
+    length = kw.get("length", 1200)
+    for i in range(n):
+        sc.ue(du0 + i).flow_P(t0 + gap * i, s=s, **kw)
+    return t0 + gap * (n - 1) + length
+
+
+def san04_long():
+    sc = Scenario4("SAN04_AN-04_긴세션3번_무경보",
+                   "같은 S-TMSI가 6 s 세션(> short_ms 5 s)을 20 s 간격 3번 — 짧은 연결이 아님 (AN04-T1)", 50000)
+    p_n(sc, 3, B, 20000, 10, length=6000)
+    return sc
+
+
+def san04_three():
+    sc = Scenario4("SAN04_AN-04_짧은연결3번_RAISE",
+                   "P × 3(1.2 s 연결, 20 s 간격, est_cause mt-Access) — 3번째 닫힘에서 K 3, RAISE 후보는 페이징 셋 (AN04-T2)",
+                   45000)
+    t_end = p_n(sc, 3, B, 20000, 10)
+    an04(sc, "RAISE", K(t_end), CAND04_PAGING)
+    return sc
+
+
+def san04_two():
+    sc = Scenario4("SAN04_AN-04_짧은연결2번_무경보", "P × 2 — K 2 < n_short 3 (AN04-T3)", 25000)
+    p_n(sc, 2, B, 20000, 10)
+    return sc
+
+
+def san04_du_release():
+    sc = Scenario4("SAN04_AN-04_DU해제요청_RAISE",
+                   "P에서 est_cause mo-Data, 해제가 DU의 UEContextReleaseRequest(rl-failure) 뒤 × 3 — 후보 L3-33-V (AN04-T4)",
+                   45000)
+    t_end = p_n(sc, 3, B, 20000, 10, est="mo-Data", du_release=True)
+    an04(sc, "RAISE", K(t_end), ["L3-33-V"])
+    return sc
+
+
+def san04_four():
+    sc = Scenario4("SAN04_AN-04_네번째반복_RAISE",
+                   "P × 4 — RAISE 1번, 4번째는 경보 values.extra(UE 칸·UPDATE 아님, 11/04 결정) (AN04-T5)", 65000)
+    p_n(sc, 4, B, 20000, 10)
+    an04(sc, "RAISE", K(B + 40000 + 1200), CAND04_PAGING)
+    return sc
+
+
+def san04_part1():
+    sc = Scenario4("SAN04_AN-04_Part1만_RAISE",
+                   "RRCSetupComplete·ServiceRequest에 s_tmsi 없이 Part1만 아는 P × 3 — Part1 색인으로 세어 RAISE (AN04-T6)", 45000)
+    t_end = p_n(sc, 3, B, 20000, 10, full=False)
+    an04(sc, "RAISE", K(t_end), CAND04_PAGING)
+    return sc
+
+
+def san04_du_reset():
+    sc = Scenario4("SAN04_AN-04_DU리셋닫힘_무경보",
+                   "P × 3 중 둘째가 해제 줄 없이 F1Reset(du_reset)으로 닫힘 — 판정하지 않는 닫힘이라 세지 않아 K 2 "
+                   "(11/04 결정, AN04-T7 갈래)", 45000)
+    sc.ue(10).flow_P(B)
+    sc.ue(11).flow_P(B + 20000, release=False)
+    sc.add_raw(B + 20500, {"type": "f1_evt", "t_ms": T0 + B + 20500, "msg": "F1Reset", "cells": [1], "du_ue_ids": [11]})
+    sc.ue(12).flow_P(B + 40000)
+    return sc
+
+
+def san04_two_stmsi():
+    sc = Scenario4("SAN04_AN-04_두STMSI_UPDATE",
+                   "S × 4(RAISE, 4번째는 extra) + 둘째 S-TMSI × 3(45 s부터) — 둘째가 걸린 칸에 UPDATE (AN04-T5)", 88000)
+    p_n(sc, 4, B, 20000, 10)
+    t2 = p_n(sc, 3, 45000, 20000, 20, s=S_SHORT2)
+    an04(sc, "RAISE", K(B + 40000 + 1200), CAND04_PAGING)
+    an04(sc, "UPDATE", K(t2))
+    return sc
+
+
+def san04_clear():
+    sc = Scenario4("SAN04_AN-04_해제_CLEAR",
+                   "P × 3 RAISE 뒤 마지막 걸림 + 60 s 이상인 첫 kpm2에 CLEAR (AN04-T8)", 103000)
+    t_end = p_n(sc, 3, B, 20000, 10)
+    an04(sc, "RAISE", K(t_end), CAND04_PAGING)
+    an04(sc, "CLEAR", K(t_end + 60000 - 1))
+    return sc
+
+
 SCENARIOS = [
     san01_normal, san01_raise, san01_second_failure, san01_mac_failure, san01_no_cause, san01_mid_join, san01_loss,
     san01_clear, san01_two_ues,
@@ -344,6 +466,8 @@ SCENARIOS = [
     san06a_complete_lost, san06a_clear,
     san02_suci, san02_guti_no_idreq, san02_known_guti, san02_attack_shape, san02_unknown_guti, san02_five, san02_four,
     san02_clear,
+    san04_long, san04_three, san04_two, san04_du_release, san04_four, san04_part1, san04_du_reset, san04_two_stmsi,
+    san04_clear,
 ]
 
 

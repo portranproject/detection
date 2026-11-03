@@ -46,6 +46,9 @@ class HitWindow {
   void add(const UeId& id, const std::string& name, int64_t n = 1);
   // 연결이 닫힘 — 아직 kpm2를 거치지 않은 걸림은 마지막 상태로 식별·uncertain을 채우고, 연결 기록을 지운다
   void on_close(const UeState& last);
+  // 걸림 키를 지운다 — 같은 키로 다시 걸릴 수 있다. 연결이 아니라 S-TMSI를 키로 쓰는 룰(AN-04 — 닫힐 때 판정, 21_ §6.3-2)이
+  // 그 S-TMSI가 회복됐을 때 부른다. 경보에 실린 누적 수는 그대로다
+  void forget(const UeId& id) { conns_.erase(id); }
 
   // 셀 kpm2마다 (§1.1): input_lost면 END, 이번 걸림을 창에 넣어 성립을 보고 RAISE(창 안 걸림 전부)·UPDATE(새 걸림), 모아 둔
   // UPDATE, 해제. 이벤트를 낼 때마다 fn(from)을 부른다

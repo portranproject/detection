@@ -9,7 +9,7 @@
 | `stage1/` | 1단계 표 II kpm2 (UE 컨텍스트 고갈 룰) |
 | `stage2_green/` | 2단계 녹색 4종 (kpm2 + ue_evt) |
 | `stage3_lightgreen/` | 3단계 — 룰 3개 L3-24(#24 하향 IMSI 추출)·L3-14(#14 UE 능력 탈취)·L3-06(#6 NAS 카운터 비동기화 — 4단계에서 올림, M9), `kpm2` + `ue_evt`(명세 `20_` §3.8·§4.8·§5.8, 11/03). #9·#19·#23은 3단계 룰이 없다(L3-09 탐지 안 함, #19·#23 원형은 L3-20이 받음). 합성 생성기 `tools/gen_stage3.py`로 채운다(아래 절) |
-| `stage4_yellow/` | 4단계 — 이상 유형 룰(`kind` anomaly·`stage` 4, 명세 `21_`). 11/04 AN-01(인증 동기 실패 재인증, `21_` §3.8)·AN-06a(보안 수립 뒤 재인증·SMC 재등장, §4.8)·AN-02(식별 요청 증가, §5.8) — 룰 6개를 구현 이슈마다 더한다. 합성 생성기 `tools/gen_stage4.py`(아래 절) |
+| `stage4_yellow/` | 4단계 — 이상 유형 룰(`kind` anomaly·`stage` 4, 명세 `21_`). 11/04 AN-01(인증 동기 실패 재인증, `21_` §3.8)·AN-06a(보안 수립 뒤 재인증·SMC 재등장, §4.8)·AN-02(식별 요청 증가, §5.8)·AN-04(같은 UE의 짧은 연결 반복, §6.8) — 룰 6개를 구현 이슈마다 더한다. 합성 생성기 `tools/gen_stage4.py`(아래 절) |
 | `captured/` | 실측 녹화 (회귀 테스트용) |
 
 - 파일명: `<시나리오·공격ID>_<짧은 설명>.jsonl`, 기대 결과는 같은 이름 `.expected.json`.
@@ -56,18 +56,19 @@
 - **L3-06 NAS 카운터 비동기화 (25, 이슈 #68):** 정상흐름·정상거부·AMF재전송(거부1회·명령마다거부)·AS무결성뒤거부·중간합류·늦은거부줄·명령줄순서위반(무경보) / 보안전주입(J1)·정상완료뒤주입(J2 — Complete를 응답으로 셈)·nia0·RRC보안명령뒤완료전·같은연결추가거부·같은창두거부·연결전로스·UL로스·창경계거부·같은창해제(RAISE) / 두UE UPDATE / 해제·extra는해제를안늦춤(CLEAR) / 명령줄로스·연결뒤로스·DL미관측(불확실 경보 RAISE) / 거부중복(RAISE — 오탐을 기록해 두는 시험, `20_` §5.7). 메시지는 2단계부터 받는 NAS SecurityModeCommand·Complete·Reject뿐이다.
 - 데이터로 두지 않은 시험은 단위 시험에만 있다 — L24-T23·L14-T18·L06-T18(상태표 밀어내기, 상한 100), L24-T26·L14-T21·L06-T20(재생 결정성)은 `tests/core/test_imsi_extractor.cpp`·`test_cap_hijack.cpp`·`test_nas_desync.cpp`, L24-T25·L14-T20·L06-T20(설정)은 `test_config.cpp`.
 
-## `stage4_yellow/` 파일 요건 (11/04 이슈 #70·#72·#76 — `21_` §1·§3.8·§4.8·§5.8)
+## `stage4_yellow/` 파일 요건 (11/04 이슈 #70·#72·#76·#78 — `21_` §1·§3.8·§4.8·§5.8·§6.8)
 
 `tests/core/test_scenarios.cpp`가 이 폴더를 실행 파일과 같은 룰 구성(1~4단계, 기본값)으로 재생해 같은 이름 `.expected.json`과 비교한다(`Stage4Scenario`). ctest `data.scenarios`가 이 폴더도 매번 돈다. 요건은 `stage3_lightgreen/`과 같고 다른 것만 적는다.
 
 - 경보 시각은 정확히 비교한다 — 4단계는 걸림이 든 창의 `kpm2`에서 RAISE한다(`21_` §1.1).
 - `.expected.json`의 `alerts` 항목에 **`candidates`**(raise의 후보 배열)를 적으면 그 이벤트의 값과 비교한다. 4단계 경보는 공격이 아니라 이상 유형이라 어느 공격 후보인지가 경보의 뜻이다(`21_` §1). 4단계 RAISE는 `alert_kind` `anomaly`로 적는다 — 불확실 경보와는 `rule` 접두사(`AN-`)로 가른다.
-- **생성:** `python3 tools/gen_stage4.py [출력 폴더]`. 3단계 생성기의 UE·Scenario·기본 흐름 F·K(t)를 그대로 쓰고 4단계 흐름(AN-01 동기 실패 흐름 S·AN-06a 재등장 흐름 R·AN-02 등록 흐름 G)과 `candidates`만 더한다. 3단계 생성기 출력은 그대로다.
+- **생성:** `python3 tools/gen_stage4.py [출력 폴더]`. 3단계 생성기의 UE·Scenario·기본 흐름 F·K(t)를 그대로 쓰고 4단계 흐름(AN-01 동기 실패 흐름 S·AN-06a 재등장 흐름 R·AN-02 등록 흐름 G·AN-04 짧은 연결 흐름 P)과 `candidates`만 더한다. 3단계 생성기 출력은 그대로다.
 - 파일명은 `S<룰 번호>_<룰 ID>_<설명>_<결과>` — 4단계 룰 번호는 `AN01`처럼 쓴다.
-- 재생은 설정 기본값이라 문턱을 바꾼 시험(AN01-T6·T7 `n_sync` 2, AN06a-T6 `n_reauth` 2), 밀어내기(AN01-T10·AN06a-T9 뒤 경우), 설정(AN01-T11·AN06a-T10), 결정성(AN01-T12·AN06a-T10)은 단위 시험(`tests/core/test_sync_failure.cpp`·`test_sec_reauth.cpp`·`test_identity_request.cpp`·`test_config.cpp`)에만 있다. AN-02의 보안 뒤 요청(T6)·할당 기억 만료(T7)·`mid_join`도 단위 시험만이다.
+- 재생은 설정 기본값이라 문턱을 바꾼 시험(AN01-T6·T7 `n_sync` 2, AN06a-T6 `n_reauth` 2), 밀어내기(AN01-T10·AN06a-T9 뒤 경우), 설정(AN01-T11·AN06a-T10), 결정성(AN01-T12·AN06a-T10)은 단위 시험(`tests/core/test_sync_failure.cpp`·`test_sec_reauth.cpp`·`test_identity_request.cpp`·`test_short_repeat.cpp`·`test_config.cpp`)에만 있다. AN-02의 보안 뒤 요청(T6)·할당 기억 만료(T7)·`mid_join`도 단위 시험만이다. AN-04의 창 밖 반복(AN04-T3 둘째 — 400 s 넘는 데이터)·유령 정리 닫힘(AN04-T7 — 기본값으로는 유령 17개가 필요)·회복 뒤 다시 걸림도 단위 시험만이고, 재생은 같은 '판정하지 않는 닫힘' 갈래인 `du_reset`(`F1Reset`)으로 본다.
 
-### 현재 들어 있는 시나리오 (26개 — 생성기)
+### 현재 들어 있는 시나리오 (35개 — 생성기)
 
 - **AN-01 인증 동기 실패 재인증 (9, 이슈 #70):** 정상흐름·MAC실패(원인값 20)·원인값없음(무경보) / 동기실패·두번째동기실패(연결당 한 번, 경보 값 extra)·중간합류(`mid_join`)·로스창(보류 없음)(RAISE) / 두UE(UPDATE) / 해제(CLEAR). 앞 단계 데이터에서는 `stage2_green/S21_L3-21_정상_무경보`의 동기 실패가 AN-01 RAISE를 낸다.
 - **AN-06a 보안 수립 뒤 재인증·SMC 재등장 (9, 이슈 #72):** 정상흐름·AMF재전송(SMC — 갱신 전 CMD·인증 — 갱신 전 AUTH)·중간합류·완료줄로스(무경보) / 보안뒤재인증·보안뒤SMC재등장·두번째재등장(경보 값 extra)(RAISE) / 해제(CLEAR). 앞 단계 데이터에는 이 모양이 없다.
 - **AN-02 식별 요청 증가 (8, 이슈 #76):** SUCI등록·준GUTI식별없음·모르는GUTI·식별요청4UE(무경보) / 준GUTI식별요청(갈래 ①)·공격모양RRC원래값(갈래 ① — NAS GUTI만 바뀜, 11/04 결정)·식별요청5UE(갈래 ②)(RAISE) / 해제(성립 아닌 UE는 UPDATE로 실려도 해제를 늦추지 않음 — CLEAR). 앞 단계 데이터에는 이 모양이 없다.
+- **AN-04 같은 UE의 짧은 연결 반복 (9, 이슈 #78):** 긴세션3번(6 s > `short_ms`)·짧은연결2번·DU리셋닫힘(`du_reset`으로 닫힌 연결은 세지 않음, 11/04 결정)(무경보) / 짧은연결3번(후보 페이징 셋)·DU해제요청(`mo-Data` + `UEContextReleaseRequest` — 후보 `L3-33-V`)·네번째반복(경보 값 extra, 11/04 결정)·Part1만(Part1 색인)(RAISE) / 두STMSI(UPDATE) / 해제(CLEAR). 앞 단계 데이터에는 이 모양이 없다.

@@ -1,0 +1,7 @@
+{
+  "scenario": "SAN04_AN-04_짧은연결2번_무경보",
+  "description": "P × 2 — K 2 < n_short 3 (AN04-T3)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

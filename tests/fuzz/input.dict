@@ -62,6 +62,8 @@
 "\"SecurityModeReject\""
 "\"AuthenticationFailure\""
 "\"cause\":21"
+"\"UEContextReleaseRequest\""
+"\"est_cause\":\"mt-Access\""
 "\"F1Reset\""
 "\"f\""
 "\"s_tmsi\":\"0x"

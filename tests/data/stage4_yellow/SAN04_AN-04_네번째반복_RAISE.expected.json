@@ -1,0 +1,21 @@
+{
+  "scenario": "SAN04_AN-04_네번째반복_RAISE",
+  "description": "P × 4 — RAISE 1번, 4번째는 경보 values.extra(UE 칸·UPDATE 아님, 11/04 결정) (AN04-T5)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "AN-04",
+      "cell": 1,
+      "t_rel_ms": 42300,
+      "severity": "medium",
+      "alert_kind": "anomaly",
+      "candidates": [
+        "L3-02-Oa",
+        "L3-34-OV",
+        "L3-12-V"
+      ]
+    }
+  ]
+}
