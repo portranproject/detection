@@ -1,4 +1,4 @@
-// 룰 L3-21 상향 DoS 테스트 — 15_ §5.8 L21-T1~T21. 합성 ue_evt·kpm2 줄로 한다(데이터 파일은 설정 키·데이터 이슈).
+// 룰 L3-21 상향 DoS 테스트 — 15_ §5.8 L21-T1~T25. 합성 ue_evt·kpm2 줄로 한다(데이터 파일은 설정 키·데이터 이슈).
 // 시각은 kT0 기준 ms. 갈래 ① 실패 UE는 t_f + fail_accept_wait_ms 이상인 첫 kpm2에서 정해지고, 갈래 ②는 걸린 줄에서 바로 낸다
 #include "detect/engine.h"
 #include "detect/evidence.h"
@@ -734,6 +734,88 @@ TEST(UplinkDos, T23EvictionHoldsClear) {
   ASSERT_EQ(h.alerts.size(), 2u);
   EXPECT_EQ(h.alerts[1].kind, AlertEventKind::Clear);
   EXPECT_EQ(h.alerts[1].t, kT0 + 91100);
+}
+
+// L21-T24 (15_ §5.2, 11/03 사용자 결정): 인증 단계 고착 — 1 s 간격 5개 연결이 등록 요청 → 인증 요청에 응답하지 않음 →
+// AMF가 6 s마다 4번 재전송 → 첫 인증 요청 + 30 s에 AuthenticationReject(연결은 남음). 응답 없이 받은 거절이라 실패가 아니다
+// → L3-21 경보 없음. L3-01-O는 원래대로 RAISE (그전에는 실패 UE 5개로 약 35 s 뒤 L3-21이 덧붙었다)
+TEST(UplinkDos, T24AuthRejectWithoutResponseNotFailure) {
+  Opt o;
+  o.auth_stall = true;
+  Harness h(o);
+  // 줄은 셀마다 시각 순으로 넣는다 — 연결·첫 인증 요청(1000~5020) → 재전송 4번(7020~29020) → 거절(31020~35020)
+  for (int i = 0; i < 5; ++i) {
+    h.connect(1000 + 1000 * i, 10 + i);
+    h.nas(1020 + 1000 * i, 10 + i, "DL", "AuthenticationRequest");
+  }
+  for (int k = 1; k <= 4; ++k)
+    for (int i = 0; i < 5; ++i) h.nas(1020 + 1000 * i + 6000 * k, 10 + i, "DL", "AuthenticationRequest");
+  for (int i = 0; i < 5; ++i) h.reject(31020 + 1000 * i, 10 + i, 3, "AuthenticationReject");
+  EXPECT_EQ(h.rule->waiting(), 0u);
+  h.tick_to(80000);
+  EXPECT_EQ(h.rule->failed_ues(), 0);
+  EXPECT_TRUE(h.of("L3-21").empty());
+  ASSERT_FALSE(h.of("L3-01-O").empty());
+  EXPECT_EQ(h.of("L3-01-O")[0]->kind, AlertEventKind::Raise);
+}
+
+// L21-T25 (15_ §5.2): ① L21-T7 뒤 — 한 연결 RegistrationRequest 3번, 응답 없이 AuthenticationReject → 갈래 ② 아님(실패 없음),
+// 갈래 ① 실패 UE 아님 / ② AuthenticationFailure(t_f) → AMF가 다시 건 인증 요청에 응답 없음 → AuthenticationReject → 첫 실패는
+// AuthenticationFailure라 t_f + 5 s 마감에서 실패 UE(뒤 거절은 세지 않아도 결과 같음)
+TEST(UplinkDos, T25AuthRejectAfterRepeatOrAfterFailure) {
+  {
+    Harness h;
+    h.connect(1000, 3);
+    h.nas(1020, 3, "DL", "AuthenticationRequest");
+    h.nas(1500, 3, "UL", "RegistrationRequest", kSuci);
+    h.nas(2000, 3, "UL", "RegistrationRequest", kSuci);
+    h.reject(31020, 3, 3, "AuthenticationReject");
+    EXPECT_EQ(h.rule->waiting(), 0u);
+    h.tick_to(50000);
+    EXPECT_EQ(h.rule->failed_ues(), 0);
+    EXPECT_TRUE(h.alerts.empty());
+  }
+  {
+    Harness h;
+    h.connect(970, 3);
+    h.nas(1000, 3, "DL", "AuthenticationRequest");
+    h.nas(1010, 3, "UL", "AuthenticationFailure", R"("cause":21)");  // t_f — 마감 6010
+    h.nas(1030, 3, "DL", "AuthenticationRequest");
+    EXPECT_EQ(h.rule->waiting(), 1u);
+    h.tick_to(6000);
+    EXPECT_EQ(h.rule->failed_ues(), 0);
+    h.tick_to(6100);
+    EXPECT_EQ(h.rule->failed_ues(), 1);
+    h.reject(31030, 3, 3, "AuthenticationReject");
+    EXPECT_EQ(h.rule->waiting(), 0u);
+    h.tick_to(50000);
+    EXPECT_EQ(h.rule->failed_ues(), 1);
+  }
+}
+
+// 응답 없이 받은 AuthenticationReject의 경계 (15_ §5.2): mid_join(nas_sec UNKNOWN)이면 응답 여부를 모르므로 종전대로 실패로
+// 센다 — L21-T16과 같은 갈래 ② / 응답(AuthenticationResponse) 뒤 받은 거절은 실패다(위조 자격증명 원형 — 갈래 ① 실패 UE)
+TEST(UplinkDos, AuthRejectBoundary) {
+  {
+    Harness h;
+    h.nas(1000, 3, "UL", "RegistrationRequest", kSuci);  // 첫 줄 — mid_join
+    h.reject(1010, 3, 3, "AuthenticationReject");
+    h.nas(1500, 3, "UL", "RegistrationRequest", kSuci);
+    h.nas(2000, 3, "UL", "RegistrationRequest", kSuci);
+    ASSERT_EQ(h.alerts.size(), 1u);
+    EXPECT_EQ(h.alerts[0].branch, "2");
+    EXPECT_EQ(h.alerts[0].ues[0].uncertain, (std::vector<std::string>{"mid_join"}));
+  }
+  {
+    Harness h;
+    h.connect(970, 3);
+    h.nas(1000, 3, "DL", "AuthenticationRequest");
+    h.nas(1010, 3, "UL", "AuthenticationResponse");
+    h.reject(1020, 3, 3, "AuthenticationReject");  // t_f — 마감 6020
+    EXPECT_EQ(h.rule->waiting(), 1u);
+    h.tick_to(7000);
+    EXPECT_EQ(h.rule->failed_ues(), 1);
+  }
 }
 
 // 증거 지평 (14_ §1.1): 실패 뒤 수락 대기 + 셀 창 + UPDATE 모음 지연. 상태표는 여기에 여유 1 s를 더해 닫힌 항목의 recent를 보관한다

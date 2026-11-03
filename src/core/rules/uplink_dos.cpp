@@ -35,11 +35,16 @@ int64_t UplinkDosRule::evidence_horizon_ms() const {
 
 // 실패 메시지 (15_ §5.2): RegistrationReject·ServiceReject·AuthenticationReject(DL), AuthenticationFailure(UL).
 // ignore_causes의 원인값을 가진 Reject는 실패로 세지 않는다 — 망 컨텍스트 소실 뒤 정상 재접속의 거절을 거르는 정교화이고
-// 기본은 끔이다(10/29 검수 B3). SecurityModeReject는 #3 쪽 신호라 넣지 않는다
-bool UplinkDosRule::is_failure(const UeEvt& e) const {
+// 기본은 끔이다(10/29 검수 B3). SecurityModeReject는 #3 쪽 신호라 넣지 않는다.
+// 응답 없이 받은 AuthenticationReject도 실패로 세지 않는다 (15_ §5.2, 11/03 사용자 결정 (나)): 갱신 전 nas_sec이 AUTH면
+// 마지막 AuthenticationRequest에 Response·Failure가 오지 않은 것이다. Open5GS는 인증 무응답이면 T3560(6 s)마다 4번 다시
+// 보낸 뒤 약 30 s에 이 거절을 보내므로(5_ §15), 세면 L3-01-O 고착마다 약 35 s 뒤 L3-21 경보가 덧붙는다. 갈래 ①의 첫 실패·
+// 갈래 ②의 '실패 1번 이상' 모두에서 뺀다. UNKNOWN(mid_join)이면 응답 여부를 모르므로 종전대로 센다
+bool UplinkDosRule::is_failure(const UeEvt& e, const UeState& before) const {
   if (e.proto != Proto::NAS) return false;
   if (e.dir == Dir::UL) return e.msg == "AuthenticationFailure";
   if (e.msg != "RegistrationReject" && e.msg != "ServiceReject" && e.msg != "AuthenticationReject") return false;
+  if (e.msg == "AuthenticationReject" && before.nas_sec == NasSecState::Auth) return false;
   return !e.cause ||
          std::find(cfg_.ignore_causes.begin(), cfg_.ignore_causes.end(), *e.cause) == cfg_.ignore_causes.end();
 }
@@ -51,9 +56,10 @@ bool UplinkDosRule::is_failure(const UeEvt& e) const {
 //    (수락 뒤의 거부도 실패다). 기다리는 중의 실패, 실패 UE로 센 뒤 새 수락이 없는 연결의 실패로는 시작하지 않는다 —
 //    마감 뒤 실패마다 다시 세면 한 연결의 반복 거부가 '실패 UE 수'를 부풀리고 갈래 ②와 겹친다(10/29 이슈 #31 사용자 결정).
 //    mid_join이면 시작하지 않는다(마감 때 '없음' 판정을 하지 않으므로 같은 결과, 14_ §4.3)
-//  - 갈래 ②: RegistrationRequest R번 이상과 실패(ignore_causes 제외)가 이 연결에 함께 보이면 즉시 걸린다. 연결당 한 번.
-//    본 것으로 판정하므로 기다림·로스 보류가 없고, 불확실한 항목도 판정해 uncertain에 표시한다
-void UplinkDosRule::on_ue_event(const UeEvt& evt, const UeState&, const UeState& after, const UeRuleCtx& ctx,
+//  - 갈래 ②: RegistrationRequest R번 이상과 실패(ignore_causes·응답 없이 받은 AuthenticationReject 제외)가 이 연결에
+//    함께 보이면 즉시 걸린다. 연결당 한 번. 본 것으로 판정하므로 기다림·로스 보류가 없고, 불확실한 항목도 판정해
+//    uncertain에 표시한다
+void UplinkDosRule::on_ue_event(const UeEvt& evt, const UeState& before, const UeState& after, const UeRuleCtx& ctx,
                                 RuleOutput& out) {
   const UeId id{after.key, after.uid};
   if (is_accept(evt)) {
@@ -65,7 +71,7 @@ void UplinkDosRule::on_ue_event(const UeEvt& evt, const UeState&, const UeState&
     return;
   }
   const bool reg = evt.proto == Proto::NAS && evt.dir == Dir::UL && evt.msg == "RegistrationRequest";
-  const bool fail = is_failure(evt);
+  const bool fail = is_failure(evt, before);
   if (!reg && !fail) return;
   Conn& c = conns_[id];
   if (reg) c.id_type = evt.id_type;
