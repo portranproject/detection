@@ -7,7 +7,9 @@
 // 보류·불확실 경보가 없다(§1.1). 걸린 뒤 같은 연결에서 바뀌는 값(반복·재인증 관측 등)은 UE 칸에 다시 싣지 않고 경보 values의
 // 누적 수로 낸다 — update에는 새로 걸린 UE만 실리기 때문이다(§1.1, 14_ §8.3, 1_ §6 11/04). clear·end에도 누적값을 실어(룰 decorate,
 // 14_ §8.3 — 11/04 Q-69 W-28) UE 하나의 지속 공격에서 쌓인 수가 레코드에 남게 한다 — CLEAR·END 뒤에도 다음 RAISE까지 count·evicted가 남는다.
-// 밀어내기 창은 2·3단계와 같은 EvictWindow다(14_ §6.3 — 11/05 26_ R1, 이슈 #96)
+// (11/05 26_ R2, 이슈 #96) 2단계 L3-01-O의 셀 창 집계(고착 수 S_W ≥ N, 15_ §4.3·§4.5)도 이 위에 둔다 — 종류 attack·단계 2, 연결당 한 번은
+// 룰 몫, 심각도는 칸마다 룰이 정함, CLEAR 기준은 마지막 성립(t_sat), END 뒤 창은 그대로(15_ §4.5는 CLEAR 때만 비움), 공격 RAISE 직전
+// 불확실 경보 CLEAR는 HeldBook 고리로. 기본값은 모두 4단계 동작이라 4단계 룰은 바뀌지 않는다
 
 #include "detect/alert.h"
 #include "detect/config.h"
@@ -34,11 +36,13 @@ class HitWindow {
   // 경보 이벤트를 낸 직후 룰이 values·params·cond·candidates·로그 필드를 채우는 콜백 — out[from]부터가 새 이벤트. hit은 그 이벤트를
   // 일으킨 이번 걸림(식별·uncertain을 다시 채운 뒤) — 걸림을 처리하는 구간(RAISE·그 걸림의 UPDATE)에만 있고 END·모아 둔 UPDATE·CLEAR
   // 구간은 nullptr. 룰은 '이번 걸림'을 e.ues.back()으로 찾지 않는다 — ues가 alert.ues_max로 잘리면 마지막 칸이 이번 걸림이 아니다
-  // (23_ §3.2-1, 이슈 #84)
+  // (23_ §3.2-1, 이슈 #84). 이벤트가 없어도 걸림마다 한 번 불린다 — 룰이 '마지막 걸림 시각' 같은 값을 걸림 순서대로 갱신할 수 있게
   using Decorate = std::function<void(std::size_t from, const AlertUe* hit)>;
 
-  // rule = 룰 ID, window_ms·n = 셀 창 W·문턱 N, clear_quiet_ms = 해제 시간. 경보는 kind anomaly·stage 4 (21_ §1)
-  HitWindow(std::string rule, AlertConfig alert, int64_t window_ms, int64_t n, int64_t clear_quiet_ms);
+  // rule = 룰 ID, window_ms·n = 셀 창 W·문턱 N, clear_quiet_ms = 해제 시간. 경보는 기본 kind anomaly·stage 4 (21_ §1) —
+  // 2단계 룰은 "attack"·2를 넘긴다(R2, 이슈 #96)
+  HitWindow(std::string rule, AlertConfig alert, int64_t window_ms, int64_t n, int64_t clear_quiet_ms,
+            std::string kind = "anomaly", int stage = 4);
 
   // 걸림 (§1.1): 그 연결이 이미 걸렸으면 아무것도 하지 않고 false — 연결당 한 번(룰은 add로 누적 수만 늘린다). u의 cond·
   // t_hit·values는 룰이 걸릴 때 값으로 채운다. 식별·uncertain은 kpm2에서 그때 상태표 항목으로 다시 채운다 — 같은 창의 로스 표시는
@@ -48,8 +52,18 @@ class HitWindow {
   // (AN-08, 21_ §8.3-1)이 준다. 없으면 id가 곧 연결이다
   bool hit(const UeId& id, AlertUe u, bool force = false, std::optional<UeId> ref = std::nullopt);
   // 해제 기준 (21_ §3.5·§5.5): 기본은 경보에 실린 마지막 걸림 시각. true면 마지막 '성립'(force 걸림 또는 창 안 수 ≥ N) 시각 —
-  // 성립하지 않은 걸림은 경보에 실려도 해제를 늦추지 않는다(AN-02)
+  // 성립하지 않은 걸림은 경보에 실려도 해제를 늦추지 않는다(AN-02, L3-01-O 15_ §4.5)
   void set_clear_on_satisfied(bool v) { clear_on_satisfied_ = v; }
+  // 연결당 한 번 (§1.1) — 기본 true. 2단계 L3-01-O는 false: 응답 뒤 새 기다림은 같은 연결이 다시 고착할 수 있고 '연결당 한 번'은
+  // 룰이 stalled_로 한다(15_ §4.3-4). false면 같은 (키, uid)의 걸림이 창에 여러 칸 들어간다(한 UE가 두 번 고착하면 두 칸, 15_ §5.5)
+  void set_once_per_conn(bool v) { once_per_conn_ = v; }
+  // END(input_lost·input_silent) 뒤 창을 비우는가 — 기본 true(21_ §1.1, 이슈 #84). 2단계는 false: 15_ §4.5는 CLEAR 때만 비운다(Q-73)
+  void set_forget_on_end(bool v) { forget_on_end_ = v; }
+  // 이번 칸의 심각도 (15_ §4.3 — L3-01-O는 창 안 UeCtxMax로 칸마다 정한다). tick의 RAISE·UPDATE에 쓰고, 경보 중 medium에서 high가 되면
+  // 모아 둔 UE와 함께 바로 UPDATE한다(14_ §8.2). 기본 medium(4단계 21_ §1)
+  void set_severity(Severity sev) { severity_ = sev; }
+  // 불확실 경보 묶음 (14_ §8.2): 있으면 공격 RAISE 직전에 그 셀의 열린 불확실 경보를 먼저 CLEAR하고 새 경보의 보류 수를 0부터 센다
+  void set_held(HeldBook* held) { held_ = held; }
   bool hit_before(const UeId& id) const;  // 열린 연결이 이미 걸렸나
   // 걸린 연결의 누적 수 (§1.1): 그 연결이 열린 경보에 실렸으면 바로 경보 값에, 아직 실리지 않았으면 걸림에 쌓아 두었다가
   // 실릴 때 함께 더한다
@@ -83,6 +97,7 @@ class HitWindow {
   int64_t count(int64_t cell, const std::string& name) const;       // 열린 경보에 실린 연결의 누적 수
   int64_t evicted(int64_t cell, bool raise, int64_t t);              // raise면 직전 clear_quiet_ms 이동 창, 아니면 경보가 열린 뒤 누적
   bool open(int64_t cell) const { return book_.open(cell); }
+  std::optional<Severity> severity(int64_t cell) const { return book_.severity(cell); }
   std::size_t evict_times_size(int64_t cell) const { return evict_.times_size(cell); }  // 테스트용 (W-32)
 
  private:
@@ -117,6 +132,10 @@ class HitWindow {
   int64_t n_;
   int64_t clear_quiet_ms_;
   bool clear_on_satisfied_ = false;
+  bool once_per_conn_ = true;
+  bool forget_on_end_ = true;
+  Severity severity_ = Severity::Medium;
+  HeldBook* held_ = nullptr;
   UeAlertBook book_;
   EvictWindow evict_;  // 셀별 밀어내기 창 (14_ §6.3) — 2·3단계와 같은 헬퍼 (R1, 이슈 #96)
   std::map<int64_t, Cell> cells_;

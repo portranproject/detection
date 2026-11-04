@@ -19,17 +19,23 @@ void refresh(AlertUe& u, const UeState& s) {
 
 }  // namespace
 
-HitWindow::HitWindow(std::string rule, AlertConfig alert, int64_t window_ms, int64_t n, int64_t clear_quiet_ms)
+HitWindow::HitWindow(std::string rule, AlertConfig alert, int64_t window_ms, int64_t n, int64_t clear_quiet_ms,
+                     std::string kind, int stage)
     : window_ms_(window_ms),
       n_(n),
       clear_quiet_ms_(clear_quiet_ms),
-      book_(std::move(rule), alert, "anomaly", 4),
+      book_(std::move(rule), alert, std::move(kind), stage),
       evict_(clear_quiet_ms) {}
 
+// 연결당 한 번 (§1.1)이면 이미 걸린 연결은 false. 2단계(once_per_conn false)는 같은 연결의 걸림을 거듭 적는다 — 연결 기록은
+// 첫 걸림 것을 둔다(실린 경보 세대는 실릴 때 다시 적힌다)
 bool HitWindow::hit(const UeId& id, AlertUe u, bool force, std::optional<UeId> ref) {
-  if (conns_.count(id)) return false;
+  if (conns_.count(id)) {
+    if (once_per_conn_) return false;
+  } else {
+    conns_[id] = Conn{id.first.cell_id, false};
+  }
   const int64_t cell = id.first.cell_id;
-  conns_[id] = Conn{cell, false};
   cells_[cell].fresh.push_back(Hit{id, ref.value_or(id), std::move(u), {}, force});
   return true;
 }
@@ -94,8 +100,8 @@ void HitWindow::include(Cell& c, const Hit& h) {
 
 // 셀 kpm2 (21_ §1.1·§3.3-3·§3.5·§5.3): 이번 걸림마다 창 (t_hit − W, t_hit]을 맞추고 걸린 연결 수 ≥ N이거나 force 걸림이면
 // 성립 — 경보가 없으면 창 안 걸림 전부로 RAISE(누적 수는 처음부터), 경보 중이면 새 걸림을 UPDATE로 모은다(alert.update_min_ms).
-// 심각도는 4단계 기본 medium(21_ §1). 해제는 경보에 실린 마지막 걸림(clear_on_satisfied면 마지막 성립) 뒤 clear_quiet_ms,
-// 직전 clear_quiet_ms 동안 밀어내기가 있으면 풀지 않는다(Q-56)
+// 심각도는 기본 medium(21_ §1), 2단계는 룰이 칸마다 set_severity로 정한다(15_ §4.3). 해제는 경보에 실린 마지막 걸림
+// (clear_on_satisfied면 마지막 성립) 뒤 clear_quiet_ms, 직전 clear_quiet_ms 동안 밀어내기가 있으면 풀지 않는다(Q-56)
 void HitWindow::tick(int64_t cell, int64_t t, bool input_lost, const UeRuleCtx& ctx, std::vector<AlertEvent>& out,
                      const Decorate& fn) {
   Cell& c = cells_[cell];
@@ -104,7 +110,7 @@ void HitWindow::tick(int64_t cell, int64_t t, bool input_lost, const UeRuleCtx& 
   const bool ended = input_lost && book_.open(cell);
   if (ended) book_.end(cell, t, "input_lost", out);
   fn(from, nullptr);  // END에도 누적값 (14_ §8.3 — 11/04 Q-69 W-28)
-  if (ended) forget_window(c);
+  if (ended && forget_on_end_) forget_window(c);
 
   for (Hit& h : c.fresh) {
     if (const UeState* s = ctx.table.find(h.ref.first); s && s->uid == h.ref.second) refresh(h.u, *s);
@@ -116,26 +122,31 @@ void HitWindow::tick(int64_t cell, int64_t t, bool input_lost, const UeRuleCtx& 
                 c.win.end());
     const bool sat = h.force || static_cast<int64_t>(c.win.size()) >= n_;
     if (sat) c.t_sat = std::max(c.t_sat, h.u.t_hit);
+    // 공격 RAISE 직전에 열린 불확실 경보를 먼저 CLEAR (14_ §8.2) — 그 CLEAR는 이 걸림의 구간(from) 밖이다
+    if (sat && !book_.open(cell) && held_) held_->close(cell, t, out);
     from = out.size();
     if (book_.open(cell)) {
       include(c, h);
-      book_.add(cell, std::vector<AlertUe>{h.u}, Severity::Medium, t, ctx.session, ctx.seq, out);
+      book_.add(cell, std::vector<AlertUe>{h.u}, severity_, t, ctx.session, ctx.seq, out);
     } else if (sat) {
       ++c.epoch;         // 새 경보 — 세대를 올린다 (W-34): 옛 경보에 실린 키는 더 이상 '실린 키'가 아니다
       c.counts.clear();  // 새 경보 — 누적 수를 처음부터 센다
       evict_.reset_open(cell);
+      if (held_) held_->new_attack_alert(cell);
       std::vector<AlertUe> ues;
       for (const Hit& w : c.win) {
         include(c, w);
         ues.push_back(w.u);
       }
-      book_.add(cell, std::move(ues), Severity::Medium, t, ctx.session, ctx.seq, out);
+      book_.add(cell, std::move(ues), severity_, t, ctx.session, ctx.seq, out);
     }
     fn(from, &h.u);  // 이번 걸림 — 식별·uncertain을 다시 채운 뒤 (이슈 #84)
   }
   c.fresh.clear();
 
   from = out.size();
+  // 경보 중 심각도가 올랐으면 기다리지 않고 바로 UPDATE — 모아 둔 UE도 함께 (14_ §8.2, 15_ §4.3 L3-01-O)
+  if (severity_ == Severity::High && book_.severity(cell) == Severity::Medium) book_.update(cell, Severity::High, t, out);
   book_.flush(cell, t, out);
   const int64_t base = clear_on_satisfied_ ? c.t_sat : c.t_hit_last;
   const bool cleared = book_.open(cell) && t - base >= clear_quiet_ms_ && evict_.window(cell, t) == 0;
@@ -153,10 +164,12 @@ void HitWindow::forget_window(Cell& c) {
   c.t_sat = 0;
 }
 
-// 모든 셀 END (session_reset·input_silent): 경보가 열려 있던 셀의 창을 비운다 — 경보가 없던 셀의 성립 전 걸림은 그대로 둔다
+// 모든 셀 END (session_reset·input_silent): 경보가 열려 있던 셀의 창을 비운다 — 경보가 없던 셀의 성립 전 걸림은 그대로 둔다.
+// 2단계(forget_on_end false)는 END 뒤에도 창을 둔다
 void HitWindow::end_all(const std::string& reason, std::vector<AlertEvent>& out) {
-  for (auto& [cell, c] : cells_)
-    if (book_.open(cell)) forget_window(c);
+  if (forget_on_end_)
+    for (auto& [cell, c] : cells_)
+      if (book_.open(cell)) forget_window(c);
   book_.end_all(reason, out);
 }
 
