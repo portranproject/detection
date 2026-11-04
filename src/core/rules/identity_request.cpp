@@ -72,22 +72,26 @@ void IdentityRequestRule::on_ue_close(const UeState& last, CloseReason, int64_t,
 // 새 연결은 UPDATE, 마지막 성립 뒤 clear_quiet_ms면 CLEAR(밀어내기 중 보류), input_lost면 END — 헬퍼가 한다
 void IdentityRequestRule::on_cell_tick(int64_t cell, const Kpm2& k, const CellLoss&, bool input_lost,
                                        const UeRuleCtx& ctx, RuleOutput& out) {
-  hits_.tick(cell, k.t_end_ms, input_lost, ctx, out.alerts, [&](std::size_t from) { decorate(from, out); });
+  hits_.tick(cell, k.t_end_ms, input_lost, ctx, out.alerts,
+             [&](std::size_t from, const AlertUe* hit) { decorate(from, out, hit); });
 }
 
 // AN-02 값 채우기 (21_ §5.6): branch는 모든 이벤트에 — 지금 경보에 갈래 ① UE가 한 번이라도 실렸으면 "1"(특정에 더 가까움), 아니면
 // "2"(§5.3-3, RAISE에서 처음부터 센다). raise·update에 values(idreq_w 창 안 식별 요청 연결 수, known_w 그중 갈래 ①, evicted),
 // raise에 cond(RAISE를 일으킨 갈래 — 갈래 ① 걸림이면 idreq_known_guti, 창 수로 성립했으면 idreq_count, 둘 다면 둘 다)·candidates
 // [L3-25-OV]·params·로그 필드(맨 앞 kind=anomaly·branch, 갈래 ①은 ue·id_type·known, 갈래 ②는 idreq_w·known_w). 심각도 medium
-void IdentityRequestRule::decorate(std::size_t from, RuleOutput& out) {
+void IdentityRequestRule::decorate(std::size_t from, RuleOutput& out, const AlertUe* hit) {
   for (std::size_t i = from; i < out.alerts.size(); ++i) {
     AlertEvent& e = out.alerts[i];
     const bool raise = e.kind == AlertEventKind::Raise;
     bool& b1 = branch1_[e.cell_id];
-    if (raise) b1 = false;
-    if (raise || e.kind == AlertEventKind::Update)
+    // 갈래 ① UE가 실렸나 — RAISE는 창 안 걸림 전부(레코드 ues가 ues_max로 잘려도), UPDATE는 새로 실린 UE와 이번 걸림 (이슈 #84)
+    if (raise) b1 = hits_.window_with(e.cell_id, kCondKnown) > 0;
+    if (e.kind == AlertEventKind::Update) {
       for (const AlertUe& u : e.ues)
         if (has(u.cond, kCondKnown)) b1 = true;
+      if (hit && has(hit->cond, kCondKnown)) b1 = true;
+    }
     e.branch = b1 ? "1" : "2";
     if (!raise && e.kind != AlertEventKind::Update) continue;
     const int64_t idreq_w = hits_.window(e.cell_id);
@@ -97,7 +101,7 @@ void IdentityRequestRule::decorate(std::size_t from, RuleOutput& out) {
     e.values["evicted"] = hits_.evicted(e.cell_id, raise, e.t);
     if (!raise) continue;
     e.cond.clear();
-    const bool by_known = !e.ues.empty() && has(e.ues.back().cond, kCondKnown);
+    const bool by_known = hit && has(hit->cond, kCondKnown);  // RAISE를 일으킨 이번 걸림 (이슈 #84 — e.ues.back()은 잘리면 다른 UE)
     if (by_known) e.cond.emplace_back(kCondKnown);
     if (idreq_w >= cfg_.n_idreq) e.cond.emplace_back("idreq_count");
     e.candidates = {kCandidate};
@@ -108,7 +112,7 @@ void IdentityRequestRule::decorate(std::size_t from, RuleOutput& out) {
     // n_idreq= window_ms=. RAISE 골격은 branch를 찍지 않아 룰이 넣는다
     e.log_fields = {{"kind", "anomaly"}, {"branch", *e.branch}};
     if (by_known) {
-      const AlertUe& u = e.ues.back();
+      const AlertUe& u = *hit;
       e.log_fields.emplace_back("ue", ue_name(u.cell, u.du_ue_id, u.uid));
       e.log_fields.emplace_back("id_type", u.values.at("id_type").is_null() ? "null"
                                                                              : u.values.at("id_type").get<std::string>());

@@ -2,7 +2,8 @@
 // 4단계 '있는 것을 본 판정'의 공통 바탕 (21_ §1.1·§1.3, M9 이슈 #70). 4단계 룰은 줄 하나(또는 연결이 닫힐 때) 그 자리에서
 // 성립하는 걸림을 적고, RAISE·UPDATE는 그 걸림이 든 창의 kpm2(on_cell_tick)에서 낸다 — L3-21 갈래 ②와 같은 방식(15_ §5.3).
 // 셀 단위 성립은 가장 최근 걸림 t 기준 (t − W, t] 안 걸린 연결 수 ≥ N이다(UE 하나로 RAISE하는 룰은 N = 1). 해제는 경보에 실린
-// 마지막 걸림 뒤 clear_quiet_ms(직전 clear_quiet_ms 동안 밀어내기가 있으면 보류 — Q-56), END는 공통이다. '없음'을 기다리지 않으므로
+// 마지막 걸림 뒤 clear_quiet_ms(직전 clear_quiet_ms 동안 밀어내기가 있으면 보류 — Q-56), END는 공통이다. CLEAR·END 뒤에는 창을 비워 새 경보가 옛 경보의
+// 걸림을 다시 싣지 않는다(23_ §3.1-2, 이슈 #84 — 창 W가 해제 시간보다 길면(AN-04 300 s > 60 s) 옛 S-TMSI가 재수록됐다). '없음'을 기다리지 않으므로
 // 보류·불확실 경보가 없다(§1.1). 걸린 뒤 같은 연결에서 바뀌는 값(반복·재인증 관측 등)은 UE 칸에 다시 싣지 않고 경보 values의
 // 누적 수로 낸다 — update에는 새로 걸린 UE만 실리기 때문이다(§1.1, 14_ §8.3, 1_ §6 11/04)
 
@@ -27,8 +28,11 @@ namespace detect {
 class HitWindow {
  public:
   using UeId = std::pair<UeKey, int64_t>;  // (키, uid)
-  // 경보 이벤트를 낸 직후 룰이 values·params·cond·candidates·로그 필드를 채우는 콜백 — out[from]부터가 새 이벤트
-  using Decorate = std::function<void(std::size_t from)>;
+  // 경보 이벤트를 낸 직후 룰이 values·params·cond·candidates·로그 필드를 채우는 콜백 — out[from]부터가 새 이벤트. hit은 그 이벤트를
+  // 일으킨 이번 걸림(식별·uncertain을 다시 채운 뒤) — 걸림을 처리하는 구간(RAISE·그 걸림의 UPDATE)에만 있고 END·모아 둔 UPDATE·CLEAR
+  // 구간은 nullptr. 룰은 '이번 걸림'을 e.ues.back()으로 찾지 않는다 — ues가 alert.ues_max로 잘리면 마지막 칸이 이번 걸림이 아니다
+  // (23_ §3.2-1, 이슈 #84)
+  using Decorate = std::function<void(std::size_t from, const AlertUe* hit)>;
 
   // rule = 룰 ID, window_ms·n = 셀 창 W·문턱 N, clear_quiet_ms = 해제 시간. 경보는 kind anomaly·stage 4 (21_ §1)
   HitWindow(std::string rule, AlertConfig alert, int64_t window_ms, int64_t n, int64_t clear_quiet_ms);
@@ -54,10 +58,10 @@ class HitWindow {
   void forget(const UeId& id) { conns_.erase(id); }
 
   // 셀 kpm2마다 (§1.1): input_lost면 END, 이번 걸림을 창에 넣어 성립을 보고 RAISE(창 안 걸림 전부)·UPDATE(새 걸림), 모아 둔
-  // UPDATE, 해제. 이벤트를 낼 때마다 fn(from)을 부른다
+  // UPDATE, 해제. 이벤트를 낼 때마다 fn(from, hit)을 부른다. CLEAR·END 뒤 창은 비어 새 경보는 그 뒤 걸림만 싣는다(이슈 #84)
   void tick(int64_t cell, int64_t t, bool input_lost, const UeRuleCtx& ctx, std::vector<AlertEvent>& out,
             const Decorate& fn);
-  void end_all(const std::string& reason, std::vector<AlertEvent>& out) { book_.end_all(reason, out); }
+  void end_all(const std::string& reason, std::vector<AlertEvent>& out);  // 모든 셀 END — 열려 있던 셀의 창도 비운다 (이슈 #84)
   void reset();  // 걸림·연결·셀 기록을 모두 버린다 (session_reset)
 
   // decorate가 읽는 값
@@ -78,7 +82,7 @@ class HitWindow {
   };
   struct Cell {
     std::vector<Hit> fresh;                     // 이번 kpm2 전에 적은 걸림
-    std::deque<Hit> win;                        // 가장 최근 걸림 기준 (t − W, t] 안 걸림 (성립 전 포함)
+    std::deque<Hit> win;                        // 가장 최근 걸림 기준 (t − W, t] 안 걸림 (성립 전 포함). CLEAR·END 때 비운다 (이슈 #84)
     int64_t t_hit_last = 0;                     // 경보에 실린 마지막 걸림 시각 — CLEAR 기준 (21_ §3.5)
     int64_t t_sat = 0;                          // 마지막 성립 시각 — clear_on_satisfied면 CLEAR 기준 (21_ §5.5)
     std::map<std::string, int64_t> counts;      // 경보가 열린 뒤 누적 수
@@ -92,6 +96,7 @@ class HitWindow {
   };
 
   void include(Cell& c, const Hit& h);
+  void forget_window(Cell& c);  // CLEAR·END 뒤 창·해제 기준을 비운다 (이슈 #84)
   void note_evictions(Cell& c, int64_t cell, int64_t t, const UeRuleCtx& ctx);
   int64_t evicted_window(Cell& c, int64_t now) const;
 

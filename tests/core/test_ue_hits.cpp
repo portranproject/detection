@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -34,14 +35,19 @@ AlertUe ue(int64_t du, int64_t t_hit, int64_t u = 1) {
 
 // 엔진 없이 헬퍼만 — tick마다 낸 이벤트와 decorate 호출을 모은다
 struct H {
-  explicit H(int64_t n, int64_t window_ms = 1000, int64_t clear_quiet_ms = 60000) : w("AN-xx", AlertConfig{}, window_ms, n, clear_quiet_ms) {}
+  explicit H(int64_t n, int64_t window_ms = 1000, int64_t clear_quiet_ms = 60000, AlertConfig alert = {})
+      : w("AN-xx", alert, window_ms, n, clear_quiet_ms) {}
   void tick(int64_t t, bool input_lost = false) {
-    w.tick(1, t, input_lost, c.ctx(), out, [&](std::size_t from) { froms.push_back(from); });
+    w.tick(1, t, input_lost, c.ctx(), out, [&](std::size_t from, const AlertUe* hit) {
+      froms.push_back(from);
+      hits.push_back(hit ? std::optional<int64_t>(hit->du_ue_id) : std::nullopt);  // 이번 걸림의 du (이슈 #84)
+    });
   }
   Ctx c;
   HitWindow w;
   std::vector<AlertEvent> out;
   std::vector<std::size_t> froms;
+  std::vector<std::optional<int64_t>> hits;
 };
 
 }  // namespace
@@ -200,4 +206,104 @@ TEST(HitWindow, ClearOnSatisfiedIgnoresUnsatisfiedHits) {
     const bool cleared = h.out.back().kind == AlertEventKind::Clear;
     EXPECT_EQ(cleared, on) << on;  // on이면 첫 걸림 + 60 s에 CLEAR, 아니면 둘째 걸림 + 60 s까지 열림
   }
+}
+
+// CLEAR 뒤 창 (23_ §3.1-2, 이슈 #84): 창 W(300 s)가 해제(60 s)보다 길어도 CLEAR된 경보의 걸림은 새 경보에 싣지 않는다 — 창·창 안 수·
+// 누적 수가 새로 시작한다. 그전에는 옛 걸림이 창에 남아 둘째 RAISE의 ues가 2였다
+TEST(HitWindow, ClearForgetsWindow) {
+  H h(1, 300000, 60000);
+  h.w.hit(uid(1), ue(1, 100));
+  h.w.add(uid(1), "extra");
+  h.tick(200);
+  ASSERT_EQ(h.out.size(), 1u);
+  EXPECT_EQ(h.w.count(1, "extra"), 1);
+  h.tick(60100);
+  ASSERT_EQ(h.out.size(), 2u);
+  EXPECT_EQ(h.out[1].kind, AlertEventKind::Clear);
+  EXPECT_EQ(h.w.window(1), 0);
+  h.w.hit(uid(2), ue(2, 70000));  // 첫 걸림 뒤 69.9 s — 창 300 s 안
+  h.tick(70100);
+  ASSERT_EQ(h.out.size(), 3u);
+  const AlertEvent& e = h.out[2];
+  EXPECT_EQ(e.kind, AlertEventKind::Raise);
+  ASSERT_EQ(e.ues.size(), 1u);
+  EXPECT_EQ(e.ues[0].du_ue_id, 2);
+  EXPECT_EQ(e.ues_total, 1);
+  EXPECT_EQ(h.w.window(1), 1);
+  EXPECT_EQ(h.w.count(1, "extra"), 0);
+}
+
+// END 뒤 창 (이슈 #84): input_lost END·end_all(input_silent) 뒤에도 같다. 경보가 없던 셀의 걸림(성립 전)은 END가 건드리지 않는다
+TEST(HitWindow, EndForgetsWindow) {
+  {
+    H h(1, 300000);
+    h.w.hit(uid(1), ue(1, 100));
+    h.tick(200);
+    h.tick(300, true);
+    ASSERT_EQ(h.out.size(), 2u);
+    EXPECT_EQ(h.out[1].kind, AlertEventKind::End);
+    EXPECT_EQ(h.w.window(1), 0);
+    h.w.hit(uid(2), ue(2, 1000));
+    h.tick(1100);
+    ASSERT_EQ(h.out.size(), 3u);
+    EXPECT_EQ(h.out[2].ues.size(), 1u);
+    EXPECT_EQ(h.out[2].ues_total, 1);
+  }
+  {
+    H h(1, 300000);
+    h.w.hit(uid(1), ue(1, 100));
+    h.tick(200);
+    h.w.end_all("input_silent", h.out);
+    ASSERT_EQ(h.out.size(), 2u);
+    EXPECT_EQ(h.w.window(1), 0);
+    h.w.hit(uid(2), ue(2, 1000));
+    h.tick(1100);
+    ASSERT_EQ(h.out.size(), 3u);
+    EXPECT_EQ(h.out[2].ues.size(), 1u);
+  }
+  {
+    H h(2, 300000);  // 성립 전(창 안 1 < N 2) — 경보가 없어 END는 아무것도 하지 않고 창도 그대로
+    h.w.hit(uid(1), ue(1, 100));
+    h.tick(200);
+    h.tick(300, true);
+    EXPECT_TRUE(h.out.empty());
+    EXPECT_EQ(h.w.window(1), 1);
+  }
+}
+
+// 이번 걸림 전달 (이슈 #84): decorate는 걸림을 처리하는 구간(RAISE·그 걸림의 UPDATE)에 그 걸림을 받고, END·모아 둔 UPDATE·CLEAR 구간은 nullptr
+TEST(HitWindow, DecorateGetsTriggeringHit) {
+  H h(1);
+  h.w.hit(uid(1), ue(1, 100));
+  h.tick(200);
+  EXPECT_EQ(h.hits, (std::vector<std::optional<int64_t>>{std::nullopt, 1, std::nullopt}));
+  h.hits.clear();
+  h.w.hit(uid(2), ue(2, 500));
+  h.tick(600);  // 경보 중 — 모아 둔다(UPDATE는 뒤), 그래도 그 걸림을 넘긴다
+  EXPECT_EQ(h.hits, (std::vector<std::optional<int64_t>>{std::nullopt, 2, std::nullopt}));
+  h.hits.clear();
+  h.tick(1200);  // 모아 둔 UPDATE
+  EXPECT_EQ(h.hits, (std::vector<std::optional<int64_t>>{std::nullopt, std::nullopt}));
+  ASSERT_EQ(h.out.size(), 2u);
+  EXPECT_EQ(h.out[1].kind, AlertEventKind::Update);
+}
+
+// ues_max 잘림 (23_ §3.2-1, 이슈 #84): 레코드의 ues가 alert.ues_max로 잘려도 넘겨받은 이번 걸림은 RAISE를 일으킨 걸림이다 —
+// e.ues.back()은 잘린 목록의 마지막 칸(다른 UE)
+TEST(HitWindow, TriggeringHitUnderUesMax) {
+  AlertConfig a;
+  a.ues_max = 2;
+  H h(3, 1000, 60000, a);
+  h.w.hit(uid(1), ue(1, 100));
+  h.w.hit(uid(2), ue(2, 200));
+  h.w.hit(uid(3), ue(3, 300));
+  h.tick(400);
+  ASSERT_EQ(h.out.size(), 1u);
+  const AlertEvent& e = h.out[0];
+  EXPECT_EQ(e.kind, AlertEventKind::Raise);
+  ASSERT_EQ(e.ues.size(), 2u);
+  EXPECT_EQ(e.ues_total, 3);
+  EXPECT_EQ(e.ues.back().du_ue_id, 2);
+  ASSERT_EQ(h.hits.size(), 5u);  // 시작·걸림 3·끝
+  EXPECT_EQ(h.hits[3], std::optional<int64_t>(3));
 }

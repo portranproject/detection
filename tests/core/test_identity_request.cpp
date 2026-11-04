@@ -93,10 +93,10 @@ std::vector<L> conn_a(int64_t t0 = 1000) { return suci(t0, 1, kS) + release(t0 +
 // 엔진 + AN-02 (+ 증거 기록기). 줄을 넣기 전에 그 줄 시각까지 끝난 창(t_end ≤ t)의 kpm2를 낸다(2_ §6.1)
 class Harness {
  public:
-  explicit Harness(IdentityRequestConfig cfg = {}, bool record = false, UeTableConfig ue_cfg = {})
+  explicit Harness(IdentityRequestConfig cfg = {}, bool record = false, UeTableConfig ue_cfg = {}, AlertConfig alert = {})
       : engine(SeriesConfig{}, kDefaultMaxLineBytes, ue_cfg), queue(100000), rec(EvidenceConfig{}, queue),
         record_(record) {
-    auto r = std::make_unique<IdentityRequestRule>(cfg);
+    auto r = std::make_unique<IdentityRequestRule>(cfg, alert);
     rule = r.get();
     engine.add_ue_rule(std::move(r));
     hello("S");
@@ -408,4 +408,26 @@ TEST(IdentityRequest, EndCarriesBranch) {
 TEST(IdentityRequest, EvidenceHorizon) {
   Harness h;
   EXPECT_EQ(h.rule->evidence_horizon_ms(), 2000);
+}
+
+// ues_max 잘림에서도 갈래 ① (23_ §3.2-1, 이슈 #84): 창 안 식별 요청 연결이 ues_max(2)보다 많을 때 갈래 ① 걸림으로 RAISE — 레코드 ues는
+// 앞 2칸(갈래 ② UE 둘)으로 잘리지만 cond·branch·로그의 UE는 RAISE를 일으킨 갈래 ① 연결이다. 그전에는 e.ues.back()(갈래 ② UE)을 보아
+// cond가 비고 branch가 "2"였다
+TEST(IdentityRequest, Branch1CondUnderUesMax) {
+  AlertConfig a;
+  a.ues_max = 2;
+  Harness h({}, false, {}, a);
+  h.play(suci_idreq(1000, 3) + suci_idreq(1500, 4) + conn_a(2000) + guti_head(5000, 2, kS, kS) +
+         std::vector<L>{idreq(5096, 2)});
+  h.tick_to(6000);
+  ASSERT_EQ(h.alerts.size(), 1u);
+  const AlertEvent& e = h.alerts[0];
+  EXPECT_EQ(e.kind, AlertEventKind::Raise);
+  EXPECT_EQ(e.ues.size(), 2u);
+  EXPECT_EQ(e.ues_total, 3);
+  EXPECT_EQ(e.cond, (std::vector<std::string>{"idreq_known_guti"}));
+  EXPECT_EQ(e.branch, std::optional<std::string>("1"));
+  EXPECT_EQ(e.values.dump(), R"({"idreq_w":3,"known_w":1,"evicted":0})");
+  EXPECT_NE(h.logs[0].find(" branch=1 ue=1/2/"), std::string::npos);
+  EXPECT_NE(h.logs[0].find(" id_type=5G-GUTI known=1 idreq_w=3 n_idreq=5"), std::string::npos);
 }

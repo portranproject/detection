@@ -58,13 +58,14 @@ void SecReauthRule::on_ue_close(const UeState& last, CloseReason, int64_t, const
 // (extra는 늘리지 않음, 밀어내기 중 보류), input_lost면 END — 헬퍼가 한다
 void SecReauthRule::on_cell_tick(int64_t cell, const Kpm2& k, const CellLoss&, bool input_lost, const UeRuleCtx& ctx,
                                  RuleOutput& out) {
-  hits_.tick(cell, k.t_end_ms, input_lost, ctx, out.alerts, [&](std::size_t from) { decorate(from, out); });
+  hits_.tick(cell, k.t_end_ms, input_lost, ctx, out.alerts,
+             [&](std::size_t from, const AlertUe* hit) { decorate(from, out, hit); });
 }
 
 // AN-06a 값 채우기 (21_ §4.6): raise·update에 values(reauth_ues = ues_total, extra 경보에 실린 연결의 누적 수, evicted — raise면
 // 직전 clear_quiet_ms 이동 창, update면 경보가 열린 뒤 누적), raise에 cond reauth_after_sec·candidates [L3-06-O1]·params·로그
 // 필드(맨 앞 kind=anomaly, ue는 RAISE를 일으킨 가장 최근 걸림). 심각도 medium 고정(§4.3-4), branch·conditions 없음(21_ §1)
-void SecReauthRule::decorate(std::size_t from, RuleOutput& out) {
+void SecReauthRule::decorate(std::size_t from, RuleOutput& out, const AlertUe* hit) {
   for (std::size_t i = from; i < out.alerts.size(); ++i) {
     AlertEvent& e = out.alerts[i];
     if (e.kind != AlertEventKind::Raise && e.kind != AlertEventKind::Update) continue;
@@ -79,8 +80,8 @@ void SecReauthRule::decorate(std::size_t from, RuleOutput& out) {
     e.params["clear_quiet_ms"] = cfg_.clear_quiet_ms;
     // 로그 줄 (21_ §4.6): kind=anomaly ue=cell/du_ue_id/uid msg= n_reauth=
     e.log_fields = {{"kind", "anomaly"}};
-    if (!e.ues.empty()) {
-      const AlertUe& u = e.ues.back();
+    if (hit) {  // RAISE를 일으킨 이번 걸림 (이슈 #84)
+      const AlertUe& u = *hit;
       e.log_fields.emplace_back("ue", ue_name(u.cell, u.du_ue_id, u.uid));
       e.log_fields.emplace_back("msg", u.values.at("msg").get<std::string>());
     }

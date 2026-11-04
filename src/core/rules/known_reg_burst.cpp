@@ -93,7 +93,8 @@ void KnownRegBurstRule::on_ue_close(const UeState& last, CloseReason, int64_t, c
 // 보고 키를 지운다
 void KnownRegBurstRule::on_cell_tick(int64_t cell, const Kpm2& k, const CellLoss&, bool input_lost, const UeRuleCtx& ctx,
                                      RuleOutput& out) {
-  hits_.tick(cell, k.t_end_ms, input_lost, ctx, out.alerts, [&](std::size_t from) { decorate(from, out); });
+  hits_.tick(cell, k.t_end_ms, input_lost, ctx, out.alerts,
+             [&](std::size_t from, const AlertUe* hit) { decorate(from, out, hit); });
   for (auto it = last_reg_.begin(); it != last_reg_.end();) {
     if (it->first.first.cell_id == cell && k.t_end_ms - it->second >= cfg_.window_ms) {
       hits_.forget(it->first);
@@ -107,7 +108,8 @@ void KnownRegBurstRule::on_cell_tick(int64_t cell, const Kpm2& k, const CellLoss
 // AN-08 값 채우기 (21_ §8.6): raise·update에 values(reg_w 창 안 이동 등록 UE 수 — 서로 다른 S-TMSI, known_src 그중 할당 기억·이력으로
 // 안 수 {"alloc","history"}(11/04 구현 때 정함), extra 실린 S-TMSI의 회복 전 재등록 수, evicted), raise에 cond known_reg_burst·
 // candidates(고정 — raise에만, 21_ §1)·params·로그 필드(맨 앞 kind=anomaly, reg_w·n_reg·window_ms). 심각도 medium 고정, branch 없음
-void KnownRegBurstRule::decorate(std::size_t from, RuleOutput& out) {
+void KnownRegBurstRule::decorate(std::size_t from, RuleOutput& out, const AlertUe* /*hit*/) {  // AN-08 로그에는 UE 칸이 없어
+                                                                                                // 이번 걸림을 쓰지 않는다
   for (std::size_t i = from; i < out.alerts.size(); ++i) {
     AlertEvent& e = out.alerts[i];
     if (e.kind != AlertEventKind::Raise && e.kind != AlertEventKind::Update) continue;

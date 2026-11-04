@@ -1,0 +1,52 @@
+{
+  "scenario": "SAN04_AN-04_CLEAR뒤다른STMSI_RAISE",
+  "description": "P × 3(RAISE) → 60 s 조용 → CLEAR → 둘째 S-TMSI × 3(150 s부터, 창 W 300 s 안) — 둘째 RAISE는 CLEAR 뒤 걸림만 싣는다(ues_total 1). 그전에는 창에 남은 첫 S-TMSI 걸림이 다시 실려 ues_total 2였다 (23_ §3.1-2, 이슈 #84)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "AN-04",
+      "cell": 1,
+      "t_rel_ms": 42300,
+      "severity": "medium",
+      "alert_kind": "anomaly",
+      "candidates": [
+        "L3-02-Oa",
+        "L3-34-OV",
+        "L3-12-V"
+      ],
+      "ues_total": 1
+    },
+    {
+      "kind": "CLEAR",
+      "rule": "AN-04",
+      "cell": 1,
+      "t_rel_ms": 102200,
+      "alert_kind": "anomaly",
+      "ues_total": 1
+    },
+    {
+      "kind": "RAISE",
+      "rule": "AN-04",
+      "cell": 1,
+      "t_rel_ms": 191300,
+      "severity": "medium",
+      "alert_kind": "anomaly",
+      "candidates": [
+        "L3-02-Oa",
+        "L3-34-OV",
+        "L3-12-V"
+      ],
+      "ues_total": 1
+    },
+    {
+      "kind": "CLEAR",
+      "rule": "AN-04",
+      "cell": 1,
+      "t_rel_ms": 251200,
+      "alert_kind": "anomaly",
+      "ues_total": 1
+    }
+  ]
+}
