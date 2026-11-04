@@ -68,6 +68,10 @@ void CapHijackRule::on_ue_event(const UeEvt& evt, const UeState& before, const U
     snap["rrc_sec"] = to_string(before.rrc_sec);
     if (!marks_.start(after, kTagUnsolicited, evt.t_ms, std::move(snap), ctx)) count_extra(after, kTagUnsolicited);
   } else if (evt.dir == Dir::DL && evt.msg == kEnq) {
+    // 늦은 짝 요청 (20_ §1.2-4 — 11/05 Q-74, 이슈 #94): 갈래 ①의 짝 요청이 뒤늦게 오면 대기 중인 갈래 ① 표시를 지운다 — 놓친 요청이
+    // 뒤늦게 온 것이라 '요청 없는 응답'이 아니다. 갈래 ② 후보 판정은 그대로 이어 간다
+    if (const std::optional<int64_t> clock = ctx.deadlines.clock(after.key.cell_id); clock && evt.t_ms < *clock)
+      marks_.erase_waiting(after.key, after.uid, kTagUnsolicited);
     if (before.mid_join || (before.rrc_sec != RrcSecState::Off && before.rrc_sec != RrcSecState::Failed)) return;
     ojson snap;
     snap["branch"] = "2";

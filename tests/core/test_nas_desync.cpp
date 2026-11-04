@@ -444,14 +444,44 @@ TEST(NasDesync, T14MidJoin) {
 
 // L06-T15: 늦은 줄 — J1 줄(t_ms t0+98)이 t0+100 kpm2 뒤에 도착. late_until ≥ 마감 → 판정 없음, 표시도 지움
 TEST(NasDesync, T15LateLine) {
-  Harness h;
-  h.play(head(kB, 3));
-  h.tick_to(kB + 100);
-  h.line(reject(kB + 98, 3));
-  EXPECT_TRUE(h.has_diag(DiagKind::UeLate));
-  h.tick_to(5000);
-  EXPECT_TRUE(h.alerts.empty());
-  EXPECT_EQ(h.rule->marks().size(), 0u);
+  // ① 명령 없는 늦은 거부(t0+98, t0+100 kpm2 뒤 도착) → 다음 kpm2(t0+200)에서 RAISE, ues[].uncertain에 late
+  // (11/05 Q-74 해결, 이슈 #94 — 11/04까지는 late_until 안이라 판정 없음, 25_ §3.3-1)
+  {
+    Harness h;
+    h.play(head(kB, 3));
+    h.tick_to(kB + 100);
+    h.line(reject(kB + 98, 3));
+    EXPECT_TRUE(h.has_diag(DiagKind::UeLate));
+    h.tick_to(5000);
+    ASSERT_EQ(h.alerts.size(), 1u);
+    EXPECT_EQ(h.alerts[0].t, kT0 + kB + 200);
+    ASSERT_EQ(h.alerts[0].ues.size(), 1u);
+    EXPECT_EQ(h.alerts[0].ues[0].uncertain, (std::vector<std::string>{"late"}));
+  }
+  // ② 늦은 짝 요청(NAS SecurityModeCommand)이 그 뒤에 오면 대기 표시를 지워 경보 없음 (20_ §1.2-4·§5.7)
+  {
+    Harness h;
+    h.play(head(kB, 3));
+    h.tick_to(kB + 100);
+    h.line(reject(kB + 98, 3));
+    EXPECT_EQ(h.rule->marks().size(), 1u);
+    h.line(smc(kB + 95, 3));
+    EXPECT_EQ(h.rule->marks().size(), 0u);
+    h.tick_to(5000);
+    EXPECT_TRUE(h.alerts.empty());
+  }
+  // ③ 판정과 무관한 늦은 줄(UL MeasurementReport)은 막지 않는다 — 제때 온 명령 없는 거부(t0+150)는 K = t0+200에 RAISE
+  {
+    Harness h;
+    h.play(head(kB, 3));
+    h.tick_to(kB + 100);
+    h.line(rrc(kB + 95, 3, "UL", "MeasurementReport"));
+    h.line(reject(kB + 150, 3));
+    h.tick_to(5000);
+    ASSERT_EQ(h.alerts.size(), 1u);
+    EXPECT_EQ(h.alerts[0].t, kT0 + kB + 200);
+    EXPECT_EQ(h.alerts[0].ues[0].uncertain, (std::vector<std::string>{"late"}));
+  }
 }
 
 // L06-T16: 해제 — T4 뒤 마지막 걸림(t_r = t0+98) + 60 s 이상인 첫 kpm2에 CLEAR / 같은 연결 t0+30,000의 extra(RRC 보안 전에 머문

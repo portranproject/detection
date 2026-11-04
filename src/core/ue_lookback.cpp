@@ -59,7 +59,9 @@ bool LookbackMarks::start(const UeState& n, const std::string& tag, int64_t t, n
 // 마감 처리 (20_ §1.2-4): 표시가 그대로(대기, t_from 같음)이면 n을 판정한다. n은 열린 항목, 마감 전에 닫혔으면 복사본(§1.2-5).
 //  - 보류: 그 연결이 시작된 뒤(t_s = t_start) 그 셀에 DL 로스 창이 있었으면 그때 요청(보안 모드 명령)을 놓쳤을 수 있다 —
 //    14_ §6.2 보류에서 기준 시각만 t_from → t_s로 바꾼 것. 항목의 loss 표시는 방향을 가리지 않아 보지 않는다
-//  - late: 늦은 줄 제외 기간(late_until)이 마감을 덮으면 판정하지 않고 표시를 지운다 — 뒤에 온 줄은 다시 후보가 될 수 있다(14_ §4.3)
+//  - late: 상태표 late_until은 보지 않는다 (11/05 Q-74, 이슈 #94 — 그전에는 판정과 무관한 늦은 줄 하나가 late_until 16 s까지 모든
+//    후보를 Skip해 순서 역전 1줄로 그 UE의 탐지가 사라졌다, 25_ §3.3-1). 늦은 짝 요청은 룰이 erase_waiting으로 막는다. 늦은 응답으로
+//    걸리면 ues[].uncertain에 late가 남는다
 //  - 걸림·보류는 표시를 '결정됨'으로 둔다. 복사본으로 판정했으면 항목이 이미 닫혔으므로 지운다
 LookbackMarks::Decision LookbackMarks::on_deadline(const Deadline& d, const UeRuleCtx& ctx) {
   Decision r;
@@ -76,11 +78,6 @@ LookbackMarks::Decision LookbackMarks::on_deadline(const Deadline& d, const UeRu
   if (ctx.deadlines.held(d.key.cell_id, Dir::DL, r.n.t_start)) {
     m.phase = Phase::Held;
     r.verdict = Verdict::Held;
-  } else if (r.n.late_blocks(d.at)) {
-    r.verdict = Verdict::Skip;
-    r.mark = std::move(m);
-    marks_.erase(it);
-    return r;
   } else {
     m.phase = Phase::Hit;
     r.verdict = Verdict::Hit;
@@ -88,6 +85,13 @@ LookbackMarks::Decision LookbackMarks::on_deadline(const Deadline& d, const UeRu
   r.mark = m;
   if (!open) marks_.erase(it);
   return r;
+}
+
+bool LookbackMarks::erase_waiting(const UeKey& key, int64_t uid, const std::string& tag) {
+  auto it = marks_.find(Id{key, uid, tag});
+  if (it == marks_.end() || it->second.phase != Phase::Waiting) return false;
+  marks_.erase(it);
+  return true;
 }
 
 void LookbackMarks::included(const UeKey& key, int64_t uid, const std::string& tag, int64_t epoch) {

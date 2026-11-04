@@ -37,6 +37,13 @@ int64_t NasDesyncRule::evidence_horizon_ms() const { return 1000 + alert_.update
 // 분석 엔진 중복 줄과 가를 수 없어서다(§5.3-3)
 void NasDesyncRule::on_ue_event(const UeEvt& evt, const UeState& before, const UeState& after, const UeRuleCtx& ctx,
                                 RuleOutput&) {
+  // 늦은 짝 요청 (20_ §1.2-4 — 11/05 Q-74, 이슈 #94): 짝 요청(DL)이 그 셀 시계보다 이른 시각으로 뒤늦게 오면 대기 중인 표시를 지운다 —
+  // 놓친 요청이 뒤늦게 온 것이라 '요청 없는 응답'이 아니다. 판정과 무관한 늦은 줄은 막지 않는다(상태표 late_until은 2단계용)
+  if (evt.proto == Proto::NAS && evt.dir == Dir::DL && evt.msg == kCmd) {
+    if (const std::optional<int64_t> clock = ctx.deadlines.clock(after.key.cell_id); clock && evt.t_ms < *clock)
+      marks_.erase_waiting(after.key, after.uid, kTag);
+    return;
+  }
   if (evt.proto != Proto::NAS || evt.dir != Dir::UL || evt.msg != kRej) return;
   if (!unsolicited(before, Proto::NAS, kCmd, kResps)) return;
   ojson snap;

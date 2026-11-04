@@ -54,8 +54,9 @@ class LookbackMarks {
   };
 
   enum class Verdict { Stale, Skip, Held, Hit };
-  // 마감 처리 결과 (20_ §1.2-4). Stale = 표시가 없거나 다름(할 일 없음), Skip = late로 판정하지 않음(표시를 지웠다),
-  // Held = 연결 시작 뒤 DL 로스로 보류, Hit = 걸림. mark·n은 Held·Hit·Skip일 때 판정 때의 표시와 항목(열린 항목 또는 복사본)
+  // 마감 처리 결과 (20_ §1.2-4). Stale = 표시가 없거나 다름(할 일 없음), Held = 연결 시작 뒤 DL 로스로 보류, Hit = 걸림.
+  // Skip은 11/05 Q-74(이슈 #94)로 쓰지 않는다 — 늦은 줄은 룰이 짝 요청일 때만 erase_waiting으로 막는다(20_ §1.2-4).
+  // mark·n은 Held·Hit일 때 판정 때의 표시와 항목(열린 항목 또는 복사본)
   struct Decision {
     Verdict verdict = Verdict::Stale;
     Mark mark;
@@ -67,6 +68,9 @@ class LookbackMarks {
   bool start(const UeState& n, const std::string& tag, int64_t t, nlohmann::ordered_json snap, const UeRuleCtx& ctx);
   // 마감 처리 (20_ §1.2-4)
   Decision on_deadline(const Deadline& d, const UeRuleCtx& ctx);
+  // 늦은 짝 요청 (20_ §1.2-4 — 11/05 Q-74, 이슈 #94): 이 룰의 짝 요청(DL)이 그 셀 시계보다 이른 시각으로 뒤늦게 오면 그 (키, uid, 갈래)의
+  // **대기 중** 표시를 지운다 — 놓친 요청이 뒤늦게 온 것이라 '요청 없는 응답'이 아니다. 결정된 표시는 그대로. 지웠으면 true
+  bool erase_waiting(const UeKey& key, int64_t uid, const std::string& tag);
   // 항목이 닫힘 (20_ §1.2-5·'표시의 생애'): 대기 표시는 released·reused·stale_setup이면 닫힐 때 상태를 복사해 남기고(마감 때
   // 판정), 그 밖의 이유면 지운다. 결정된 표시는 닫힘 이유와 관계없이 지운다 — 더 판정할 것이 없다
   void on_close(const UeState& last, CloseReason reason);

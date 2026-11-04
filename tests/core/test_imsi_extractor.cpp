@@ -453,15 +453,45 @@ TEST(ImsiExtractor, T14MidJoin) {
 
 // L24-T15: 늦은 줄 — 응답 줄(t_ms t0+98)이 t0+100 kpm2 뒤에 도착. late_until ≥ 마감 → 판정 없음, 표시도 지움
 TEST(ImsiExtractor, T15LateLine) {
-  Harness h;
-  h.play(head(kB, 3));
-  h.tick_to(kB + 100);
-  h.line(id_resp(kB + 98, 3));
-  EXPECT_TRUE(h.has_diag(DiagKind::UeLate));
-  EXPECT_EQ(h.rule->marks().size(), 1u);
-  h.tick_to(5000);
-  EXPECT_TRUE(h.alerts.empty());
-  EXPECT_EQ(h.rule->marks().size(), 0u);
+  // ① 요청 없는 늦은 응답(t0+98, t0+100 kpm2 뒤 도착) → 다음 kpm2(t0+200)에서 RAISE, ues[].uncertain에 late
+  // (11/05 Q-74 해결, 이슈 #94 — 11/04까지는 late_until 안이라 판정 없음, 25_ §3.3-1)
+  {
+    Harness h;
+    h.play(head(kB, 3));
+    h.tick_to(kB + 100);
+    h.line(id_resp(kB + 98, 3));
+    EXPECT_TRUE(h.has_diag(DiagKind::UeLate));
+    EXPECT_EQ(h.rule->marks().size(), 1u);
+    h.tick_to(5000);
+    ASSERT_EQ(h.alerts.size(), 1u);
+    EXPECT_EQ(h.alerts[0].t, kT0 + kB + 200);
+    ASSERT_EQ(h.alerts[0].ues.size(), 1u);
+    EXPECT_EQ(h.alerts[0].ues[0].uncertain, (std::vector<std::string>{"late"}));
+  }
+  // ② 늦은 짝 요청(IdentityRequest)이 그 뒤에 오면 대기 표시를 지워 경보 없음 — 놓친 요청이 뒤늦게 온 것(20_ §1.2-4)
+  {
+    Harness h;
+    h.play(head(kB, 3));
+    h.tick_to(kB + 100);
+    h.line(id_resp(kB + 98, 3));
+    EXPECT_EQ(h.rule->marks().size(), 1u);
+    h.line(nas(kB + 95, 3, "DL", "IdentityRequest"));
+    EXPECT_EQ(h.rule->marks().size(), 0u);
+    h.tick_to(5000);
+    EXPECT_TRUE(h.alerts.empty());
+  }
+  // ③ 판정과 무관한 늦은 줄(UL MeasurementReport)은 막지 않는다 — 제때 온 요청 없는 응답(t0+150)은 K = t0+200에 RAISE
+  {
+    Harness h;
+    h.play(head(kB, 3));
+    h.tick_to(kB + 100);
+    h.line(rrc(kB + 95, 3, "UL", "MeasurementReport"));
+    h.line(id_resp(kB + 150, 3));
+    h.tick_to(5000);
+    ASSERT_EQ(h.alerts.size(), 1u);
+    EXPECT_EQ(h.alerts[0].t, kT0 + kB + 200);
+    EXPECT_EQ(h.alerts[0].ues[0].uncertain, (std::vector<std::string>{"late"}));
+  }
 }
 
 // L24-T16: AS 무결성 뒤(t0+220) 응답 — 후보 없음 / RRC 보안이 nia0이면 연결 내내 판정 → K = t0+300에 RAISE(rrc_sec ON) /
