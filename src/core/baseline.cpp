@@ -17,6 +17,11 @@ void Baseline::add(int64_t t, double x) {
     sum_ += x;
     ++n_;
     value_ = sum_ / static_cast<double>(n_);
+  } else if (n_ == 0) {
+    // 웜업 표본 0개 (3_ §5 — 11/05 Q-76, 이슈 #94): DL 미관측 웜업·공격 중 세션 변경으로 웜업 동안 갱신 표본이 없었으면 첫 표본으로
+    // 시드한다 — 0에서 EWMA를 시작하면 τ 동안 C3가 늘 참이었다(25_ §3.2-7)
+    value_ = x;
+    n_ = 1;
   } else {
     value_ += alpha_ * (x - value_);
   }

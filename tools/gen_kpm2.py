@@ -79,7 +79,8 @@ def hello(session, seq, cells, max_conn=None):
 
 def generate(duration_ms, cells, dl_missing=False, events=None):
     """events: {상대 ms: [동작]} — 칸을 내기 전에 실행. 동작은
-    ('session', 새 session) / ('hello_same',) / ('hello_changed',) / ('raw', 줄 dict)"""
+    ('session', 새 session) / ('hello_same',) / ('hello_changed',) / ('raw', 줄 dict)
+    dl_missing: True면 내내 F null(DL 미관측), 정수 ms면 그 시각 전까지만 F null(T25 — 웜업만 DL 미관측)"""
     events = events or {}
     session = "S1"
     seq = 1
@@ -123,7 +124,8 @@ def generate(duration_ms, cells, dl_missing=False, events=None):
             cc = {"RRC.ConnEstabAtt": {"total": att}, "RRC.ConnEstabSucc": {"total": succ}}
             if t_rel in c.missing_as:
                 cc = {"RRC.ConnEstabAtt": None, "RRC.ConnEstabSucc": None}
-            cc["RRC.ConnEstabFailCause"] = (None if dl_missing else
+            f_null = dl_missing is True or (not isinstance(dl_missing, bool) and dl_missing and t_rel < dl_missing)
+            cc["RRC.ConnEstabFailCause"] = (None if f_null else
                                             {"NetworkReject": n_rej, "NoReply": f, "Other": 0})
             seq += 1
             lines.append({"type": "kpm2", "ver": 1, "session": session, "seq": seq, "cell_id": c.cell_id,
@@ -214,6 +216,16 @@ SCENARIOS = {
         cells=lambda: [Cell(1, normal=const(1), attack=window(30, 5000))],
         # A′ 윈도우 [t−1000, t)에 공격 2칸(6건) → t = 5200부터 성립 → RAISE 5400
         expect=[alert("RAISE", 5400, mode="dl_missing")]),
+    "T25_DL미관측웜업": dict(
+        # 3_ §5 웜업 표본 0개 (11/05 Q-76 해결, 이슈 #94 — 25_ 부록 A X3): 웜업 30 s 내내 F null이라 normal 기준선이 갱신되지 않음 →
+        # 웜업 뒤 첫 표본(A_w = 5, 31 s)으로 시드. 35 s부터 공격 8/s: A_w 13 ≥ A_min, ratio 8/13 ≥ θ, F_w 8 < F_abs(10), C3 13 ≥ 3 × 5 거짓
+        # → 경보 없음. 11/04까지는 base 0에서 EWMA(≈0.08)라 C3 참 → RAISE 36 s대
+        desc="웜업 30 s 내내 F null, 정상 5/s, 35 s부터 공격 8/s — 웜업 뒤 첫 표본으로 base 시드(5), C3 거짓, 경보 없음 (25_ X3, 11/05 Q-76)",
+        duration=45000, dl_missing=30000,
+        cells=lambda: [Cell(1, normal=const(5), attack=window(8, 35000))], expect=[]),
+    "T25b_정상웜업": dict(
+        desc="T25와 같되 F가 처음부터 있음 — 웜업 평균 base 5, C3 거짓, 경보 없음 (25_ X3b)", duration=45000,
+        cells=lambda: [Cell(1, normal=const(5), attack=window(8, 35000))], expect=[]),
     "T21_두셀한셀끊김": dict(
         desc="셀 2개 모두 공격 30/s, 셀 2만 5.5 s 칸 유실 — 셀 2만 보류", duration=12000,
         cells=lambda: [Cell(1, normal=const(1), attack=window(30, 5000)),

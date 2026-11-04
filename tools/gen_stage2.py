@@ -387,6 +387,30 @@ def s01_clear():
     return sc
 
 
+def s01_clear_then_rehit():
+    # 15_ §4.5 CLEAR 때 창 비움 (11/05 Q-73 해결, 이슈 #94 — 25_ §3.2-3 재현): 고착 5건 RAISE 3000 → 경보 중 불성립 고착 4건(마감
+    # 59105~62105, UPDATE 59200·60200·61200·62200) → CLEAR 63000(t_sat 2905 + 60 s) → 고착 1건(마감 63105): 창 (53105, 63105] 안
+    # 옛 고착 4건은 CLEAR 때 비워져 S_W 1 → 경보 없음 → 4건 더(마감 63405~64305) → S_W 5 → RAISE 64400, ues_total 5(CLEAR 뒤 걸림만).
+    # 11/04까지는 63200에 옛 UE 4개를 다시 실은 RAISE가 났다
+    sc = Scenario("S01_L3-01-O_해제뒤재걸림_RAISE",
+                  "RAISE → 불성립 고착 4건 → CLEAR 63000 → 고착 1건은 창을 새로 셈(경보 없음) → 4건 더에 RAISE 64400, ues_total 5 (15_ §4.5, 11/05 Q-73)",
+                  64600)
+    for du, t in _stall5():
+        sc.ue(du).auth_stall(t)
+    for i in range(4):
+        sc.ue(30 + i).auth_stall(57000 + 1000 * i)
+    sc.ue(40).auth_stall(61000)
+    for i in range(4):
+        sc.ue(41 + i).auth_stall(61300 + 300 * i)
+    sc.alert("RAISE", 3000, "L3-01-O", severity="medium", mode="normal")
+    for t in (59200, 60200, 61200, 62200):
+        sc.alert("UPDATE", t, "L3-01-O")
+    sc.alert("CLEAR", 63000, "L3-01-O")
+    sc.alert("RAISE", 64400, "L3-01-O", severity="medium", mode="normal")
+    sc.expect[-1]["ues_total"] = 5
+    return sc
+
+
 # ---- 입력 불완전 (이슈 #42, 16_ §3.1·W-17) — 지금 동작을 고정. 4_ §6.1 #7·#8에서 기대값이 바뀐다 ----
 
 def _stall5():
@@ -538,6 +562,23 @@ def s20_repeat_update():
     return sc
 
 
+def s20_repeat_prior_attack_released():
+    # 15_ §2.3 짝 = 망 수락을 한 번이라도 얻은 열린 항목 (11/05 Q-72 해결, 이슈 #94 — 25_ §3.2-5 재현): 같은 피해자로 공격 연결 2번
+    # (1 s 간격), 앞선 공격 연결은 2.5 s에 해제. 둘째 공격의 짝은 피해자뿐이라 앞선 공격의 해제가 victim_released로 세어지지 않는다
+    # → RAISE 6100(앞선 공격, 마감 전 닫힘)·UPDATE 7100 모두 medium. 11/04까지는 앞선 공격 연결도 짝이라 UPDATE가 high였다
+    sc = Scenario("S20_L3-20_반복_앞선공격해제_medium",
+                  "공격 연결 2번, 앞선 공격 연결을 2.5 s에 해제 — 둘째 공격의 짝은 피해자뿐, medium 유지 (15_ §2.3, 11/05 Q-72)", 7600)
+    sc.ue(1).normal_register(0, s_tmsi=VIC)
+    a = sc.ue(2)
+    a.setup_req(1000).setup(1001).setup_complete(1090, s_tmsi=VIC).svc_req(1091, s_tmsi=VIC)   # t₀ = 1090, 마감 6090
+    b = sc.ue(3)
+    b.setup_req(2000).setup(2001).setup_complete(2090, s_tmsi=VIC).svc_req(2091, s_tmsi=VIC)   # t₀ = 2090, 마감 7090
+    a.ctx_release_cmd(2500).ctx_release_complete(2500)   # 앞선 공격 연결 해제 — b의 짝이 아니다
+    sc.alert("RAISE", 6100, "L3-20", severity="medium", mode="normal")
+    sc.alert("UPDATE", 7100, "L3-20", severity="medium")
+    return sc
+
+
 def s20_clear():
     # L20-T16: RAISE 뒤 60 s 새 걸림 없음 → CLEAR. 마지막 걸림=6090 → t_end>=66090 → 66100
     sc = Scenario("S20_L3-20_해제_CLEAR", "공격 1건 RAISE 뒤 60 s 조용 → CLEAR (L20-T16)", 66300)
@@ -566,12 +607,18 @@ def s20_session_end():
 
 def s21_normal():
     # L21-T1/T2: 정상 등록 + 동기 실패 뒤 재인증 수락 → 경보 없음
-    sc = Scenario("S21_L3-21_정상_무경보", "정상 등록 + 동기 실패 뒤 재인증 수락 — 경보 없음 (L21-T1·T2)", 1500)
+    sc = Scenario("S21_L3-21_정상_무경보",
+                  "정상 등록 + 동기 실패 뒤 재인증 수락 — L3-21 경보 없음 (L21-T1·T2). 동기 실패(#21)는 4단계 이상 유형 AN-01이 명세대로 받는다 — "
+                  "t0+520 실패가 든 창 kpm2(t0+600)에 AN-01 RAISE (21_ §3.3, 11/04 M9 이슈 #70 — '무경보'는 L3-21 기준이라 이름은 그대로, 1_ §6)",
+                  1500)
     sc.ue(1).normal_register(0)
     u = sc.ue(2)
     u.setup_req(400).setup(401).setup_complete(490).reg_req(491).auth_req(505)
     u.auth_fail(520, cause=21)   # 동기 실패(실패 메시지) → 갈래① 대기 시작
     u.auth_req(540).auth_resp(553).rrc_smc(570).rrc_smcomplete(580)   # 재인증·수락 → 갈래① 풀림
+    # 11/04 M9(이슈 #70)에 데이터만 손으로 고치고 생성기는 안 고쳤던 것 — 11/05 이슈 #94에서 생성기를 데이터에 맞춤
+    sc.alert("RAISE", 600, "AN-01", severity="medium", alert_kind="anomaly")
+    sc.expect[-1]["candidates"] = ["L3-07-OV"]
     return sc
 
 
@@ -675,9 +722,9 @@ def s21_clear():
 # 쓰는 순서는 L3-20 → L3-01-O → L3-21(15_ §0)이지만 파일은 룰별로 묶어 둔다
 SCENARIOS = [
     s01_normal, s01_one_stall, s01_stall4, s01_stall5, s01_stall5_high,
-    s01_fail_is_response, s01_resp_boundary_late, s01_hold, s01_clear,
+    s01_fail_is_response, s01_resp_boundary_late, s01_hold, s01_clear, s01_clear_then_rehit,
     s20_normal, s20_rlf, s20_high, s20_medium, s20_closed, s20_idle,
-    s20_peer_uncertain, s20_repeat_update, s20_clear, s20_session_end,
+    s20_peer_uncertain, s20_repeat_update, s20_repeat_prior_attack_released, s20_clear, s20_session_end,
     s21_normal, s21_fail4, s21_branch1, s21_branch2, s21_reg_only,
     s21_mixed_high, s21_accept_boundary_intime, s21_sec_reject, s21_hold, s21_clear,
     # 입력 불완전 (이슈 #42) — 뒤에 둔다: 앞의 29개 파일은 그대로다

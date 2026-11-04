@@ -133,7 +133,9 @@ void transition(UeState& s, const UeEvt& e) {
 
   // §5.3 rrc_sec
   if (is(e, P::RRC, D::DL, "SecurityModeCommand")) {
-    if (s.rrc_sec == RrcSecState::Off || s.rrc_sec == RrcSecState::Unknown) {
+    // FAILED에서도 CMD로 (14_ §5.3 — 11/05 Q-70, 이슈 #94): SecurityModeFailure 뒤 CU가 재시도한 보안 명령을 따라간다. 그전에는 행이
+    // 없어 흡수 상태였고 L3-14 갈래 ②가 재시도 뒤의 정상 능력 요청을 high로 잡았다(25_ §3.2-4)
+    if (s.rrc_sec == RrcSecState::Off || s.rrc_sec == RrcSecState::Unknown || s.rrc_sec == RrcSecState::Failed) {
       s.rrc_sec = RrcSecState::Cmd;
       s.rrc_alg = SecAlg{e.cipher.value_or(""), e.integrity.value_or("")};
     }

@@ -261,7 +261,8 @@ TEST(BlindDos, T06ClosedBeforeDeadline) {
 }
 
 // L20-T7: IDLE형 — 피해자 해제 3분 뒤 공격 연결 → 짝 없음 → 대기 없음(탐지하지 않음, 15_ §2.1).
-// L20-T8: 이어서 피해자가 다시 접속해 수락됨 — 피해자 쪽 concurrent 대기가 수락으로 풀림, 경보 없음(15_ §2.7 한계)
+// L20-T8: 이어서 피해자가 다시 접속해 수락됨 — 경보 없음(15_ §2.7 한계). 11/05 Q-72(이슈 #94)부터 짝은 망 수락을 얻은 항목뿐이라
+// 열린 공격 연결(수락 없음)은 피해자 쪽의 짝이 아니다 → 피해자 쪽도 대기 없음(그전에는 concurrent 대기가 수락으로 풀렸다)
 TEST(BlindDos, T07T08IdleTypeNotDetected) {
   Harness h;
   h.victim(3, kS, 0);
@@ -272,7 +273,7 @@ TEST(BlindDos, T07T08IdleTypeNotDetected) {
   h.tick_to(182000);
   h.rrc(182000, 8, "UL", "RRCSetupRequest", part1(kS));
   h.rrc(182050, 8, "UL", "RRCSetupComplete", stmsi(kS));
-  EXPECT_EQ(h.rule->waiting(), 1u);  // 피해자 쪽이 판정 대상
+  EXPECT_EQ(h.rule->waiting(), 0u);  // 공격 연결은 수락을 얻지 못해 짝이 아니다
   h.nas(182050, 8, "UL", "ServiceRequest", stmsi(kS), 1);
   h.nas(182080, 8, "DL", "ServiceAccept", "", 2);
   EXPECT_EQ(h.rule->waiting(), 0u);
@@ -763,9 +764,63 @@ TEST(BlindDos, T28EvictionHoldsClear) {
   EXPECT_EQ(h.alerts[1].t, kT0 + 90100);
 }
 
-// 증거 지평 (14_ §1.1): 수락 대기 + UPDATE 모음 지연. 상태표는 여기에 여유 1 s를 더해 닫힌 항목의 recent를 보관한다
+// 지평 둘 (14_ §1.1·§4.3, 15_ §2.6 — 11/05 Q-72 해결, 이슈 #94): 증거 지평은 수락 대기 + 보류 창(clear_quiet_ms) + UPDATE 모음 지연(66 s) —
+// 상태표는 여기에 여유 1 s를 더해 닫힌 항목의 recent를 보관한다. 늦은 줄 지평(late_until)은 종전대로 수락 대기 + UPDATE 모음 지연(6 s)
 TEST(BlindDos, EvidenceHorizon) {
   Harness h;
-  EXPECT_EQ(h.rule->evidence_horizon_ms(), 6000);
-  EXPECT_EQ(h.engine.ue_table().recent_keep_ms(), 7000);
+  EXPECT_EQ(h.rule->evidence_horizon_ms(), 66000);
+  EXPECT_EQ(h.engine.ue_table().recent_keep_ms(), 67000);
+  EXPECT_EQ(h.rule->late_horizon_ms(), 6000);
+  EXPECT_EQ(h.engine.ue_table().late_horizon_ms(), 6000);
+}
+
+// L20-T30 (15_ §2.3 — 11/05 Q-72 해결, 이슈 #94): 짝은 망 수락을 한 번이라도 얻은 열린 항목뿐 — 반복 공격에서 앞선 공격 연결(수락 없음)은
+// 둘째 공격의 짝이 아니라 그 해제가 victim_released로 세어지지 않는다 → medium. 11/04까지는 열린 항목 모두라 반복 2번째부터
+// high였다(25_ §3.2-5). 피해자 해제면 high(T4)
+TEST(BlindDos, T30PeersOnlyAccepted) {
+  Harness h;
+  h.victim(3, kS, 0);
+  h.tick_to(1000);
+  h.attack(7, kS, 1000);  // t₀ 1050, 마감 6050
+  h.tick_to(2000);
+  h.attack(8, kS, 2000);  // t₀ 2050, 마감 7050 — 짝은 피해자 3뿐
+  h.release(2500, 7);     // 앞선 공격 연결 해제 — 8의 짝이 아니다
+  h.tick_to(7200);
+  ASSERT_EQ(h.alerts.size(), 2u);
+  EXPECT_EQ(h.alerts[0].kind, AlertEventKind::Raise);
+  EXPECT_EQ(h.alerts[0].t, kT0 + 6100);
+  EXPECT_EQ(h.alerts[0].severity, Severity::Medium);
+  EXPECT_EQ(h.alerts[1].kind, AlertEventKind::Update);
+  EXPECT_EQ(h.alerts[1].t, kT0 + 7100);
+  EXPECT_EQ(h.alerts[1].severity, Severity::Medium);
+  ASSERT_EQ(h.alerts[1].ues.size(), 1u);
+  EXPECT_EQ(h.alerts[1].ues[0].du_ue_id, 8);
+  EXPECT_EQ(h.alerts[1].ues[0].peers, (std::vector<std::vector<int64_t>>{{1, 3, 1}}));
+  EXPECT_EQ(h.alerts[1].ues[0].values.at("victim_released"), false);
+  EXPECT_EQ(h.alerts[1].ues[0].values.at("peer"), "concurrent");
+}
+
+// L20-T31 (15_ §2.3 '짝의 확실성' — 11/05 Q-72 해결, 이슈 #94): late 짝은 late_until(늦은 줄 + 6 s)이 지나기 전에만 불확실 — 그 안의 공격은
+// peer_uncertain, 지난 뒤의 공격은 concurrent. 11/04까지는 영구라 세션이 긴 피해자에게 늦은 줄 하나가 붙으면 그 뒤 모든 공격이
+// peer_uncertain이었다(25_ §3.3-5)
+TEST(BlindDos, T31LatePeerExpires) {
+  Harness h;
+  h.victim(3, kS, 0);
+  h.tick_to(1100);
+  h.rrc(1000, 3, "UL", "MeasurementReport");  // 피해자의 늦은 줄 → late_until 7000
+  h.attack(7, kS, 1200);                      // t₀ 1250 < 7000 → peer_uncertain, 마감 6250
+  h.tick_to(6400);
+  ASSERT_EQ(h.alerts.size(), 1u);
+  EXPECT_EQ(h.alerts[0].t, kT0 + 6300);
+  EXPECT_EQ(h.alerts[0].cond, kCondUncertain);
+  EXPECT_EQ(h.alerts[0].ues[0].values.at("peer"), "peer_uncertain");
+  h.attack(8, kS, 7000);                      // t₀ 7050 ≥ 7000 → concurrent, 마감 12050
+  h.tick_to(12200);
+  ASSERT_EQ(h.alerts.size(), 2u);
+  EXPECT_EQ(h.alerts[1].kind, AlertEventKind::Update);
+  EXPECT_EQ(h.alerts[1].t, kT0 + 12100);
+  ASSERT_EQ(h.alerts[1].ues.size(), 1u);
+  EXPECT_EQ(h.alerts[1].ues[0].du_ue_id, 8);
+  EXPECT_EQ(h.alerts[1].ues[0].cond, kCondConcurrent);
+  EXPECT_EQ(h.alerts[1].ues[0].values.at("peer"), "concurrent");
 }

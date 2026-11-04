@@ -330,10 +330,38 @@ def s24_mid_join():
 
 
 def s24_late():
-    sc = Scenario3("S24_L3-24_늦은응답줄_무경보",
-                   "공격 응답 줄(t_ms t0+98)이 t0+100 kpm2 뒤에 도착 — late, 판정 없음 (L24-T15)", 3000)
+    # 11/05 Q-74 해결(이슈 #94): 요청 없는 늦은 응답은 후보 — 마감(t0+99)이 이미 지난 시계라 다음 kpm2(t0+200)에서 RAISE,
+    # ues[].uncertain에 late. 11/04까지는 late_until 안이라 판정 없음이었다(25_ §3.3-1)
+    sc = Scenario3("S24_L3-24_늦은응답줄_RAISE",
+                   "공격 응답 줄(t_ms t0+98)이 t0+100 kpm2 뒤에 도착(late) — 다음 kpm2 t0+200에 RAISE (L24-T15, 11/05 Q-74)", 3000)
     sc.ue(3).head(B).id_resp(B + 98)
     sc.late_msgs = {"IdentityResponse"}
+    raise24(sc, K(B + 98) + P)
+    return sc
+
+
+def s24_late_pair_request():
+    # 20_ §1.2-4 (11/05 Q-74): 응답(t0+98)과 짝 요청(t0+99)이 모두 t0+100 kpm2 뒤에 도착(순서 역전) — 응답에서 표시를 시작하고
+    # 뒤늦게 온 짝 요청이 그 대기 표시를 지운다(놓친 요청이 뒤늦게 온 것) → 경보 없음
+    sc = Scenario3("S24_L3-24_늦은짝요청_무경보",
+                   "응답 t0+98·짝 요청 t0+99가 t0+100 kpm2 뒤에 도착 — 늦은 짝 요청이 대기 표시를 지움, 경보 없음 (20_ §1.2-4, 11/05 Q-74)",
+                   3000)
+    sc.ue(3).head(B).id_resp(B + 98).id_req(B + 99)
+    sc.late_msgs = {"IdentityResponse", "IdentityRequest"}
+    return sc
+
+
+def s24_unrelated_late_line():
+    # 3단계 X2 (25_ §3.3-1, 11/05 Q-74): 판정과 무관한 늦은 줄(UL MeasurementReport t0+95, t0+100 kpm2 뒤 도착)은 막지 않는다 —
+    # 제때 온 요청 없는 응답(t0+150)은 K = t0+200에 RAISE, ues[].uncertain에 late. 11/04까지는 late_until(늦은 줄 + 16 s)이 마감을
+    # 덮어 판정 없음이었다
+    sc = Scenario3("S24_L3-24_무관한늦은줄_RAISE",
+                   "늦은 UL MeasurementReport(t0+95) 뒤 제때 온 요청 없는 응답(t0+150) — K = t0+200에 RAISE (25_ X2, 11/05 Q-74)", 3000)
+    u = sc.ue(3).head(B)
+    u._line(B + 95, "UL", "RRC", "MeasurementReport")
+    u.id_resp(B + 150)
+    sc.late_msgs = {"MeasurementReport"}
+    raise24(sc, K(B + 150))
     return sc
 
 
@@ -591,9 +619,24 @@ def s14_closed():
 
 
 def s14_late():
-    sc = Scenario3("S14_L3-14_늦은응답줄_무경보", "C1 줄(t_ms t0+98)이 t0+100 kpm2 뒤에 도착 — late, 판정 없음 (L14-T15)", 3000)
+    # 11/05 Q-74 해결(이슈 #94): 요청 없는 늦은 응답은 갈래 ① 후보 — 다음 kpm2(t0+200)에서 RAISE, ues[].uncertain에 late
+    sc = Scenario3("S14_L3-14_늦은응답줄_RAISE",
+                   "C1 줄(t_ms t0+98)이 t0+100 kpm2 뒤에 도착(late) — 다음 kpm2 t0+200에 갈래 ① RAISE (L14-T15, 11/05 Q-74)", 3000)
     sc.ue(3).head(B).cap_info(B + 98)
     sc.late_msgs = {"UECapabilityInformation"}
+    raise14(sc, K(B + 98) + P, "1", MITM)
+    return sc
+
+
+def s14_retry_after_failure():
+    # 3단계 X1 (25_ §3.2-4 — 11/05 Q-70 해결, 14_ §5.3 FAILED 행, 이슈 #94): t0+140 RRC SMC → t0+145 SecurityModeFailure → t0+150 SMC
+    # 재시도 → t0+155 Complete → t0+160 정상 능력 요청 → t0+175 응답. 재시도 뒤 rrc_sec CMD → ON이라 능력 요청은 갈래 ② 후보가
+    # 아니고 응답은 AS 무결성 뒤라 갈래 ① 후보가 아니다 → 경보 없음. 11/04까지는 FAILED가 흡수 상태라 branch=2 high였다
+    sc = Scenario3("S14_L3-14_보안실패뒤재시도_무경보",
+                   "SecurityModeFailure(t0+145) 뒤 SMC 재시도(t0+150)·Complete(t0+155) → t0+160 정상 능력 요청 — 경보 없음 (25_ X1, 11/05 Q-70)",
+                   3000)
+    u = sc.ue(3).flow_F(B, cap=False, skip=("RrcSecurityModeComplete",)).rrc_smfailure(B + 145)
+    u.rrc_smc(B + 150).rrc_smcomplete(B + 155).cap_enq(B + 160).cap_info(B + 175)
     return sc
 
 
@@ -792,9 +835,12 @@ def s06_mid_join():
 
 
 def s06_late():
-    sc = Scenario3("S06_L3-06_늦은거부줄_무경보", "J1 줄(t_ms t0+98)이 t0+100 kpm2 뒤에 도착 — late, 판정 없음 (L06-T15)", 3000)
+    # 11/05 Q-74 해결(이슈 #94): 명령 없는 늦은 거부는 후보 — 다음 kpm2(t0+200)에서 RAISE, ues[].uncertain에 late
+    sc = Scenario3("S06_L3-06_늦은거부줄_RAISE",
+                   "J1 줄(t_ms t0+98)이 t0+100 kpm2 뒤에 도착(late) — 다음 kpm2 t0+200에 RAISE (L06-T15, 11/05 Q-74)", 3000)
     sc.ue(3).head(B).nas_sec_reject(B + 98)
     sc.late_msgs = {"SecurityModeReject"}
+    raise06(sc, K(B + 98) + P)
     return sc
 
 
@@ -856,12 +902,13 @@ SCENARIOS = [
     s24_normal, s24_guti_identity, s24_retx_once, s24_retx_twice, s24_raise, s24_unexpected_f,
     s24_after_normal_identity, s24_extra, s24_two_in_window, s24_request_lost, s24_loss_before_start,
     s24_loss_after_start, s24_ul_loss, s24_boundary, s24_closed_same_window, s24_mid_join, s24_late,
+    s24_late_pair_request, s24_unrelated_late_line,
     s24_after_as_integrity, s24_nia0, s24_smc_cmd, s24_protected_nas, s24_clear, s24_clear_extra, s24_two_ues,
     s24_held_more_waiting, s24_held_more_decided, s24_ngap_unlinked, s24_dl_unobserved, s24_order_violation,
     s24_duplicate,
     s14_normal, s14_no_cap, s14_branch1, s14_branch2, s14_cmd, s14_failed, s14_on, s14_enq_lost, s14_smc_lost,
     s14_mixed, s14_mixed_reversed, s14_both_branches, s14_once, s14_nia0, s14_cu_misconfig, s14_mid_join, s14_closed,
-    s14_late, s14_dl_unobserved, s14_clear, s14_order_after_sec, s14_order_before_sec,
+    s14_late, s14_retry_after_failure, s14_dl_unobserved, s14_clear, s14_order_after_sec, s14_order_before_sec,
     s06_normal, s06_normal_reject, s06_retx_once, s06_retx_each, s06_raise_before_sec, s06_raise_after_complete,
     s06_after_as_integrity, s06_nia0, s06_rrc_cmd, s06_extra, s06_two_in_window, s06_cmd_lost, s06_loss_before_start,
     s06_loss_after_start, s06_ul_loss, s06_boundary, s06_closed_same_window, s06_mid_join, s06_late, s06_clear,

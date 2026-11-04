@@ -176,30 +176,35 @@ TEST(UeLookback, ClosedBeforeDeadline) {
   EXPECT_EQ(m.size(), 1u);
 }
 
-// §1.2-4 late: 늦은 줄 제외 기간이 마감을 덮으면 판정하지 않고 표시를 지운다(Skip). 마감이 late_until 이상이면 판정한다
-TEST(UeLookback, LateSkipErasesMark) {
-  {
-    Ctx c;
-    LookbackMarks m;
-    UeState n = ue(3, 7, 1000);
-    n.late = true;
-    n.late_until = 3098;
-    m.start(n, "unsolicited", 1098, {}, c.ctx());
-    m.on_close(n, CloseReason::Released);
-    const LookbackMarks::Decision dc = m.on_deadline(*c.due(1, 1100), c.ctx());
-    EXPECT_EQ(dc.verdict, LookbackMarks::Verdict::Skip);
-    EXPECT_EQ(m.size(), 0u);
-  }
-  {
-    Ctx c;
-    LookbackMarks m;
-    UeState n = ue(3, 7, 1000);
-    n.late = true;
-    n.late_until = 1099;  // 마감 1099 ≥ late_until → 판정
-    m.start(n, "unsolicited", 1098, {}, c.ctx());
-    m.on_close(n, CloseReason::Released);
-    EXPECT_EQ(m.on_deadline(*c.due(1, 1100), c.ctx()).verdict, LookbackMarks::Verdict::Hit);
-  }
+// §1.2-4 late (11/05 Q-74 해결, 이슈 #94): 상태표 late_until은 보지 않는다 — n이 late이고 late_until이 마감을 덮어도 판정한다.
+// 11/04까지는 Skip(표시를 지움)이라 판정과 무관한 늦은 줄 하나로 그 UE의 탐지가 사라졌다(25_ §3.3-1)
+TEST(UeLookback, LateDoesNotBlockJudgement) {
+  Ctx c;
+  LookbackMarks m;
+  UeState n = ue(3, 7, 1000);
+  n.late = true;
+  n.late_until = 3098;
+  m.start(n, "unsolicited", 1098, {}, c.ctx());
+  m.on_close(n, CloseReason::Released);
+  EXPECT_EQ(m.on_deadline(*c.due(1, 1100), c.ctx()).verdict, LookbackMarks::Verdict::Hit);
+  EXPECT_EQ(m.size(), 0u);
+}
+
+// §1.2-4 늦은 짝 요청: 그 (키, uid, 갈래)의 대기 중 표시만 지운다 — 없거나 다른 갈래·uid면 false. 지운 뒤 같은 연결·갈래에 다시
+// 시작할 수 있다(뒤에 온 응답에서 다시 후보, 20_ §1.2-4)
+TEST(UeLookback, EraseWaiting) {
+  Ctx c;
+  LookbackMarks m;
+  const UeState n = ue(3, 7, 1000);
+  EXPECT_FALSE(m.erase_waiting(n.key, n.uid, "unsolicited"));
+  m.start(n, "unsolicited", 1098, {}, c.ctx());
+  EXPECT_FALSE(m.erase_waiting(n.key, n.uid, "other"));
+  EXPECT_FALSE(m.erase_waiting(n.key, 8, "unsolicited"));
+  EXPECT_EQ(m.size(), 1u);
+  EXPECT_TRUE(m.erase_waiting(n.key, n.uid, "unsolicited"));
+  EXPECT_EQ(m.size(), 0u);
+  EXPECT_TRUE(m.start(n, "unsolicited", 1198, {}, c.ctx()));
+  EXPECT_EQ(m.size(), 1u);
 }
 
 // 표시와 다른 마감(t_from이 다름)은 Stale — 표시는 그대로

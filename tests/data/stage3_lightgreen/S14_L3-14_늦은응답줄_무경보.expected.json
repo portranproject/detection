@@ -1,7 +1,0 @@
-{
-  "scenario": "S14_L3-14_늦은응답줄_무경보",
-  "description": "C1 줄(t_ms t0+98)이 t0+100 kpm2 뒤에 도착 — late, 판정 없음 (L14-T15)",
-  "t0_ms": 1792209000000,
-  "tolerance_ms": 100,
-  "alerts": []
-}

@@ -54,6 +54,9 @@ class UeRule {
   // 셀 창, 3·4단계는 창 한 칸 몫 1,000 ms + alert.update_min_ms(20_ §1.2-6, 21_ §1.1 — 셀 창을 더하지 않는다, 11/04).
   // 상태표는 등록된 룰의 최댓값만큼 닫힌 항목의 recent를 보관한다(14_ §2.3)
   virtual int64_t evidence_horizon_ms() const = 0;
+  // 늦은 줄 지평 (14_ §1.1·§4.3 — 11/05 Q-72, 이슈 #94): late_until에 쓰는 값. 기본은 증거 지평과 같고, 불확실 경보가 보류 창 안 UE를
+  // 실어 증거 보관이 더 긴 룰(L3-20)만 따로 둔다 — 증거 지평을 늘려도 '없음' 판정 제외 길이는 늘지 않게
+  virtual int64_t late_horizon_ms() const { return evidence_horizon_ms(); }
   // ue_evt 1줄이 상태표에 반영된 직후 (14_ §7 ⑤). before·after = 갱신 전·후 상태 — '요청 없는 응답'처럼
   // 갱신 전 상태를 봐야 하는 판정을 위해 둘 다 넘긴다(14_ §1)
   virtual void on_ue_event(const UeEvt& evt, const UeState& before, const UeState& after, const UeRuleCtx& ctx,

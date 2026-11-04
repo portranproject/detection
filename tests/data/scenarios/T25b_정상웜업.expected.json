@@ -1,0 +1,7 @@
+{
+  "scenario": "T25b_정상웜업",
+  "description": "T25와 같되 F가 처음부터 있음 — 웜업 평균 base 5, C3 거짓, 경보 없음 (25_ X3b)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

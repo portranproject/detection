@@ -27,6 +27,7 @@ class BlindDosRule : public UeRule {
 
   const char* id() const override { return kId; }
   int64_t evidence_horizon_ms() const override;
+  int64_t late_horizon_ms() const override;  // 증거 지평과 다르다 (15_ §2.6 — 11/05 Q-72)
   void on_ue_event(const UeEvt& evt, const UeState& before, const UeState& after, const UeRuleCtx& ctx,
                    RuleOutput& out) override;
   void on_deadline(const Deadline& d, const UeRuleCtx& ctx, RuleOutput& out) override;

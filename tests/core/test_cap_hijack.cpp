@@ -478,15 +478,85 @@ TEST(CapHijack, T14ClosedBeforeDeadline) {
 
 // L14-T15: 늦은 줄 — C1 줄(t_ms t0+98)이 t0+100 kpm2 뒤에 도착 → late로 판정 없음
 TEST(CapHijack, T15LateLine) {
-  Harness h;
-  std::vector<L> v = F(kB, 3);
-  drop_from(v, kB + 100);
-  h.play(v);
-  h.tick_to(kB + 100);
-  h.line(cap_info(kB + 98, 3));
-  h.tick_to(5000);
-  EXPECT_TRUE(h.alerts.empty());
-  EXPECT_EQ(h.rule->marks().size(), 0u);
+  // ① 요청 없는 늦은 응답(t0+98, t0+100 kpm2 뒤 도착) → 다음 kpm2(t0+200)에서 갈래 ① RAISE, ues[].uncertain에 late
+  // (11/05 Q-74 해결, 이슈 #94 — 11/04까지는 late_until 안이라 판정 없음)
+  {
+    Harness h;
+    std::vector<L> v = F(kB, 3);
+    drop_from(v, kB + 100);
+    h.play(v);
+    h.tick_to(kB + 100);
+    h.line(cap_info(kB + 98, 3));
+    EXPECT_TRUE(h.has_diag(DiagKind::UeLate));
+    h.tick_to(5000);
+    ASSERT_EQ(h.alerts.size(), 1u);
+    EXPECT_EQ(h.alerts[0].t, kT0 + kB + 200);
+    EXPECT_EQ(h.alerts[0].branch, "1");
+    ASSERT_EQ(h.alerts[0].ues.size(), 1u);
+    EXPECT_EQ(h.alerts[0].ues[0].uncertain, (std::vector<std::string>{"late"}));
+  }
+  // ② 늦은 짝 요청(UECapabilityEnquiry)이 그 뒤에 오면 갈래 ① 대기 표시를 지워 경보 없음 — 놓친 요청이 뒤늦게 온 것. RRC 보안을
+  // nia0으로 둬(연결 내내 갈래 ① 후보) 늦은 요청이 갈래 ② 후보(OFF·FAILED)가 되지 않게 한다
+  {
+    Harness h;
+    h.play(F(kB, 3, {"nia0", false}));
+    h.tick_to(kB + 300);
+    h.line(cap_info(kB + 298, 3));
+    EXPECT_EQ(h.rule->marks().size(), 1u);
+    h.line(cap_enq(kB + 295, 3));
+    EXPECT_EQ(h.rule->marks().size(), 0u);
+    h.tick_to(5000);
+    EXPECT_TRUE(h.alerts.empty());
+  }
+  // ③ 판정과 무관한 늦은 줄(UL MeasurementReport)은 막지 않는다 — 제때 온 요청 없는 응답(t0+150)은 K = t0+200에 RAISE
+  {
+    Harness h;
+    std::vector<L> v = F(kB, 3);
+    drop_from(v, kB + 100);
+    h.play(v);
+    h.tick_to(kB + 100);
+    h.line(rrc(kB + 95, 3, "UL", "MeasurementReport"));
+    h.line(cap_info(kB + 150, 3));
+    h.tick_to(5000);
+    ASSERT_EQ(h.alerts.size(), 1u);
+    EXPECT_EQ(h.alerts[0].t, kT0 + kB + 200);
+    EXPECT_EQ(h.alerts[0].ues[0].uncertain, (std::vector<std::string>{"late"}));
+  }
+}
+
+// L14-T22 (20_ §4.3 — 11/05 Q-70 해결, 이슈 #94): SecurityModeFailure(t0+145) 뒤 CU가 SecurityModeCommand를 재시도(t0+150)해
+// Complete(t0+155)까지 가면 상태표가 CMD → ON으로 복구된다 — 그 뒤 정상 능력 요청(t0+160)은 갈래 ② 후보가 아니고 응답(t0+175)은
+// AS 무결성 뒤라 갈래 ① 후보가 아니다 → 경보 없음(25_ 부록 A 3단계 X1). 재시도 '전' 능력 요청(t0+147)은 여전히 갈래 ②(FAILED)
+TEST(CapHijack, T22RetryAfterFailure) {
+  {
+    Harness h;
+    std::vector<L> v = F(kB, 3, {"nia2", false});
+    drop(v, "RRC", "SecurityModeComplete");
+    v.push_back(rrc(kB + 145, 3, "UL", "SecurityModeFailure"));
+    v.push_back(rrc(kB + 150, 3, "DL", "SecurityModeCommand", R"("cipher":"nea0","integrity":"nia2")"));
+    v.push_back(rrc(kB + 155, 3, "UL", "SecurityModeComplete"));
+    v.push_back(cap_enq(kB + 160, 3));
+    v.push_back(cap_info(kB + 175, 3));
+    h.play(v);
+    h.tick_to(3000);
+    EXPECT_TRUE(h.alerts.empty());
+    EXPECT_EQ(h.rule->marks().size(), 0u);
+  }
+  {
+    Harness h;
+    std::vector<L> v = F(kB, 3, {"nia2", false});
+    drop(v, "RRC", "SecurityModeComplete");
+    v.push_back(rrc(kB + 145, 3, "UL", "SecurityModeFailure"));
+    v.push_back(cap_enq(kB + 147, 3));
+    v.push_back(rrc(kB + 150, 3, "DL", "SecurityModeCommand", R"("cipher":"nea0","integrity":"nia2")"));
+    v.push_back(rrc(kB + 155, 3, "UL", "SecurityModeComplete"));
+    v.push_back(cap_info(kB + 175, 3));
+    h.play(v);
+    h.tick_to(3000);
+    ASSERT_EQ(h.alerts.size(), 1u);
+    EXPECT_EQ(h.alerts[0].branch, "2");
+    EXPECT_EQ(h.alerts[0].ues[0].values.at("rrc_sec"), "FAILED");
+  }
 }
 
 // L14-T16: DL 미관측 — 모든 kpm2 ue_evt_lost ["DL"], DL 줄 없음. 갈래 ②는 판정 없음, t0+175 응답은 rrc_sec OFF·R 0이라 후보 → 보류 →
