@@ -373,3 +373,39 @@ TEST(ShortRepeat, EvidenceHorizon) {
   Harness h;
   EXPECT_EQ(h.rule->evidence_horizon_ms(), 2000);
 }
+
+// CLEAR 뒤 다른 S-TMSI (23_ §3.1-2, 이슈 #84): S1 × 3 → RAISE → 60 s 조용 → CLEAR → S2 × 3(150 s부터, 창 W 300 s 안) — 둘째 RAISE는
+// CLEAR 뒤 걸림(S2)만 싣는다(ues_total 1). 그전에는 창에 남은 S1 걸림이 다시 실려 ues_total 2였다(재생 데이터 SAN04_AN-04_CLEAR뒤다른STMSI_RAISE)
+TEST(ShortRepeat, ClearThenOtherStmsiListsOnlyNew) {
+  Harness h;
+  h.play(Pn(3, 1000, 20000, 10, kS) + Pn(3, 150000, 20000, 20, kS2));
+  h.tick_to(260000);
+  ASSERT_EQ(h.alerts.size(), 4u);  // RAISE, CLEAR, RAISE, CLEAR
+  EXPECT_EQ(h.alerts[0].t, kT0 + 42300);
+  EXPECT_EQ(h.alerts[1].kind, AlertEventKind::Clear);
+  EXPECT_EQ(h.alerts[1].t, kT0 + 102200);
+  const AlertEvent& e = h.alerts[2];
+  EXPECT_EQ(e.kind, AlertEventKind::Raise);
+  EXPECT_EQ(e.t, kT0 + 191300);
+  ASSERT_EQ(e.ues.size(), 1u);
+  EXPECT_EQ(e.ues[0].s_tmsi, std::optional<uint64_t>(kS2));
+  EXPECT_EQ(e.ues_total, 1);
+  EXPECT_EQ(e.values.dump(), R"({"short_ues":1,"extra":0,"evicted":0})");
+  EXPECT_NE(h.logs[2].find(" ue=1/22/"), std::string::npos);
+  EXPECT_EQ(h.alerts[3].kind, AlertEventKind::Clear);
+  EXPECT_EQ(h.alerts[3].ues_total, 1);
+}
+
+// 지속 공격 — 지금 동작 고정 (Q-69 미결, 23_ §3.1-1): 같은 S-TMSI가 20 s 간격 20회 — 3번째 닫힘에서 RAISE, 4번째부터 경보 values.extra,
+// 마지막 걸림 + 60 s에 CLEAR, 그 뒤 17회가 이어져도 경보가 없다(회복 전 반복은 해제 시계를 늘리지 않고 CLEAR 뒤 누적 수는 버려짐 —
+// 명세 21_ §6.3-2·§6.5대로). Q-69 결정(W-28) 뒤 기대값을 바꾼다(재생 데이터 SAN04_AN-04_지속공격_CLEAR)
+TEST(ShortRepeat, SustainedRepeat_CurrentBehavior) {
+  Harness h;
+  h.play(Pn(20, 1000, 20000, 10, kS));
+  h.tick_to(420000);
+  ASSERT_EQ(h.alerts.size(), 2u);
+  EXPECT_EQ(h.alerts[0].kind, AlertEventKind::Raise);
+  EXPECT_EQ(h.alerts[0].t, kT0 + 42300);
+  EXPECT_EQ(h.alerts[1].kind, AlertEventKind::Clear);
+  EXPECT_EQ(h.alerts[1].t, kT0 + 102200);
+}

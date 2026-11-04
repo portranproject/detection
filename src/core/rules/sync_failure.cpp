@@ -75,14 +75,15 @@ void SyncFailureRule::on_ue_close(const UeState& last, CloseReason, int64_t, con
 // 경보 중 새 걸림은 UPDATE, 마지막 걸림 뒤 clear_quiet_ms면 CLEAR(밀어내기 중 보류), input_lost면 END — 헬퍼가 한다
 void SyncFailureRule::on_cell_tick(int64_t cell, const Kpm2& k, const CellLoss&, bool input_lost, const UeRuleCtx& ctx,
                                    RuleOutput& out) {
-  hits_.tick(cell, k.t_end_ms, input_lost, ctx, out.alerts, [&](std::size_t from) { decorate(from, out); });
+  hits_.tick(cell, k.t_end_ms, input_lost, ctx, out.alerts,
+             [&](std::size_t from, const AlertUe* hit) { decorate(from, out, hit); });
 }
 
 // AN-01 값 채우기 (21_ §3.6): raise·update에 values(sync_w 가장 최근 걸림 기준 창 안 수, sync_total = ues_total, extra·reauth
 // 경보에 실린 연결의 누적 수, evicted — raise면 직전 clear_quiet_ms 이동 창, update면 경보가 열린 뒤 누적), raise에 cond
 // sync_count·candidates [L3-07-OV]·params·로그 필드(맨 앞 kind=anomaly — 14_ §6.2 표기, ue는 RAISE를 일으킨 가장 최근 걸림).
 // 심각도는 medium 고정(§3.3-4), branch·conditions 없음(21_ §1)
-void SyncFailureRule::decorate(std::size_t from, RuleOutput& out) {
+void SyncFailureRule::decorate(std::size_t from, RuleOutput& out, const AlertUe* hit) {
   for (std::size_t i = from; i < out.alerts.size(); ++i) {
     AlertEvent& e = out.alerts[i];
     if (e.kind != AlertEventKind::Raise && e.kind != AlertEventKind::Update) continue;
@@ -104,8 +105,8 @@ void SyncFailureRule::decorate(std::size_t from, RuleOutput& out) {
                     {"sync_w", std::to_string(sync_w)},
                     {"n_sync", std::to_string(cfg_.n_sync)},
                     {"window_ms", std::to_string(cfg_.window_ms)}};
-    if (!e.ues.empty()) {
-      const AlertUe& u = e.ues.back();
+    if (hit) {  // RAISE를 일으킨 이번 걸림 (이슈 #84 — e.ues.back()은 ues_max로 잘리면 다른 UE)
+      const AlertUe& u = *hit;
       e.log_fields.emplace_back("ue", ue_name(u.cell, u.du_ue_id, u.uid));
       e.log_fields.emplace_back("cause", std::to_string(kSynchFailure));
     }

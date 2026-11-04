@@ -1,0 +1,30 @@
+{
+  "scenario": "SAN04_AN-04_지속공격_CLEAR",
+  "description": "P × 20(20 s 간격) — 3번째 닫힘에서 RAISE, 4번째부터 경보 values.extra, 마지막 걸림 + 60 s에 CLEAR, 그 뒤 17회가 이어져도 경보 없음 — 명세(21_ §6.3-2·§6.5)대로의 지금 동작(Q-69 미결, 23_ §3.1-1). 결정(W-28) 뒤 기대값을 바꾼다",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "AN-04",
+      "cell": 1,
+      "t_rel_ms": 42300,
+      "severity": "medium",
+      "alert_kind": "anomaly",
+      "candidates": [
+        "L3-02-Oa",
+        "L3-34-OV",
+        "L3-12-V"
+      ],
+      "ues_total": 1
+    },
+    {
+      "kind": "CLEAR",
+      "rule": "AN-04",
+      "cell": 1,
+      "t_rel_ms": 102200,
+      "alert_kind": "anomaly",
+      "ues_total": 1
+    }
+  ]
+}

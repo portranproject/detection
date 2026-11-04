@@ -37,7 +37,7 @@ class ShortRepeatRule : public UeRule {
  private:
   using UeId = HitWindow::UeId;
 
-  void decorate(std::size_t from, RuleOutput& out);
+  void decorate(std::size_t from, RuleOutput& out, const AlertUe* hit = nullptr);  // hit = 이번 걸림 (이슈 #84)
 
   ShortRepeatConfig cfg_;
   AlertConfig alert_;

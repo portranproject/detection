@@ -52,7 +52,8 @@ std::vector<std::string> candidates_of(const AlertUe& u) {
 
 }  // namespace
 
-// 셀 문턱이 없어 헬퍼의 N은 1이다 — 반복 수는 룰이 이력 표에서 센다(§6.3-2). 셀 창은 N = 1에서 쓰이지 않으므로 W와 같게 둔다
+// 셀 문턱이 없어 헬퍼의 N은 1이다 — 반복 수는 룰이 이력 표에서 센다(§6.3-2). 헬퍼의 셀 창은 성립 판정에는 쓰이지 않지만 RAISE에 싣는
+// '창 안 걸림'의 폭이라 W와 같게 둔다 — CLEAR 뒤에는 창이 비어 옛 경보의 걸림은 싣지 않는다(이슈 #84)
 ShortRepeatRule::ShortRepeatRule(ShortRepeatConfig cfg, AlertConfig alert)
     : cfg_(cfg), alert_(alert), hits_(kId, alert, cfg.window_ms, 1, cfg.clear_quiet_ms) {}
 
@@ -105,7 +106,8 @@ void ShortRepeatRule::on_ue_close(const UeState& last, CloseReason reason, int64
 // (extra는 늘리지 않음, 밀어내기 중 보류), input_lost면 END — 헬퍼가 한다. 마지막 짧은 연결 뒤 W가 지난 S-TMSI는 회복으로 보고 키를 지운다
 void ShortRepeatRule::on_cell_tick(int64_t cell, const Kpm2& k, const CellLoss&, bool input_lost, const UeRuleCtx& ctx,
                                    RuleOutput& out) {
-  hits_.tick(cell, k.t_end_ms, input_lost, ctx, out.alerts, [&](std::size_t from) { decorate(from, out); });
+  hits_.tick(cell, k.t_end_ms, input_lost, ctx, out.alerts,
+             [&](std::size_t from, const AlertUe* hit) { decorate(from, out, hit); });
   for (auto it = last_short_.begin(); it != last_short_.end();) {
     if (it->first.first.cell_id == cell && k.t_end_ms - it->second >= cfg_.window_ms) {
       hits_.forget(it->first);
@@ -119,7 +121,7 @@ void ShortRepeatRule::on_cell_tick(int64_t cell, const Kpm2& k, const CellLoss&,
 // AN-04 값 채우기 (21_ §6.6): raise·update에 values(short_ues = ues_total, extra 실린 S-TMSI의 회복 전 반복 수, evicted), raise에 cond
 // short_repeat·candidates(실린 UE들 후보의 합 — raise에만, 21_ §1)·params·로그 필드(맨 앞 kind=anomaly, ue는 RAISE를 일으킨 가장
 // 최근 걸림 — 48비트를 알면 s_tmsi=, Part1만 알면 part1=). 심각도 medium 고정, branch 없음
-void ShortRepeatRule::decorate(std::size_t from, RuleOutput& out) {
+void ShortRepeatRule::decorate(std::size_t from, RuleOutput& out, const AlertUe* hit) {
   for (std::size_t i = from; i < out.alerts.size(); ++i) {
     AlertEvent& e = out.alerts[i];
     if (e.kind != AlertEventKind::Raise && e.kind != AlertEventKind::Update) continue;
@@ -128,8 +130,8 @@ void ShortRepeatRule::decorate(std::size_t from, RuleOutput& out) {
     e.values["extra"] = hits_.count(e.cell_id, "extra");
     e.values["evicted"] = hits_.evicted(e.cell_id, raise, e.t);
     std::string ue_s;  // RAISE 로그의 식별자 칸
-    if (raise && !e.ues.empty()) {
-      const AlertUe& u = e.ues.back();
+    if (raise && hit) {  // RAISE를 일으킨 이번 걸림 (이슈 #84)
+      const AlertUe& u = *hit;
       if (u.s_tmsi) ue_s = "s_tmsi=" + hex(*u.s_tmsi, 12);
       else if (auto p = part1_of_.find({u.cell, u.du_ue_id, u.uid}); p != part1_of_.end()) ue_s = "part1=" + hex(p->second, 10);
     }
@@ -146,8 +148,8 @@ void ShortRepeatRule::decorate(std::size_t from, RuleOutput& out) {
     e.params["clear_quiet_ms"] = cfg_.clear_quiet_ms;
     // 로그 줄 (21_ §6.6): kind=anomaly ue= s_tmsi=(또는 part1=) short_n= len_ms= est_cause= n_short= window_ms=
     e.log_fields = {{"kind", "anomaly"}};
-    if (!e.ues.empty()) {
-      const AlertUe& u = e.ues.back();
+    if (hit) {
+      const AlertUe& u = *hit;
       e.log_fields.emplace_back("ue", ue_name(u.cell, u.du_ue_id, u.uid));
       const auto eq = ue_s.find('=');
       if (eq != std::string::npos) e.log_fields.emplace_back(ue_s.substr(0, eq), ue_s.substr(eq + 1));

@@ -35,7 +35,7 @@ class IdentityRequestRule : public UeRule {
   void on_input_silent(const UeRuleCtx& ctx, RuleOutput& out) override;
 
  private:
-  void decorate(std::size_t from, RuleOutput& out);
+  void decorate(std::size_t from, RuleOutput& out, const AlertUe* hit = nullptr);  // hit = 이번 걸림 (이슈 #84)
 
   IdentityRequestConfig cfg_;
   AlertConfig alert_;

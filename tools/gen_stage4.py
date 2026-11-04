@@ -162,11 +162,13 @@ class Scenario4(gen_stage3.Scenario3):
         return h
 
     def alert(self, kind, t_rel, rule, cell=1, mode=None, severity=None, branch=None, reason=None, alert_kind=None,
-              conditions=None, candidates=None):
+              conditions=None, candidates=None, ues_total=None):
         a = super().alert(kind, t_rel, rule, cell=cell, mode=mode, severity=severity, branch=branch, reason=reason,
                           alert_kind=alert_kind, conditions=conditions)
         if candidates is not None:
             a["candidates"] = candidates   # raise의 후보 (14_ §8.3, 21_ §1) — 시험이 그 이벤트의 값과 비교
+        if ues_total is not None:
+            a["ues_total"] = ues_total     # 지금까지 걸린 UE 수 — CLEAR 뒤 옛 걸림 재수록 회귀(이슈 #84), 시험이 비교
         return a
 
 
@@ -420,9 +422,9 @@ RAN04 = "AN-04"
 CAND04_PAGING = ["L3-02-Oa", "L3-34-OV", "L3-12-V"]
 
 
-def an04(sc, kind, t_rel, candidates=None):
+def an04(sc, kind, t_rel, candidates=None, ues_total=None):
     return sc.alert(kind, t_rel, RAN04, severity="medium" if kind in ("RAISE", "UPDATE") else None, alert_kind="anomaly",
-                    candidates=candidates)
+                    candidates=candidates, ues_total=ues_total)
 
 
 def p_n(sc, n, t0, gap, du0, s=S_SHORT, **kw):
@@ -507,6 +509,29 @@ def san04_clear():
     t_end = p_n(sc, 3, B, 20000, 10)
     an04(sc, "RAISE", K(t_end), CAND04_PAGING)
     an04(sc, "CLEAR", K(t_end + 60000 - 1))
+    return sc
+
+
+def san04_clear_then_other():
+    sc = Scenario4("SAN04_AN-04_CLEAR뒤다른STMSI_RAISE",
+                   "P × 3(RAISE) → 60 s 조용 → CLEAR → 둘째 S-TMSI × 3(150 s부터, 창 W 300 s 안) — 둘째 RAISE는 CLEAR 뒤 걸림만 싣는다"
+                   "(ues_total 1). 그전에는 창에 남은 첫 S-TMSI 걸림이 다시 실려 ues_total 2였다 (23_ §3.1-2, 이슈 #84)", 260000)
+    t1 = p_n(sc, 3, B, 20000, 10)
+    t2 = p_n(sc, 3, 150000, 20000, 20, s=S_SHORT2)
+    an04(sc, "RAISE", K(t1), CAND04_PAGING, ues_total=1)
+    an04(sc, "CLEAR", K(t1 + 60000 - 1), ues_total=1)
+    an04(sc, "RAISE", K(t2), CAND04_PAGING, ues_total=1)
+    an04(sc, "CLEAR", K(t2 + 60000 - 1), ues_total=1)
+    return sc
+
+
+def san04_sustained():
+    sc = Scenario4("SAN04_AN-04_지속공격_CLEAR",
+                   "P × 20(20 s 간격) — 3번째 닫힘에서 RAISE, 4번째부터 경보 values.extra, 마지막 걸림 + 60 s에 CLEAR, 그 뒤 17회가 이어져도 "
+                   "경보 없음 — 명세(21_ §6.3-2·§6.5)대로의 지금 동작(Q-69 미결, 23_ §3.1-1). 결정(W-28) 뒤 기대값을 바꾼다", 420000)
+    p_n(sc, 20, B, 20000, 10)
+    an04(sc, "RAISE", K(B + 40000 + 1200), CAND04_PAGING, ues_total=1)
+    an04(sc, "CLEAR", K(B + 40000 + 1200 + 60000 - 1), ues_total=1)
     return sc
 
 
@@ -748,7 +773,7 @@ SCENARIOS = [
     san02_suci, san02_guti_no_idreq, san02_known_guti, san02_attack_shape, san02_unknown_guti, san02_five, san02_four,
     san02_clear,
     san04_long, san04_three, san04_two, san04_du_release, san04_four, san04_part1, san04_du_reset, san04_two_stmsi,
-    san04_clear,
+    san04_clear, san04_clear_then_other, san04_sustained,
     san07_connected, san07_three, san07_two, san07_outside, san07_reject_release, san07_reject_stale, san07_random,
     san07_stale, san07_du_reset, san07_two_part1, san07_clear,
     san08_initial, san08_five, san08_four, san08_outside, san08_periodic, san08_initial_again, san08_history,

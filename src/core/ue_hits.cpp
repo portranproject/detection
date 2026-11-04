@@ -72,8 +72,11 @@ void HitWindow::tick(int64_t cell, int64_t t, bool input_lost, const UeRuleCtx& 
   Cell& c = cells_[cell];
   note_evictions(c, cell, t, ctx);
   std::size_t from = out.size();
-  if (input_lost) book_.end(cell, t, "input_lost", out);
-  fn(from);
+  if (input_lost && book_.open(cell)) {
+    book_.end(cell, t, "input_lost", out);
+    forget_window(c);
+  }
+  fn(from, nullptr);
 
   for (Hit& h : c.fresh) {
     if (const UeState* s = ctx.table.find(h.ref.first); s && s->uid == h.ref.second) refresh(h.u, *s);
@@ -95,15 +98,34 @@ void HitWindow::tick(int64_t cell, int64_t t, bool input_lost, const UeRuleCtx& 
       }
       book_.add(cell, std::move(ues), Severity::Medium, t, ctx.session, ctx.seq, out);
     }
-    fn(from);
+    fn(from, &h.u);  // 이번 걸림 — 식별·uncertain을 다시 채운 뒤 (이슈 #84)
   }
   c.fresh.clear();
 
   from = out.size();
   book_.flush(cell, t, out);
   const int64_t base = clear_on_satisfied_ ? c.t_sat : c.t_hit_last;
-  if (book_.open(cell) && t - base >= clear_quiet_ms_ && evicted_window(c, t) == 0) book_.clear(cell, t, out);
-  fn(from);
+  if (book_.open(cell) && t - base >= clear_quiet_ms_ && evicted_window(c, t) == 0) {
+    book_.clear(cell, t, out);
+    forget_window(c);
+  }
+  fn(from, nullptr);
+}
+
+// CLEAR·END 뒤 (23_ §3.1-2, 이슈 #84): 창과 해제 기준을 비운다 — 새 경보는 그 뒤 걸림만 싣고 창 안 수(window)도 새로 센다. 그전에는 창 W가
+// 해제 시간보다 길면(AN-04 기본 300 s > 60 s) CLEAR된 경보의 걸림이 창에 남아 다음 RAISE에 다시 실리고(ues_total 2, 증거 없음) 그 acc도
+// 다시 더해졌다. 걸린 연결·키 기록(conns_)은 그대로다 — 연결당·키당 한 번은 유지된다(회복은 룰이 forget으로)
+void HitWindow::forget_window(Cell& c) {
+  c.win.clear();
+  c.t_hit_last = 0;
+  c.t_sat = 0;
+}
+
+// 모든 셀 END (session_reset·input_silent): 경보가 열려 있던 셀의 창을 비운다 — 경보가 없던 셀의 성립 전 걸림은 그대로 둔다
+void HitWindow::end_all(const std::string& reason, std::vector<AlertEvent>& out) {
+  for (auto& [cell, c] : cells_)
+    if (book_.open(cell)) forget_window(c);
+  book_.end_all(reason, out);
 }
 
 void HitWindow::reset() {

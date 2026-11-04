@@ -35,7 +35,8 @@ bool judged(CloseReason r) {
 
 }  // namespace
 
-// 셀 문턱이 없어 헬퍼의 N은 1이다 — 반복 수는 룰이 이력 표에서 센다(§7.3-2). 셀 창은 N = 1에서 쓰이지 않으므로 W와 같게 둔다
+// 셀 문턱이 없어 헬퍼의 N은 1이다 — 반복 수는 룰이 이력 표에서 센다(§7.3-2). 헬퍼의 셀 창은 성립 판정에는 쓰이지 않지만 RAISE에 싣는
+// '창 안 걸림'의 폭이라 W와 같게 둔다 — CLEAR 뒤에는 창이 비어 옛 경보의 걸림은 싣지 않는다(이슈 #84)
 SetupRepeatRule::SetupRepeatRule(SetupRepeatConfig cfg, AlertConfig alert)
     : cfg_(cfg), alert_(alert), hits_(kId, alert, cfg.window_ms, 1, cfg.clear_quiet_ms) {}
 
@@ -84,7 +85,8 @@ void SetupRepeatRule::on_ue_close(const UeState& last, CloseReason reason, int64
 // Part1은 회복으로 보고 키를 지운다
 void SetupRepeatRule::on_cell_tick(int64_t cell, const Kpm2& k, const CellLoss&, bool input_lost, const UeRuleCtx& ctx,
                                    RuleOutput& out) {
-  hits_.tick(cell, k.t_end_ms, input_lost, ctx, out.alerts, [&](std::size_t from) { decorate(from, out); });
+  hits_.tick(cell, k.t_end_ms, input_lost, ctx, out.alerts,
+             [&](std::size_t from, const AlertUe* hit) { decorate(from, out, hit); });
   for (auto it = last_fail_.begin(); it != last_fail_.end();) {
     if (it->first.first.cell_id == cell && k.t_end_ms - it->second >= cfg_.window_ms) {
       hits_.forget(it->first);
@@ -98,7 +100,7 @@ void SetupRepeatRule::on_cell_tick(int64_t cell, const Kpm2& k, const CellLoss&,
 // AN-07 값 채우기 (21_ §7.6): raise·update에 values(fail_ues = ues_total, extra 실린 Part1의 회복 전 반복 수, evicted), raise에 cond
 // setup_repeat_no_complete·candidates(고정 — raise에만, 21_ §1)·params·로그 필드(맨 앞 kind=anomaly, ue·part1·fail_n은 RAISE를
 // 일으킨 가장 최근 걸림). 심각도 medium 고정, branch 없음
-void SetupRepeatRule::decorate(std::size_t from, RuleOutput& out) {
+void SetupRepeatRule::decorate(std::size_t from, RuleOutput& out, const AlertUe* hit) {
   for (std::size_t i = from; i < out.alerts.size(); ++i) {
     AlertEvent& e = out.alerts[i];
     if (e.kind != AlertEventKind::Raise && e.kind != AlertEventKind::Update) continue;
@@ -114,8 +116,8 @@ void SetupRepeatRule::decorate(std::size_t from, RuleOutput& out) {
     e.params["clear_quiet_ms"] = cfg_.clear_quiet_ms;
     // 로그 줄 (21_ §7.6): kind=anomaly ue= part1= fail_n= n_fail= window_ms=
     e.log_fields = {{"kind", "anomaly"}};
-    if (!e.ues.empty()) {
-      const AlertUe& u = e.ues.back();
+    if (hit) {  // RAISE를 일으킨 이번 걸림 (이슈 #84)
+      const AlertUe& u = *hit;
       e.log_fields.emplace_back("ue", ue_name(u.cell, u.du_ue_id, u.uid));
       e.log_fields.emplace_back("part1", u.values.at("part1").get<std::string>());
       e.log_fields.emplace_back("fail_n", std::to_string(u.values.at("fail_n").get<int64_t>()));
