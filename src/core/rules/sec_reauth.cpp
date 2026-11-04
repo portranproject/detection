@@ -68,8 +68,8 @@ void SecReauthRule::on_cell_tick(int64_t cell, const Kpm2& k, const CellLoss&, b
 void SecReauthRule::decorate(std::size_t from, RuleOutput& out, const AlertUe* hit) {
   for (std::size_t i = from; i < out.alerts.size(); ++i) {
     AlertEvent& e = out.alerts[i];
-    if (e.kind != AlertEventKind::Raise && e.kind != AlertEventKind::Update) continue;
     const bool raise = e.kind == AlertEventKind::Raise;
+    // raise·update·clear·end 모두 누적값 (21_ §4.6, 14_ §8.3 — 11/04 Q-69 W-28)
     e.values["reauth_ues"] = e.ues_total;
     e.values["extra"] = hits_.count(e.cell_id, "extra");
     e.values["evicted"] = hits_.evicted(e.cell_id, raise, e.t);
@@ -91,12 +91,18 @@ void SecReauthRule::decorate(std::size_t from, RuleOutput& out, const AlertUe* h
 
 // 새 세션 (14_ §7 hello): 진행 중 경보를 END(session_reset)로 끝내고 걸림·연결 기록을 모두 버린다
 void SecReauthRule::on_session_reset(const UeRuleCtx&, RuleOutput& out) {
+  const std::size_t from = out.alerts.size();
   hits_.end_all("session_reset", out.alerts);
+  decorate(from, out);  // END에도 누적값 (14_ §8.3 — 11/04 Q-69 W-28)
   hits_.reset();
   reauth_n_.clear();
 }
 
 // 입력 침묵 (14_ §6.2 — Q-45): 진행 중 경보를 END(input_silent)로 끝낸다. 걸림·셀 기록은 그대로
-void SecReauthRule::on_input_silent(const UeRuleCtx&, RuleOutput& out) { hits_.end_all("input_silent", out.alerts); }
+void SecReauthRule::on_input_silent(const UeRuleCtx&, RuleOutput& out) {
+  const std::size_t from = out.alerts.size();
+  hits_.end_all("input_silent", out.alerts);
+  decorate(from, out);  // END에도 누적값 (14_ §8.3 — 11/04 Q-69 W-28)
+}
 
 }  // namespace detect

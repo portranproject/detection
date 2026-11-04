@@ -93,7 +93,10 @@ void IdentityRequestRule::decorate(std::size_t from, RuleOutput& out, const Aler
       if (hit && has(hit->cond, kCondKnown)) b1 = true;
     }
     e.branch = b1 ? "1" : "2";
-    if (!raise && e.kind != AlertEventKind::Update) continue;
+    if (!raise && e.kind != AlertEventKind::Update) {  // clear·end — 누적값(evicted)만 (14_ §8.3 — 11/04 Q-69 W-28). 창 안 수는 싣지 않는다
+      e.values["evicted"] = hits_.evicted(e.cell_id, false, e.t);
+      continue;
+    }
     const int64_t idreq_w = hits_.window(e.cell_id);
     const int64_t known_w = hits_.window_with(e.cell_id, kCondKnown);
     e.values["idreq_w"] = idreq_w;

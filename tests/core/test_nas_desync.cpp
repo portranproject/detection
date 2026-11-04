@@ -471,6 +471,7 @@ TEST(NasDesync, T16Clear) {
     EXPECT_EQ(h.alerts[1].t, kT0 + kB + 60100);
     EXPECT_EQ(h.logs[1], "ALERT CLEAR rule=L3-06 cell=1 t=" + std::to_string(kT0 + kB + 60100) +
                              " duration_ms=60000 ues_total=1");
+    EXPECT_EQ(h.alerts[1].values.dump(), extra ? R"({"extra":1,"held":0,"evicted":0})" : R"({"extra":0,"held":0,"evicted":0})");  // 11/04
     if (extra) {
       EXPECT_EQ(h.mark(3, 1)->extra, 1);
     }

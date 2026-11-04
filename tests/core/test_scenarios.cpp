@@ -98,7 +98,7 @@ std::vector<AlertEvent> replay(const std::string& path) {
 
 // 기대 파일과 비교: 경보마다 kind·rule(없으면 L3-01-V)·cell·t_rel_ms는 늘, mode(RAISE)·severity·branch·reason·alert_kind·
 // conditions(3단계 성립 전제 — 20_ §1.3, 배열이면 그 이벤트에 그 값이 실렸는지)·candidates(raise의 후보 — 4단계는 후보가
-// 경보의 뜻이라 데이터로도 본다, 21_ §1)·ues_total(지금까지 걸린 UE 수 — CLEAR 뒤 옛 걸림 재수록 회귀, 이슈 #84)는 기대 파일에 있으면 본다. exact_time이면 기대 파일의 tolerance_ms를 쓰지 않고 시각을 정확히 비교한다(2단계부터)
+// 경보의 뜻이라 데이터로도 본다, 21_ §1)·ues_total(지금까지 걸린 UE 수 — CLEAR 뒤 옛 걸림 재수록 회귀, 이슈 #84)·values(부분 객체 — 적은 키만, clear·end 누적값 — 이슈 #86)는 기대 파일에 있으면 본다. exact_time이면 기대 파일의 tolerance_ms를 쓰지 않고 시각을 정확히 비교한다(2단계부터)
 void check_dataset(const std::string& name, bool exact_time) {
   const std::string base = std::string(DETECT_SCENARIO_DIR) + "/" + name;
   std::ifstream ef(base + kSuffix);
@@ -147,6 +147,12 @@ void check_dataset(const std::string& name, bool exact_time) {
     }
     if (w.contains("ues_total")) {  // 지금까지 걸린 UE 수 (14_ §8.3) — CLEAR 뒤 옛 걸림 재수록 회귀를 잡는다 (이슈 #84)
       EXPECT_EQ(g.ues_total, w.at("ues_total").get<int64_t>()) << "#" << i;
+    }
+    if (w.contains("values")) {  // 경보 값 가운데 기대 파일에 적은 키만 — clear·end의 누적값 (14_ §8.3, 11/04 Q-69 — 이슈 #86)
+      for (const auto& [k, v] : w.at("values").items()) {
+        const nlohmann::json got = g.values.is_object() && g.values.contains(k) ? nlohmann::json(g.values.at(k)) : nlohmann::json();
+        EXPECT_EQ(got, v) << "#" << i << " values." << k;
+      }
     }
   }
 }

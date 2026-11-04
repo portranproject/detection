@@ -519,6 +519,8 @@ TEST(CapHijack, T17Clear) {
   EXPECT_EQ(h.alerts[2].branch, std::optional<std::string>("2"));
   EXPECT_EQ(h.logs[2], "ALERT CLEAR rule=L3-14 cell=1 t=" + std::to_string(kT0 + kB + 60600) +
                            " duration_ms=60500 ues_total=2");
+  // clear에도 누적값 (20_ §4.6, 14_ §8.3 — 11/04 Q-69 W-28)
+  EXPECT_EQ(h.alerts[2].values.dump(), R"({"branch1_ues":1,"branch2_ues":1,"extra":0,"held":0,"evicted":0})");
 }
 
 // L14-T18 (Q-56): T3 RAISE 뒤 상태표 밀어내기 — 마지막 걸림 + 60 s에도 CLEAR하지 않고 밀어내기 뒤 60 s에 푼다(상한 100)

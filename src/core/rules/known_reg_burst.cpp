@@ -41,8 +41,8 @@ int64_t KnownRegBurstRule::evidence_horizon_ms() const { return 1000 + alert_.up
 // ue_evt 한 줄 (21_ §8.3-1): RegistrationRequest(UL)의 reg_type이 mobility이고, 등록 요청의 S-TMSI(NAS f.s_tmsi)나 RRCSetupComplete의
 // 48비트(RRC) 가운데 하나라도 '최근 본 UE'면 걸린다 — 맞은 쪽 값을 걸림 키로, 둘 다 맞으면 NAS 쪽(11/04 구현 때 정함, AN-02와 같은
 // RRC 또는 NAS). reg_type이 없거나 initial·periodic·emergency면 세지 않는다. 같은 연결의 등록 요청 재전송은 다시 세지 않는다.
-// 이미 걸린 S-TMSI가 회복 전이면(마지막 걸리는 이동 등록 뒤 W 안 — 새 연결이어도) 새 칸 없이 경보 values.extra만 늘린다(11/04 사용자
-// 결정 — 창 안 수는 서로 다른 S-TMSI). mid_join이어도 판정한다(uncertain에 남음). UE 칸 values는 걸릴 때 값(§1.1)
+// 이미 걸린 S-TMSI가 회복 전이면(마지막 걸리는 이동 등록 뒤 W 안 — 새 연결이어도, 경보가 열려 있음) 새 칸 없이 경보 values.extra를
+// 늘리고 해제 시계를 늘린다(11/04 사용자 결정 — 창 안 수는 서로 다른 S-TMSI, Q-69 (가)). CLEAR 뒤면 회복한 것으로 본다. mid_join이어도 판정한다(uncertain에 남음). UE 칸 values는 걸릴 때 값(§1.1)
 void KnownRegBurstRule::on_ue_event(const UeEvt& evt, const UeState&, const UeState& after, const UeRuleCtx& ctx,
                                     RuleOutput&) {
   if (evt.proto != Proto::NAS || evt.dir != Dir::UL || evt.msg != kRegReq) return;
@@ -64,12 +64,14 @@ void KnownRegBurstRule::on_ue_event(const UeEvt& evt, const UeState&, const UeSt
   const int64_t cell = after.key.cell_id;
   const UeId id{UeKey{cell, kKey48}, static_cast<int64_t>(*s)};
   if (auto lr = last_reg_.find(id); lr != last_reg_.end()) {
-    if (evt.t_ms - lr->second < cfg_.window_ms) {
+    if (evt.t_ms - lr->second < cfg_.window_ms && hits_.active(id)) {
+      // 회복 전 재등록 (21_ §8.3-1·§8.5 — 11/04 Q-69 (가)): 경보 values.extra로 세고 해제 시계(마지막 성립)를 늘린다
       lr->second = evt.t_ms;
       hits_.add(id, "extra");
+      hits_.touch(id, evt.t_ms);
       return;
     }
-    hits_.forget(id);  // 회복 — 같은 S-TMSI가 다시 오면 새 UE로 싣는다
+    hits_.forget(id);  // 회복 — 창 W 동안 조용했거나 경보가 CLEAR됐다(21_ §8.3-1). 같은 S-TMSI가 다시 오면 새 UE로 싣는다
     last_reg_.erase(lr);
   }
   AlertUe u = alert_ue(after);
@@ -112,15 +114,18 @@ void KnownRegBurstRule::decorate(std::size_t from, RuleOutput& out, const AlertU
                                                                                                 // 이번 걸림을 쓰지 않는다
   for (std::size_t i = from; i < out.alerts.size(); ++i) {
     AlertEvent& e = out.alerts[i];
-    if (e.kind != AlertEventKind::Raise && e.kind != AlertEventKind::Update) continue;
     const bool raise = e.kind == AlertEventKind::Raise;
+    const bool update = e.kind == AlertEventKind::Update;
     const int64_t reg_w = hits_.window(e.cell_id);
     auto known_is = [](const char* k) {
       return [k](const AlertUe& u) { return u.values.contains("known") && u.values.at("known") == k; };
     };
-    e.values["reg_w"] = reg_w;
-    e.values["known_src"] = {{"alloc", hits_.window_if(e.cell_id, known_is("alloc"))},
-                             {"history", hits_.window_if(e.cell_id, known_is("history"))}};
+    // raise·update는 창 안 수 + 누적값, clear·end는 누적값만 (21_ §8.6, 14_ §8.3 — 11/04 Q-69 W-28)
+    if (raise || update) {
+      e.values["reg_w"] = reg_w;
+      e.values["known_src"] = {{"alloc", hits_.window_if(e.cell_id, known_is("alloc"))},
+                               {"history", hits_.window_if(e.cell_id, known_is("history"))}};
+    }
     e.values["extra"] = hits_.count(e.cell_id, "extra");
     e.values["evicted"] = hits_.evicted(e.cell_id, raise, e.t);
     if (!raise) continue;
@@ -140,13 +145,19 @@ void KnownRegBurstRule::decorate(std::size_t from, RuleOutput& out, const AlertU
 
 // 새 세션 (14_ §7 hello): 진행 중 경보를 END(session_reset)로 끝내고 걸림·S-TMSI·연결 기록을 모두 버린다
 void KnownRegBurstRule::on_session_reset(const UeRuleCtx&, RuleOutput& out) {
+  const std::size_t from = out.alerts.size();
   hits_.end_all("session_reset", out.alerts);
+  decorate(from, out);  // END에도 누적값 (14_ §8.3 — 11/04 Q-69 W-28)
   hits_.reset();
   last_reg_.clear();
   seen_.clear();
 }
 
 // 입력 침묵 (14_ §6.2 — Q-45): 진행 중 경보를 END(input_silent)로 끝낸다. 걸림·셀 기록은 그대로
-void KnownRegBurstRule::on_input_silent(const UeRuleCtx&, RuleOutput& out) { hits_.end_all("input_silent", out.alerts); }
+void KnownRegBurstRule::on_input_silent(const UeRuleCtx&, RuleOutput& out) {
+  const std::size_t from = out.alerts.size();
+  hits_.end_all("input_silent", out.alerts);
+  decorate(from, out);  // END에도 누적값 (14_ §8.3 — 11/04 Q-69 W-28)
+}
 
 }  // namespace detect

@@ -62,7 +62,8 @@ ShortRepeatRule::ShortRepeatRule(ShortRepeatConfig cfg, AlertConfig alert)
 int64_t ShortRepeatRule::evidence_horizon_ms() const { return 1000 + alert_.update_min_ms; }
 
 // 닫힘 (21_ §6.3-1·2): 판정하는 이유로 닫혔고 CONNECTED에 닿았고 길이 ≤ short_ms이고 S-TMSI(48비트 또는 Part1)를 알면 후보다.
-// 이미 걸린 S-TMSI가 회복 전이면(마지막 짧은 연결 뒤 W 안) 새 칸 없이 경보 values.extra만 늘린다. 아니면 이력 표에서 (t − W, t] 안
+// 이미 걸린 S-TMSI가 회복 전이면(마지막 짧은 연결 뒤 W 안, 경보가 열려 있음) 새 칸 없이 경보 values.extra를 늘리고 해제 시계를
+// 늘린다(11/04 Q-69 (가)). CLEAR 뒤면 회복한 것으로 본다. 아니면 이력 표에서 (t − W, t] 안
 // 같은 S-TMSI의 짧은 연결(CONNECTED, 판정 이유, 길이 ≤ S — 이 연결 포함) 수 K를 세어 K ≥ N이면 걸린다(t_hit = 닫힌 시각).
 // 48비트를 알면 48비트 색인, Part1만 알면 Part1 색인으로 센다(§1.3). UE 칸 values는 걸릴 때 값(§1.1)
 void ShortRepeatRule::on_ue_close(const UeState& last, CloseReason reason, int64_t t, const UeRuleCtx& ctx,
@@ -74,12 +75,14 @@ void ShortRepeatRule::on_ue_close(const UeState& last, CloseReason reason, int64
   const UeId id = last.s_tmsi ? UeId{UeKey{cell, kKey48}, static_cast<int64_t>(*last.s_tmsi)}
                               : UeId{UeKey{cell, kKeyPart1}, static_cast<int64_t>(*p1)};
   if (auto ls = last_short_.find(id); ls != last_short_.end()) {
-    if (t - ls->second < cfg_.window_ms) {
+    if (t - ls->second < cfg_.window_ms && hits_.active(id)) {
+      // 회복 전 반복 (21_ §6.3-2·§6.5 — 11/04 Q-69 (가)): 경보 values.extra로 세고 해제 시계를 늘린다 — 공격이 이어지는 동안 경보가 열려 있다
       ls->second = t;
       hits_.add(id, "extra");
+      hits_.touch(id, t);
       return;
     }
-    hits_.forget(id);  // 회복 — 같은 S-TMSI가 다시 반복하면 새 UE로 싣는다
+    hits_.forget(id);  // 회복 — 창 W 동안 조용했거나 경보가 CLEAR됐다(21_ §6.3-2). 같은 S-TMSI가 다시 반복하면 새 UE로 싣는다
     last_short_.erase(ls);
   }
   const int64_t since = t - cfg_.window_ms + 1;
@@ -124,8 +127,8 @@ void ShortRepeatRule::on_cell_tick(int64_t cell, const Kpm2& k, const CellLoss&,
 void ShortRepeatRule::decorate(std::size_t from, RuleOutput& out, const AlertUe* hit) {
   for (std::size_t i = from; i < out.alerts.size(); ++i) {
     AlertEvent& e = out.alerts[i];
-    if (e.kind != AlertEventKind::Raise && e.kind != AlertEventKind::Update) continue;
     const bool raise = e.kind == AlertEventKind::Raise;
+    // raise·update·clear·end 모두 누적값 (21_ §6.6, 14_ §8.3 — 11/04 Q-69 W-28: 지속 공격의 extra가 CLEAR에 남게)
     e.values["short_ues"] = e.ues_total;
     e.values["extra"] = hits_.count(e.cell_id, "extra");
     e.values["evicted"] = hits_.evicted(e.cell_id, raise, e.t);
@@ -165,13 +168,19 @@ void ShortRepeatRule::decorate(std::size_t from, RuleOutput& out, const AlertUe*
 
 // 새 세션 (14_ §7 hello): 진행 중 경보를 END(session_reset)로 끝내고 걸림·S-TMSI 기록을 모두 버린다
 void ShortRepeatRule::on_session_reset(const UeRuleCtx&, RuleOutput& out) {
+  const std::size_t from = out.alerts.size();
   hits_.end_all("session_reset", out.alerts);
+  decorate(from, out);  // END에도 누적값 (14_ §8.3 — 11/04 Q-69 W-28)
   hits_.reset();
   last_short_.clear();
   part1_of_.clear();
 }
 
 // 입력 침묵 (14_ §6.2 — Q-45): 진행 중 경보를 END(input_silent)로 끝낸다. 걸림·셀 기록은 그대로
-void ShortRepeatRule::on_input_silent(const UeRuleCtx&, RuleOutput& out) { hits_.end_all("input_silent", out.alerts); }
+void ShortRepeatRule::on_input_silent(const UeRuleCtx&, RuleOutput& out) {
+  const std::size_t from = out.alerts.size();
+  hits_.end_all("input_silent", out.alerts);
+  decorate(from, out);  // END에도 누적값 (14_ §8.3 — 11/04 Q-69 W-28)
+}
 
 }  // namespace detect

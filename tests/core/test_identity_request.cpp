@@ -431,3 +431,15 @@ TEST(IdentityRequest, Branch1CondUnderUesMax) {
   EXPECT_NE(h.logs[0].find(" branch=1 ue=1/2/"), std::string::npos);
   EXPECT_NE(h.logs[0].find(" id_type=5G-GUTI known=1 idreq_w=3 n_idreq=5"), std::string::npos);
 }
+
+// clear 레코드에는 누적값(evicted)만 — 창 안 수 idreq_w·known_w는 싣지 않는다 (14_ §8.3 — 11/04 Q-69 W-28)
+TEST(IdentityRequest, ClearCarriesEvictedOnly) {
+  Harness h;
+  h.play(conn_a(1000) + guti_head(5000, 2, kS, kS) + std::vector<L>{idreq(5096, 2)});
+  h.tick_to(65100);
+  ASSERT_EQ(h.alerts.size(), 2u);
+  EXPECT_EQ(h.alerts[1].kind, AlertEventKind::Clear);
+  EXPECT_EQ(h.alerts[1].t, kT0 + 65100);
+  EXPECT_EQ(h.alerts[1].values.dump(), R"({"evicted":0})");
+  EXPECT_EQ(h.alerts[1].branch, std::optional<std::string>("1"));
+}

@@ -45,8 +45,8 @@ int64_t SetupRepeatRule::evidence_horizon_ms() const { return 1000 + alert_.upda
 
 // 닫힘 (21_ §7.3-1·2): CONNECTED에 닿지 못했고, 이 연결에서 RRCReject를 보지 않았고(11/04 사용자 결정 — rrc는 거절 뒤 해제 명령으로
 // RELEASING이 되므로 '거절을 봤는지'로 본다), 판정하는 이유로 닫혔고, RRCSetupRequest에 Part1이 있었으면 후보다. mid_join은
-// RRCSetupRequest가 없어 Part1이 없으므로 자연히 빠진다. 이미 걸린 Part1이 회복 전이면(마지막 미완료 연결 뒤 W 안) 새 칸 없이 경보
-// values.extra만 늘린다. 아니면 이력 표 Part1 색인에서 (t − W, t] 안 같은 Part1의 미완료(connected false)·거절 없음(rejected false)·
+// RRCSetupRequest가 없어 Part1이 없으므로 자연히 빠진다. 이미 걸린 Part1이 회복 전이면(마지막 미완료 연결 뒤 W 안, 경보가 열려 있음) 새 칸 없이 경보
+// values.extra를 늘리고 해제 시계를 늘린다(11/04 Q-69 (가)). CLEAR 뒤면 회복한 것으로 본다. 아니면 이력 표 Part1 색인에서 (t − W, t] 안 같은 Part1의 미완료(connected false)·거절 없음(rejected false)·
 // 판정 이유 레코드 수 K(이 연결 포함)를 세어 K ≥ N이면 걸린다(t_hit = 닫힌 시각). UE 칸 values는 걸릴 때 값(§1.1)
 void SetupRepeatRule::on_ue_close(const UeState& last, CloseReason reason, int64_t t, const UeRuleCtx& ctx,
                                   RuleOutput&) {
@@ -56,12 +56,14 @@ void SetupRepeatRule::on_ue_close(const UeState& last, CloseReason reason, int64
   const int64_t cell = last.key.cell_id;
   const UeId id{UeKey{cell, kKeyPart1}, static_cast<int64_t>(p1)};
   if (auto lf = last_fail_.find(id); lf != last_fail_.end()) {
-    if (t - lf->second < cfg_.window_ms) {
+    if (t - lf->second < cfg_.window_ms && hits_.active(id)) {
+      // 회복 전 반복 (21_ §7.3-2·§7.5 — 11/04 Q-69 (가)): 경보 values.extra로 세고 해제 시계를 늘린다
       lf->second = t;
       hits_.add(id, "extra");
+      hits_.touch(id, t);
       return;
     }
-    hits_.forget(id);  // 회복 — 같은 Part1이 다시 반복하면 새 UE로 싣는다
+    hits_.forget(id);  // 회복 — 창 W 동안 조용했거나 경보가 CLEAR됐다(21_ §7.3-2). 같은 Part1이 다시 반복하면 새 UE로 싣는다
     last_fail_.erase(lf);
   }
   const auto recs = ctx.table.history_part1(p1, t - cfg_.window_ms + 1);
@@ -103,8 +105,8 @@ void SetupRepeatRule::on_cell_tick(int64_t cell, const Kpm2& k, const CellLoss&,
 void SetupRepeatRule::decorate(std::size_t from, RuleOutput& out, const AlertUe* hit) {
   for (std::size_t i = from; i < out.alerts.size(); ++i) {
     AlertEvent& e = out.alerts[i];
-    if (e.kind != AlertEventKind::Raise && e.kind != AlertEventKind::Update) continue;
     const bool raise = e.kind == AlertEventKind::Raise;
+    // raise·update·clear·end 모두 누적값 (21_ §7.6, 14_ §8.3 — 11/04 Q-69 W-28)
     e.values["fail_ues"] = e.ues_total;
     e.values["extra"] = hits_.count(e.cell_id, "extra");
     e.values["evicted"] = hits_.evicted(e.cell_id, raise, e.t);
@@ -129,12 +131,18 @@ void SetupRepeatRule::decorate(std::size_t from, RuleOutput& out, const AlertUe*
 
 // 새 세션 (14_ §7 hello): 진행 중 경보를 END(session_reset)로 끝내고 걸림·Part1 기록을 모두 버린다
 void SetupRepeatRule::on_session_reset(const UeRuleCtx&, RuleOutput& out) {
+  const std::size_t from = out.alerts.size();
   hits_.end_all("session_reset", out.alerts);
+  decorate(from, out);  // END에도 누적값 (14_ §8.3 — 11/04 Q-69 W-28)
   hits_.reset();
   last_fail_.clear();
 }
 
 // 입력 침묵 (14_ §6.2 — Q-45): 진행 중 경보를 END(input_silent)로 끝낸다. 걸림·셀 기록은 그대로
-void SetupRepeatRule::on_input_silent(const UeRuleCtx&, RuleOutput& out) { hits_.end_all("input_silent", out.alerts); }
+void SetupRepeatRule::on_input_silent(const UeRuleCtx&, RuleOutput& out) {
+  const std::size_t from = out.alerts.size();
+  hits_.end_all("input_silent", out.alerts);
+  decorate(from, out);  // END에도 누적값 (14_ §8.3 — 11/04 Q-69 W-28)
+}
 
 }  // namespace detect

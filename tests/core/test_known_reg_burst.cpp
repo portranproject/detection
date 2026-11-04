@@ -296,6 +296,7 @@ TEST(KnownRegBurst, T07Clear) {
   ASSERT_EQ(h.alerts.size(), 2u);
   EXPECT_EQ(h.alerts[1].kind, AlertEventKind::Clear);
   EXPECT_EQ(h.logs[1], "ALERT CLEAR rule=AN-08 cell=1 t=" + std::to_string(kT0 + 221100) + " duration_ms=60000 ues_total=5");
+  EXPECT_EQ(h.alerts[1].values.dump(), R"({"extra":0,"evicted":0})");  // clear에는 누적값만 — 창 안 수는 없다 (14_ §8.3, 11/04)
 }
 
 // AN08-T8 (11/04 사용자 결정 — 서로 다른 S-TMSI 수): S1이 이동 등록을 10 s 간격 5번(실패 뒤 T3511 재시도 — 연결마다 새 du) — 서로
@@ -441,4 +442,25 @@ TEST(KnownRegBurst, EndOnSessionResetAndInputSilent) {
 TEST(KnownRegBurst, EvidenceHorizon) {
   Harness h;
   EXPECT_EQ(h.rule->evidence_horizon_ms(), 2000);
+}
+
+// 지속 공격 (21_ §8.3-1·§8.5 — 11/04 Q-69 (가), 이슈 #86): S1~S5가 20 s 간격으로 12회씩 이동 등록 — 5번째(129,020)에서 RAISE, 그 뒤
+// 회복 전 재등록 55회가 extra이고 반복마다 마지막 성립 시각이 밀려 공격 내내 경보 하나. CLEAR는 마지막 재등록(349,020) + 60 s,
+// CLEAR values extra 55. 재생 데이터 SAN08_AN-08_지속공격_CLEAR
+TEST(KnownRegBurst, SustainedRepeatKeepsAlertOpen) {
+  Harness h;
+  std::vector<L> v = AllocAll();
+  int64_t du = 100;
+  for (int k = 0; k < 12; ++k)
+    for (int i = 1; i <= 5; ++i) v = v + Mob(121000 + 20000 * k + 2000 * (i - 1), du++, S(i), S(i));
+  h.play(v);
+  h.tick_to(409000);
+  ASSERT_EQ(h.alerts.size(), 1u);
+  EXPECT_EQ(h.alerts[0].t, kT0 + 129100);
+  h.tick_to(409100);
+  ASSERT_EQ(h.alerts.size(), 2u);
+  EXPECT_EQ(h.alerts[1].kind, AlertEventKind::Clear);
+  EXPECT_EQ(h.alerts[1].t, kT0 + 409100);
+  EXPECT_EQ(h.alerts[1].ues_total, 5);
+  EXPECT_EQ(h.alerts[1].values.dump(), R"({"extra":55,"evicted":0})");
 }
