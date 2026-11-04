@@ -14,6 +14,7 @@
   "retry_initial_ms": 1000,
   "retry_max_ms": 60000,
   "stats_interval_ms": 60000,
-  "kpm2_interval_ms": 0,
-  "send_ue_evt": false
+  "kpm2_interval_ms": 3000,
+  "send_ue_evt": false,
+  "kpm2_close_lag_ms": 2000
 }

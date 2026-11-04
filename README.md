@@ -68,6 +68,8 @@ python3 tools/dashboard_sender.py --config config/sender.json --dry-run
 - 설정 `config/sender.json`: 수집 주소 `url`, 대시보드 자체 서명 인증서 `ca_file`(저장소 밖에 둔다 — 받기 전에는 `null`이라 TLS 검증에 실패한다), 환경 헤더 `env`(`X-Env`). 토큰은 쓰지 않는다.
 - 보낸 위치는 `sender_state.json`에 저장한다(200·400을 받은 뒤에만). 다시 띄우면 그 자리부터 보낸다. 실험마다 깨끗이 보내려면 옛 `evidence.jsonl`을 옮겨 둔다.
 - 전송기가 오류로 끝나도 실행 스크립트는 탐지 엔진을 멈추지 않는다. 끝날 때 `--once`로 남은 줄을 한 번 더 보낸다(최대 60초).
+- **상시 KPM (기본 끔):** 탐지 엔진 설정 `input_record.path`를 `"input.jsonl"`로 켜고, 전송기 설정 `inputs`에 `{"path": "input.jsonl", "kind": "input"}`을 더한다. 그러면 `hello`·`f1_evt`는 줄 그대로, `kpm2`는 셀마다 `kpm2_interval_ms`(기본 3000 = 3초, 1,000의 배수)로 묶은 줄만 보낸다 — 0.1초 원본은 보내지 않는다. `ue_evt`는 `send_ue_evt`가 `true`일 때만. 실행 스크립트는 두 입력 기록 경로가 같은지도 시작 전에 확인한다.
+- 주기는 운영 중에도 바꿀 수 있다 — `kpm2_interval_ms`를 고치고 전송기만 다시 띄운다(`SIGTERM` 뒤 `python3 tools/dashboard_sender.py --config …`). 탐지 엔진은 계속 돈다.
 - 종료 코드: 0 정상, 1 설정 오류, 2 약속에 없는 응답(주소·권한·보안 그룹 확인), 3 TLS 검증 실패(`ca_file`·`url` 확인), 4 상태 파일 저장 실패, 5 같은 `state_path`를 다른 전송기가 쓰는 중.
 
 - `third_party/nlohmann/json.hpp`: nlohmann/json 3.11.3 (MIT), 저장소에 동봉

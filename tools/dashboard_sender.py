@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """전송기 — 탐지 엔진 증거 파일(evidence.jsonl)의 새 줄을 대시보드 /ingest로 보낸다 (19_ 전송기 명세서).
+상시 KPM (24_ §4·§5): inputs에 kind input(탐지 엔진 입력 기록 input.jsonl)이 있으면 그 파일도 따라 읽어 hello·f1_evt·ue_evt는
+줄 그대로, kpm2는 셀마다 kpm2_interval_ms(기본 3초)로 묶은 줄만 보낸다 — 0.1초 원본 kpm2는 보내지 않는다.
 
 실행 (19_ §2.2):
   python3 tools/dashboard_sender.py --config config/sender.json            # 계속 따라 읽으며 보냄
@@ -20,6 +22,7 @@ import datetime
 import fcntl
 import http.client
 import json
+import math
 import os
 import re
 import signal
@@ -92,8 +95,9 @@ DEFAULTS = {
     "retry_initial_ms": 1000,
     "retry_max_ms": 60000,
     "stats_interval_ms": 60000,
-    "kpm2_interval_ms": 0,
+    "kpm2_interval_ms": 3000,   # 상시 KPM 묶음 주기 — 기본 3초 (24_ §4.1, 11/04 사용자 결정)
     "send_ue_evt": False,
+    "kpm2_close_lag_ms": 2000,  # 다른 셀 줄로 칸을 닫을 때의 데이터 시각 여유 (24_ §5.3 ②)
 }
 
 # 정수 키의 허용 범위 — 19_ §3 표. retry_max_ms는 retry_initial_ms에 따라 정해져 아래에서 따로 본다
@@ -106,6 +110,7 @@ INT_RANGES = {
     "timeout_ms": (1000, 120000),
     "retry_initial_ms": (100, 60000),
     "stats_interval_ms": (0, 3600000),
+    "kpm2_close_lag_ms": (100, 60000),  # 24_ §4.1
 }
 
 ENV_RE = re.compile(r"[a-z0-9-]{1,32}")
@@ -169,11 +174,12 @@ def load_config(path):
         raise ConfigError("env: must match [a-z0-9-]{1,32}")
     cfg["env"] = env
 
-    # 따라 읽을 파일 — 지금은 kind evidence만. input(상시 KPM)은 다음 단계라 경고 후 건너뛴다 (19_ §8)
+    # 따라 읽을 파일 — evidence 1개 이상(반드시) + input 0~1개. input 항목이 있으면 상시 KPM이 켜진다 (24_ §4.1)
     inputs = val("inputs")
     if not isinstance(inputs, list) or not inputs:
         raise ConfigError("inputs: must be a non-empty array")
     ev_inputs = []
+    in_inputs = []
     seen = set()
     for i, it in enumerate(inputs):
         if not isinstance(it, dict):
@@ -187,17 +193,15 @@ def load_config(path):
             raise ConfigError(f"inputs[{i}].path: must be a non-empty string")
         if kind not in ("evidence", "input"):
             raise ConfigError(f"inputs[{i}].kind: must be evidence|input")
-        if kind == "input":
-            warnings.append(f"inputs[{i}] kind=input is a next-stage feature (19_ §8) — skipped")
-            continue
         ap = os.path.abspath(p)
         if ap in seen:
             raise ConfigError(f"inputs[{i}].path: duplicate {ap}")
         seen.add(ap)
-        ev_inputs.append({"path": p, "abspath": ap})
+        (in_inputs if kind == "input" else ev_inputs).append({"path": p, "abspath": ap, "kind": kind})
     if not ev_inputs:
         raise ConfigError("inputs: no kind=evidence entry")
-    cfg["inputs"] = ev_inputs
+    if len(in_inputs) > 1:
+        raise ConfigError("inputs: at most one kind=input entry (24_ §4.1)")
 
     sp = val("state_path")
     if not isinstance(sp, str) or not sp:
@@ -223,19 +227,22 @@ def load_config(path):
         raise ConfigError(f"retry_max_ms: must be an integer in retry_initial_ms({cfg['retry_initial_ms']})..600000")
     cfg["retry_max_ms"] = v
 
-    # 상시 KPM 자리 — 지금은 0·false만. 다른 값이면 경고 후 끈다 (19_ §3·§8)
+    # 상시 KPM (24_ §4.1): 묶음 주기는 0(kpm2 안 보냄) 또는 1,000의 배수 — 0.1초 원본 그대로 보내는 값은 없다(11/04).
+    # 1,000의 배수면 분석 엔진이 쓸 수 있는 주기(1000을 나누는 값, 22_ §2)가 모두 N을 나눈다. 값은 input 항목이 없어도 검사한다
     v = val("kpm2_interval_ms")
-    if not _is_int(v) or v < 0:
-        raise ConfigError("kpm2_interval_ms: must be a non-negative integer")
-    if v != 0:
-        warnings.append(f"kpm2_interval_ms={v} is a next-stage feature (19_ §8) — using 0")
-    cfg["kpm2_interval_ms"] = 0
+    if not _is_int(v) or not (v == 0 or (1000 <= v <= 600000 and v % 1000 == 0)):
+        raise ConfigError("kpm2_interval_ms: must be 0 or a multiple of 1000 in 1000..600000")
+    cfg["kpm2_interval_ms"] = v
     v = val("send_ue_evt")
     if not isinstance(v, bool):
         raise ConfigError("send_ue_evt: must be a boolean")
-    if v:
-        warnings.append("send_ue_evt=true is a next-stage feature (19_ §8) — using false")
-    cfg["send_ue_evt"] = False
+    cfg["send_ue_evt"] = v
+    # 켜고 끄기 = input 항목 (24_ §4.1): 없으면 위 두 값은 쓰이지 않는다. 있는데 보낼 것이 없으면 경고하고 따라 읽지 않는다
+    if in_inputs and cfg["kpm2_interval_ms"] == 0 and not cfg["send_ue_evt"]:
+        warnings.append("inputs: kind=input entry ignored — kpm2_interval_ms is 0 and send_ue_evt is false (24_ §4.1)")
+        in_inputs = []
+    # evidence를 앞에 — 파일을 번갈아 보내므로 입력이 밀려 있어도 경보 묶음은 입력 묶음 하나 이상 기다리지 않는다 (24_ §4.2)
+    cfg["inputs"] = ev_inputs + in_inputs
     return cfg, warnings
 
 
@@ -253,8 +260,11 @@ def make_tls_context(ca_file):
 
 def check_detector_config(cfg, det_cfg_path):
     """탐지 엔진 설정의 evidence.out_path와 전송기 입력 경로를 절대 경로로 비교한다. 같으면 0, 다르면 1.
-    '-'면 탐지 엔진 기본값. evidence.mode가 off면 경고만 한다 (19_ §2.1 시작 전 확인 1~4)."""
+    '-'면 탐지 엔진 기본값. evidence.mode가 off면 경고만 한다 (19_ §2.1 시작 전 확인 1~4).
+    전송기에 kind input 항목이 있으면 탐지 엔진 input_record.path도 같아야 한다 — null이거나 다르면 1. 전송기에 input 항목이
+    없는데 탐지 엔진이 기록하면 경고만 (24_ §7 표)."""
     out_path, mode = DETECTOR_DEFAULT_OUT, DETECTOR_DEFAULT_MODE
+    rec_path = None  # include/detect/config.h InputRecordConfig::path 기본값 — 끔
     if det_cfg_path != "-":
         try:
             with open(det_cfg_path, encoding="utf-8") as f:
@@ -274,14 +284,36 @@ def check_detector_config(cfg, det_cfg_path):
         if not isinstance(out_path, str) or not isinstance(mode, str):
             log("ERROR", "check_paths", detail=f"detector config {det_cfg_path}: evidence.out_path/mode not a string")
             return EXIT_CONFIG
+        ir = raw.get("input_record", {})
+        if not isinstance(ir, dict) or not (ir.get("path") is None or isinstance(ir.get("path"), str)):
+            log("ERROR", "check_paths", detail=f"detector config {det_cfg_path}: input_record.path not a string or null")
+            return EXIT_CONFIG
+        rec_path = ir.get("path")
+    det_name = det_cfg_path if det_cfg_path != "-" else "defaults"
     det_abs = os.path.realpath(os.path.abspath(out_path))
-    snd = [os.path.realpath(i["abspath"]) for i in cfg["inputs"]]
+    snd = [os.path.realpath(i["abspath"]) for i in cfg["inputs"] if i["kind"] == "evidence"]
     ok = det_abs in snd
-    log("INFO" if ok else "ERROR", "check_paths",
-        detector_config=det_cfg_path if det_cfg_path != "-" else "defaults",
+    log("INFO" if ok else "ERROR", "check_paths", detector_config=det_name,
         detector_out=det_abs, sender_inputs=",".join(snd), result="match" if ok else "mismatch")
     if not ok:
         return EXIT_CONFIG
+    # 입력 기록 파일 (24_ §7): 전송기가 따라 읽는 input 파일 = 탐지 엔진이 쓰는 기록 파일
+    snd_in = [os.path.realpath(i["abspath"]) for i in cfg["inputs"] if i["kind"] == "input"]
+    if snd_in:
+        if rec_path is None:
+            log("ERROR", "check_input_path", detector_config=det_name, detector_input_record="null",
+                sender_input=snd_in[0], result="not_recording",
+                detail="detector does not record input (input_record.path is null)")
+            return EXIT_CONFIG
+        det_in = os.path.realpath(os.path.abspath(rec_path))
+        ok = det_in == snd_in[0]
+        log("INFO" if ok else "ERROR", "check_input_path", detector_config=det_name, detector_input_record=det_in,
+            sender_input=snd_in[0], result="match" if ok else "mismatch")
+        if not ok:
+            return EXIT_CONFIG
+    elif rec_path is not None:
+        log("WARN", "input_not_sent", detector_input_record=os.path.realpath(os.path.abspath(rec_path)),
+            detail="detector records input but the sender has no kind=input entry")
     if mode == "off":
         log("WARN", "evidence_mode_off", detail="detector evidence.mode=off writes no evidence file — nothing to send")
     return EXIT_OK
@@ -305,20 +337,25 @@ class Fatal(Exception):
 
 
 class Entry:
-    """파일의 줄 하나. data가 None이면 보내지 않고 위치만 넘기는 줄(빈 줄·빼는 줄)."""
-    __slots__ = ("start", "end", "data", "t")
+    """파일의 줄 하나. data가 None이면 보내지 않고 위치만 넘기는 줄(빈 줄·빼는 줄).
+    safe = 이 줄까지 대시보드가 받으면 저장해도 되는 위치 — evidence는 end. input은 열린 칸의 첫 줄 앞을 넘지 않는다(24_ §4.3).
+    key = 묶은 kpm2 줄이면 그 칸 (session, cell, t_start) — 받은 뒤 '보낸 칸'으로 남긴다."""
+    __slots__ = ("start", "end", "data", "t", "safe", "key")
 
-    def __init__(self, start, end, data, t):
+    def __init__(self, start, end, data, t, key=None):
         self.start, self.end, self.data, self.t = start, end, data, t
+        self.safe = end
+        self.key = key
 
 
 class Batch:
-    """한 파일의 연속된 줄 묶음 — 파일 위치 [start, end) (19_ §5.1)."""
+    """한 파일의 연속된 줄 묶음 — 파일 위치 [start, end) (19_ §5.1). safe는 받으면 저장할 위치(마지막 줄의 safe)."""
 
     def __init__(self, entries):
         self.entries = entries
         self.start = entries[0].start
         self.end = entries[-1].end
+        self.safe = entries[-1].safe
         self.lines = [e.data for e in entries if e.data is not None]
 
     def body(self):
@@ -337,7 +374,10 @@ class Batch:
 
 
 class Tracker:
-    """따라 읽는 파일 하나 — 보낸 위치(acked)·읽은 위치(read_off)와 아직 안 보낸 완성된 줄(pending)."""
+    """따라 읽는 파일 하나 — 보낸 위치(acked)·읽은 위치(read_off)와 아직 안 보낸 완성된 줄(pending).
+    kind evidence는 줄을 바꾸지 않고 그대로 보낸다. kind input은 InputTracker가 줄마다 고르고 kpm2를 묶는다(24_ §4)."""
+    is_input = False
+    agg = None
 
     def __init__(self, cfg, path, abspath):
         self.cfg = cfg
@@ -517,9 +557,16 @@ class Tracker:
                     head=_head(line))
                 self._add(Entry(start, end, None, now))
                 continue
-            self._add(Entry(start, end, line, now))
+            self._line(start, end, line, now)
         del buf[:pos]
         self.buf_off += pos
+
+    def _line(self, start, end, line, now):
+        """완성된 줄 하나 — evidence는 그대로 보낸다. InputTracker가 바꾼다 (24_ §4.2)."""
+        self._add(Entry(start, end, line, now))
+
+    def flush_open(self):
+        """파일 끝에서 열린 칸을 닫는다 — evidence는 할 일 없음 (24_ §5.3 ④)."""
 
     def _add(self, e):
         self.pending.append(e)
@@ -576,6 +623,335 @@ def _last_newline_end(fh, size):
     return 0
 
 
+# ---------------------------------------------------------------- 상시 KPM — kpm2 칸 묶기 (24_ §5)
+
+FAILCAUSE = "RRC.ConnEstabFailCause"  # total 없이 세 원인으로 된 카운터 (22_ §5.1) — 다른 객체 카운터는 total이 있어야 한다
+EXT_MAX = ("UeCtxMax",)                 # 최댓값으로 묶는 ext 이름 (24_ §5.2)
+EXT_SUM = ("DuCannotServe", "CrntiAlloc")  # 합으로 묶는 ext 이름
+# 묶은 줄로 옮기거나 일부러 빼는 맨 위 키 — 이 밖의 키는 처음 한 번 경고 (ue_evt_lost·cov는 11/04 로스 대상 외로 뺌)
+KPM2_KEYS = {"type", "ver", "session", "seq", "cell_id", "t_start_ms", "t_end_ms", "cc", "si", "ext", "ue_evt_lost", "cov"}
+STATE_SENT_MAX = 256  # 상태 파일에 남기는 '보낸 칸' (세션, 셀) 수 — 오래된 세션부터 뺀다
+
+
+def _nonneg_int(v):
+    return _is_int(v) and v >= 0
+
+
+def _nonneg_num(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) and v >= 0
+
+
+def _kpm2_head(obj):
+    """칸을 정하는 값 (24_ §5.1) — 없거나 타입이 틀리면 None(bad_kpm2). 탐지 엔진도 이런 줄은 버린다 (22_ §6)."""
+    s, c, t0, t1, q = (obj.get(k) for k in ("session", "cell_id", "t_start_ms", "t_end_ms", "seq"))
+    if isinstance(s, str) and s and _nonneg_int(c) and _is_int(t0) and _is_int(t1) and _is_int(q) and t1 > t0:
+        return s, c, t0, t1, q
+    return None
+
+
+def _kpm2_values_ok(obj):
+    """카운터·표본 값의 형식 (24_ §5.1, 22_ §5.3·§5.4) — 0 이상 정수(si의 …Mean은 0 이상 수) 또는 null.
+    틀린 값이 있으면 탐지 엔진이 줄 전체를 버리므로 칸에도 넣지 않는다. 묶지 않는 si·ext 이름은 형식을 보지 않는다."""
+    cc = obj.get("cc")
+    if cc is not None:
+        if not isinstance(cc, dict):
+            return False
+        for v in cc.values():
+            if v is None or _nonneg_int(v) or (isinstance(v, dict) and all(_nonneg_int(x) for x in v.values())):
+                continue
+            return False
+    si = obj.get("si")
+    if si is not None:
+        if not isinstance(si, dict):
+            return False
+        for k, v in si.items():
+            if v is None or (k.endswith("Mean") and _nonneg_num(v)) or (k.endswith("Max") and _nonneg_int(v)):
+                continue
+            if k.endswith("Mean") or k.endswith("Max"):
+                return False
+    ext = obj.get("ext")
+    if ext is not None:
+        if not isinstance(ext, dict):
+            return False
+        for k, v in ext.items():
+            if v is not None and k in EXT_MAX + EXT_SUM and not _nonneg_int(v):
+                return False
+    return True
+
+
+class _Bucket:
+    """열린 칸 하나 — (세션, 셀)의 [t0, t0 + N). first_off는 든 첫 원본 줄의 파일 위치(보낸 위치의 상한, 24_ §4.3).
+    cont는 cc·si·ext마다 이름 → {"known": 값을 안 줄 수, "v": 누적} — 이름 순서는 처음 나온 순서."""
+    __slots__ = ("session", "cell", "t0", "first_off", "n", "seq_from", "seq_to", "cont")
+
+    def __init__(self, session, cell, t0, first_off):
+        self.session, self.cell, self.t0, self.first_off = session, cell, t0, first_off
+        self.n = 0
+        self.seq_from = self.seq_to = None
+        self.cont = {"cc": {}, "si": {}, "ext": {}}
+
+
+class KpmAggregator:
+    """kpm2를 (세션, 셀)마다 N ms 칸으로 묶는다 (24_ §5). 칸은 파일 내용만으로 닫는다 — 벽시계를 쓰지 않으므로 같은 파일이면
+    언제·몇 번 보내도 같은 묶은 줄이 나온다(대시보드 중복 키 (환경, session, cell_id, agg_ms, t_start_ms)와 맞물림, §5.3).
+    add·on_hello·flush는 닫은 칸의 (묶은 줄 바이트, (session, cell, t0)) 목록을 닫은 순서대로 돌려준다."""
+
+    def __init__(self, interval_ms, close_lag_ms, warn):
+        self.n_ms = interval_ms
+        self.lag = close_lag_ms
+        self.warn = warn            # warn(한 번만 낼 키, 사건, **값)
+        self.open = {}              # (session, cell) → _Bucket — 셀마다 열린 칸은 하나
+        self.closed_to = {}         # (session, cell) → 이번 실행에서 닫은 마지막 칸 t0 — 그 칸의 늦은 줄은 agg_late
+        self.sent_to = {}           # (session, cell) → 대시보드가 받은(200·400) 마지막 칸 t0 — 상태 파일에 남긴다
+        self.restored = {}          # 상태 파일에서 읽은 sent_to — 다시 읽은 그 칸의 줄은 조용히 건너뛴다(resent)
+        self.last_end = {}          # (session, cell) → 받아들인 마지막 줄 t_end_ms — 겹침·역행 확인
+        self.late = self.resent = 0
+
+    # --- 상태 파일 (24_ §4.3): 재시작 뒤 다시 읽는 줄 가운데 이미 보낸 칸의 줄은 칸을 다시 만들지 않는다 — 여러 셀이 섞이면
+    #     보낸 위치가 다른 셀의 열린 칸 앞에 머물러, 이미 보낸 칸의 뒤쪽 줄만으로 같은 키의 반쪽 줄이 다시 갈 수 있어서다
+
+    def restore(self, st):
+        if not isinstance(st, dict) or st.get("ms") != self.n_ms or not isinstance(st.get("closed"), list):
+            return  # 주기가 바뀌었으면 키(agg_ms)가 달라 겹치지 않는다 — 처음부터 묶는다 (24_ §4.5)
+        for x in st["closed"]:
+            if isinstance(x, list) and len(x) == 3 and isinstance(x[0], str) and _nonneg_int(x[1]) and _is_int(x[2]):
+                self.restored[(x[0], x[1])] = x[2]
+        self.sent_to = dict(self.restored)
+
+    def state(self):
+        items = sorted(self.sent_to.items(), key=lambda kv: kv[1])[-STATE_SENT_MAX:]
+        return {"ms": self.n_ms, "closed": [[s, c, t0] for (s, c), t0 in items]}
+
+    def note_sent(self, key):
+        s, c, t0 = key
+        if t0 > self.sent_to.get((s, c), t0 - 1):
+            self.sent_to[(s, c)] = t0
+
+    # --- 칸
+
+    def min_open_off(self):
+        return min((b.first_off for b in self.open.values()), default=None)
+
+    def drop_open(self):
+        self.open.clear()
+
+    def flush(self):
+        """파일 끝(--once)·파일 교체 — 열린 칸을 모두 닫는다 (24_ §5.3 ④)."""
+        return [self._close(k) for k in list(self.open)]
+
+    def on_hello(self, session):
+        """다른 세션의 hello — 옛 세션의 열린 칸을 모두 닫는다. 같은 세션(다시 접속)이면 닫지 않는다 (24_ §5.3 ③)."""
+        return [self._close(k) for k in [k for k in self.open if k[0] != session]]
+
+    def add(self, off, obj):
+        """원본 kpm2 줄 하나 (24_ §5.1·§5.3). (닫은 칸 목록, 칸에 넣지 않은 사유 또는 None)."""
+        head = _kpm2_head(obj)
+        if head is None or not _kpm2_values_ok(obj):
+            return [], "bad_kpm2"
+        s, c, t0, t1, seq = head
+        key = (s, c)
+        if self.n_ms % (t1 - t0):
+            # 원본 주기가 N을 나누지 못함 — 묶지도 보내지도 않는다(0.1초 원본은 보내지 않음, 24_ §5.1)
+            self.warn(("agg_period", key), "agg_period", session=s, cell=c, period_ms=t1 - t0,
+                      interval_ms=self.n_ms, detail="not sent")
+            return [], "agg_period"
+        last = self.last_end.get(key)
+        if last is not None and t0 < last:
+            return [], "overlap"  # 같은 셀 구간이 겹치거나 거꾸로 옴 — 탐지 엔진도 버린다 (22_ §6)
+        k0 = (t0 // self.n_ms) * self.n_ms
+        if key in self.closed_to and k0 <= self.closed_to[key]:
+            # 이미 닫은 칸 — 다시 열지 않는다(같은 키로 다른 줄을 보낼 수 없음, 24_ §5.3)
+            self.last_end[key] = t1
+            self.late += 1
+            self.warn(("agg_late", key), "agg_late", session=s, cell=c, t_start_ms=t0, closed_to=self.closed_to[key])
+            return [], "late"
+        if key not in self.open and key in self.restored and k0 <= self.restored[key]:
+            self.last_end[key] = t1
+            self.resent += 1  # 재시작 전에 보낸 칸 — 조용히 건너뛴다
+            return [], "resent"
+        out = []
+        # ③ 같은 셀에 다른 세션의 kpm2 — 그 셀의 옛 세션 칸
+        for k in [k for k in self.open if k[1] == c and k[0] != s]:
+            out.append(self._close(k))
+        # ① 같은 (세션, 셀)의 뒤 칸 줄 — 보통은 이것
+        b = self.open.get(key)
+        if b is not None and b.t0 != k0:
+            out.append(self._close(key))
+            b = None
+        # ② 다른 셀의 줄이 데이터 시각으로 칸 끝 + 여유를 넘음 — 그 셀만 줄이 멈췄을 때
+        for k in [k for k, x in self.open.items() if k[1] != c and x.t0 + self.n_ms + self.lag <= t0]:
+            out.append(self._close(k))
+        if b is None:
+            b = self.open[key] = _Bucket(s, c, k0, off)
+        self._accumulate(b, obj, seq)
+        self.last_end[key] = t1
+        return out, None
+
+    def _accumulate(self, b, obj, seq):
+        """줄 하나를 칸에 더한다 (24_ §5.2). 값이 null이거나 이름이 없으면 그 줄에서 '모름' — known을 늘리지 않는다."""
+        b.n += 1
+        b.seq_from = seq if b.seq_from is None else min(b.seq_from, seq)
+        b.seq_to = seq if b.seq_to is None else max(b.seq_to, seq)
+        for k in obj:
+            if k not in KPM2_KEYS:
+                self.warn(("key", k), "agg_unknown_key", key=k, detail="not aggregated")
+        for cname in ("cc", "si", "ext"):
+            cont = obj.get(cname)
+            if not isinstance(cont, dict):
+                continue  # 없거나 null — 그 안의 이름은 이 줄에서 모두 모름
+            names = b.cont[cname]
+            for name, v in cont.items():
+                if (cname == "si" and not (name.endswith("Mean") or name.endswith("Max"))) or \
+                        (cname == "ext" and name not in EXT_MAX + EXT_SUM):
+                    self.warn(("key", f"{cname}.{name}"), "agg_unknown_key", key=f"{cname}.{name}",
+                              detail="not aggregated")
+                    continue
+                acc = names.get(name)
+                if acc is None:
+                    acc = names[name] = {"known": 0, "v": None}
+                if v is None:
+                    continue
+                if cname == "cc":
+                    if isinstance(v, dict):
+                        # 원인별 객체 — 하위 키마다 합, 줄에 없는 원인은 0. total이 없으면 이 줄에서 모름(22_ §6)
+                        if (name != FAILCAUSE and "total" not in v) or not isinstance(acc["v"], (dict, type(None))):
+                            continue
+                        if acc["v"] is None:
+                            acc["v"] = {}
+                        for sk, x in v.items():
+                            acc["v"][sk] = acc["v"].get(sk, 0) + x
+                    else:
+                        if not isinstance(acc["v"], (int, type(None))):
+                            continue
+                        acc["v"] = (acc["v"] or 0) + v
+                elif cname == "si" and name.endswith("Mean"):
+                    acc["v"] = [v, 1] if acc["v"] is None else [acc["v"][0] + v, acc["v"][1] + 1]
+                elif cname == "si" or name in EXT_MAX:
+                    acc["v"] = v if acc["v"] is None else max(acc["v"], v)
+                else:
+                    acc["v"] = (acc["v"] or 0) + v
+                acc["known"] += 1
+
+    def _close(self, key):
+        b = self.open.pop(key)
+        self.closed_to[key] = max(self.closed_to.get(key, b.t0), b.t0)
+        return self._render(b), (b.session, b.cell, b.t0)
+
+    def _render(self, b):
+        """묶은 줄 (24_ §5.2) — 키 순서 고정, 공백 없는 JSON. 일부 줄에서만 안 이름은 partial에, 모든 줄에서 모르면 null."""
+        out = {"type": "kpm2", "ver": 1, "agg_ms": self.n_ms, "session": b.session, "cell_id": b.cell,
+               "t_start_ms": b.t0, "t_end_ms": b.t0 + self.n_ms, "n": b.n, "seq_from": b.seq_from, "seq_to": b.seq_to}
+        partial = []
+        for cname in ("cc", "si", "ext"):
+            names = b.cont[cname]
+            if not names:
+                continue
+            o = {}
+            for name, acc in names.items():
+                if acc["known"] == 0:
+                    o[name] = None
+                    continue
+                v = acc["v"]
+                if cname == "si" and name.endswith("Mean"):
+                    v = round(v[0] / v[1], 3)  # 칸마다 길이가 같아 시간 평균과 같다
+                o[name] = v
+                if acc["known"] < b.n:
+                    partial.append(f"{cname}.{name}")
+            out[cname] = o
+        out["partial"] = partial
+        return json.dumps(out, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
+
+class InputTracker(Tracker):
+    """kind input — 탐지 엔진 입력 기록 파일(input.jsonl, 24_ §3)을 따라 읽는다 (24_ §4.2).
+    hello·f1_evt·(send_ue_evt면) ue_evt는 줄 그대로, kpm2는 칸에 모았다가 닫힐 때 묶은 줄로(원본은 보내지 않음),
+    그 밖의 줄은 보내지 않고 센다. 줄마다 safe를 열린 칸의 첫 줄 앞으로 낮춰 보낸 위치가 열린 칸을 넘지 않게 한다(§4.3)."""
+    is_input = True
+
+    def __init__(self, cfg, path, abspath):
+        super().__init__(cfg, path, abspath)
+        self.send_ue = cfg["send_ue_evt"]
+        self.warned = set()
+        self.agg = KpmAggregator(cfg["kpm2_interval_ms"], cfg["kpm2_close_lag_ms"], self._warn_once) \
+            if cfg["kpm2_interval_ms"] else None
+        self.skipped = 0
+        self.agg_lines = 0
+
+    def _warn_once(self, key, event, **kv):
+        if key not in self.warned:
+            self.warned.add(key)
+            log("WARN", event, file=self.path, **kv)
+
+    def start(self, entry):
+        # 상태 파일의 '보낸 칸' — 같은 주기일 때만 (24_ §4.3)
+        if self.agg is not None and entry:
+            self.agg.restore(entry.get("agg"))
+        super().start(entry)
+
+    def _reset(self, off):
+        # 처음 열 때·파일 교체 뒤(이미 닫아 보냄)·잘림 — 잘림이면 읽어 둔 줄(pending)과 함께 열린 칸도 버린다(19_ §4.4와 같게)
+        super()._reset(off)
+        if self.agg is not None:
+            self.agg.drop_open()
+
+    def _add(self, e):
+        m = self.agg.min_open_off() if self.agg is not None else None
+        if m is not None and e.safe > m:
+            e.safe = m
+        super()._add(e)
+
+    def _emit(self, closed, pos, now):
+        # 닫은 칸의 묶은 줄 — 그 칸을 닫게 한 줄의 자리(그 줄보다 앞)에 둔다 (24_ §4.2)
+        for data, key in closed:
+            self._add(Entry(pos, pos, data, now, key=key))
+
+    def _skip(self, reason, start, end, line, now):
+        self.skipped += 1
+        self._warn_once(("skip", reason), "skip_input", off=start, reason=reason, head=_head(line))
+        self._add(Entry(start, end, None, now))
+
+    def _line(self, start, end, line, now):
+        try:
+            obj = json.loads(line)
+        except ValueError:
+            obj = None
+        if not isinstance(obj, dict):
+            return self._skip("not_json", start, end, line, now)
+        typ = obj.get("type")
+        if not isinstance(typ, str):
+            return self._skip("no_type", start, end, line, now)
+        if typ == "kpm2":
+            if self.agg is None:  # kpm2_interval_ms 0 — kpm2는 보내지 않음
+                return self._add(Entry(start, end, None, now))
+            closed, reason = self.agg.add(start, obj)
+            self._emit(closed, start, now)
+            if reason in ("bad_kpm2", "overlap"):
+                return self._skip(reason, start, end, line, now)
+            if reason == "agg_period":
+                self.skipped += 1
+            return self._add(Entry(start, end, None, now))
+        if typ == "hello":
+            if self.agg is not None and isinstance(obj.get("session"), str):
+                self._emit(self.agg.on_hello(obj["session"]), start, now)
+            return self._add(Entry(start, end, line, now))
+        if typ == "f1_evt":
+            return self._add(Entry(start, end, line, now))
+        if typ == "ue_evt":
+            return self._add(Entry(start, end, line if self.send_ue else None, now))
+        return self._skip("unknown_type", start, end, line, now)
+
+    def flush_open(self):
+        if self.agg is not None:
+            self._emit(self.agg.flush(), self.buf_off, time.monotonic())
+
+    def note_sent(self, b):
+        """200·400을 받은 묶음 — 든 묶은 줄의 칸을 '보낸 칸'으로 (상태 파일에 남긴다)."""
+        for e in b.entries:
+            if e.key is not None:
+                self.agg.note_sent(e.key)
+                self.agg_lines += 1
+
+
 # ---------------------------------------------------------------- 전송기 본체 (19_ §4.3·§5·§6)
 
 class Sender:
@@ -583,7 +959,8 @@ class Sender:
         self.cfg = cfg
         self.mode = mode  # run | once | dry_run
         self.once_timeout_s = once_timeout_s
-        self.trackers = [Tracker(cfg, i["path"], i["abspath"]) for i in cfg["inputs"]]
+        self.trackers = [(InputTracker if i["kind"] == "input" else Tracker)(cfg, i["path"], i["abspath"])
+                         for i in cfg["inputs"]]
         self.ctx = None
         self.state_files = {}
         self.fails = 0
@@ -672,13 +1049,20 @@ class Sender:
                 os.unlink(tmp)
             raise Fatal(EXIT_STATE, reason="state_save", state=path, detail=e.strerror or str(e))
 
-    def _commit(self, tr, b):
-        """200·400을 받은 뒤(또는 보내지 않는 줄만) 보낸 위치를 넘기고 저장한다 (19_ §4.3)."""
-        if self.mode == "dry_run":
-            tr.acked = b.end
+    def _commit(self, tr, b, persist=True):
+        """200·400을 받은 뒤(또는 보내지 않는 줄만) 보낸 위치를 넘기고 저장한다 (19_ §4.3).
+        저장 위치는 묶음의 safe — evidence는 묶음 끝, input은 열린 칸의 첫 줄 앞을 넘지 않는다. input은 받은 묶은 줄의 칸을
+        '보낸 칸'으로 함께 남긴다 (24_ §4.3). persist가 False면 메모리의 위치만 넘긴다 — input의 보낼 줄 없는 묶음(칸에 든
+        kpm2만)은 줄마다 상태 파일을 쓰지 않게, 다음에 보낸 묶음과 함께 저장한다(그사이 멈추면 그만큼 다시 읽는다)."""
+        if self.mode == "dry_run" or not persist:
+            tr.acked = b.safe
             return
         with self._critical():
-            entry = {"dev": tr.dev, "ino": tr.ino, "offset": b.end, "saved_ms": int(time.time() * 1000)}
+            if tr.is_input:
+                tr.note_sent(b)
+            entry = {"dev": tr.dev, "ino": tr.ino, "offset": b.safe, "saved_ms": int(time.time() * 1000)}
+            if tr.agg is not None:
+                entry["agg"] = tr.agg.state()
             prev = self.state_files.get(tr.abspath)
             self.state_files[tr.abspath] = entry
             try:
@@ -689,7 +1073,7 @@ class Sender:
                 else:
                     self.state_files[tr.abspath] = prev
                 raise
-            tr.acked = b.end
+            tr.acked = b.safe
         tr.sent_lines += len(b.lines)
 
     # --- 기다림·마감
@@ -719,7 +1103,12 @@ class Sender:
             except OSError:
                 size = None
             lag = max(0, size - t.acked) if size is not None and t.fh is not None else None
-            log("INFO", "stats", file=t.path, lag_bytes=lag, sent_lines=t.sent_lines, fails=self.fails)
+            extra = {}
+            if t.is_input:  # 상시 KPM (24_ §4.4)
+                extra = {"agg_lines": t.agg_lines, "open_cells": len(t.agg.open) if t.agg else 0,
+                         "late": t.agg.late if t.agg else 0, "skipped": t.skipped,
+                         "resent": t.agg.resent if t.agg else 0}
+            log("INFO", "stats", file=t.path, lag_bytes=lag, sent_lines=t.sent_lines, fails=self.fails, **extra)
 
     # --- 보내기 (19_ §6)
 
@@ -797,7 +1186,7 @@ class Sender:
         while todo:
             b = todo.pop(0)
             if not b.lines:
-                self._commit(tr, b)
+                self._commit(tr, b, persist=not tr.is_input)
                 continue
             if self.mode == "dry_run":
                 log("INFO", "dry_run", file=tr.path, off=f"{b.start}-{b.end}", lines=len(b.lines),
@@ -852,6 +1241,8 @@ class Sender:
             for t in self.trackers:
                 t.check()
                 t.fill(we, wb)
+                if t.rotating and t.eof:
+                    t.flush_open()  # 옛 파일 끝 — 열린 칸을 닫아 보낸 뒤 새 파일로 (24_ §4.3·§5.3 ④)
                 b, wait = t.take_batch(time.monotonic(), force=t.rotating)
                 if b is not None:
                     self.send_batch(t, b)
@@ -873,6 +1264,8 @@ class Sender:
             while True:
                 self._check_deadline()
                 t.fill(we, wb)
+                if t.eof:
+                    t.flush_open()  # --once는 파일 끝에서 열린 칸을 모두 닫아 보낸다 (24_ §4.3·§5.3 ④)
                 b, _ = t.take_batch(time.monotonic(), force=True)
                 if b is None:
                     if t.eof:
