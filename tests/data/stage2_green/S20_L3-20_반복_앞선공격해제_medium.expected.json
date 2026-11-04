@@ -1,0 +1,23 @@
+{
+  "scenario": "S20_L3-20_반복_앞선공격해제_medium",
+  "description": "공격 연결 2번, 앞선 공격 연결을 2.5 s에 해제 — 둘째 공격의 짝은 피해자뿐, medium 유지 (15_ §2.3, 11/05 Q-72)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-20",
+      "cell": 1,
+      "t_rel_ms": 6100,
+      "mode": "normal",
+      "severity": "medium"
+    },
+    {
+      "kind": "UPDATE",
+      "rule": "L3-20",
+      "cell": 1,
+      "t_rel_ms": 7100,
+      "severity": "medium"
+    }
+  ]
+}

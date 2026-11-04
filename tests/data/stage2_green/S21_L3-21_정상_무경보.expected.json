@@ -11,7 +11,9 @@
       "t_rel_ms": 600,
       "severity": "medium",
       "alert_kind": "anomaly",
-      "candidates": ["L3-07-OV"]
+      "candidates": [
+        "L3-07-OV"
+      ]
     }
   ]
 }

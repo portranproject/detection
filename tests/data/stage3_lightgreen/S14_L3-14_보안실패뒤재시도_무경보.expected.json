@@ -1,0 +1,7 @@
+{
+  "scenario": "S14_L3-14_보안실패뒤재시도_무경보",
+  "description": "SecurityModeFailure(t0+145) 뒤 SMC 재시도(t0+150)·Complete(t0+155) → t0+160 정상 능력 요청 — 경보 없음 (25_ X1, 11/05 Q-70)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}
