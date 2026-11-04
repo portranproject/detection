@@ -76,8 +76,9 @@ void UplinkDosRule::on_ue_event(const UeEvt& evt, const UeState& before, const U
   Conn& c = conns_[id];
   if (reg) c.id_type = evt.id_type;
   if (fail) {
-    c.fails.push_back(evt.msg);
-    if (evt.cause) c.causes.push_back(*evt.cause);
+    ++c.fails_n;
+    c.fails.emplace_back(evt.msg, evt.cause);
+    if (c.fails.size() > kFailsKeep) c.fails.pop_front();  // 마지막 16개만 (15_ §5.6, W-32)
     cells_[after.key.cell_id].fail_msgs.push_back(evt.t_ms);
     if (marks_.count(id) == 0 && !c.counted && !after.mid_join) start(id, evt.t_ms, ctx);
   }
@@ -96,8 +97,9 @@ void UplinkDosRule::start(const UeId& id, int64_t t_f, const UeRuleCtx& ctx) {
   marks_[id] = std::move(m);
 }
 
-// 걸린 UE 한 칸 (15_ §5.6 ues[].values): branch, reg_req_n(걸린 때의 cnt), fails(실패로 센 메시지, 본 순서),
-// causes(그 가운데 원인값이 있는 것, 없으면 []), id_type(마지막 RegistrationRequest), closed_ms(갈래 ①에서 마감 전에 닫힘)
+// 걸린 UE 한 칸 (15_ §5.6 ues[].values): branch, reg_req_n(걸린 때의 cnt), fails(실패로 센 메시지, 본 순서 — 마지막 16개),
+// causes(그 가운데 원인값이 있는 것, 없으면 []), fails_n(실패 총수 — 11/05 W-32), id_type(마지막 RegistrationRequest),
+// closed_ms(갈래 ①에서 마감 전에 닫힘)
 AlertUe UplinkDosRule::make_ue(const UeState& n, const Conn* c, const char* branch, std::vector<std::string> cond,
                                int64_t t_hit, std::optional<int64_t> closed_ms) const {
   AlertUe u = alert_ue(n);
@@ -105,8 +107,15 @@ AlertUe UplinkDosRule::make_ue(const UeState& n, const Conn* c, const char* bran
   u.t_hit = t_hit;
   u.values["branch"] = branch;
   u.values["reg_req_n"] = n.count(Proto::NAS, "RegistrationRequest");
-  u.values["fails"] = c ? ojson(c->fails) : ojson::array();
-  u.values["causes"] = c ? ojson(c->causes) : ojson::array();
+  ojson fails = ojson::array(), causes = ojson::array();
+  if (c)
+    for (const auto& [name, cause] : c->fails) {
+      fails.push_back(name);
+      if (cause) causes.push_back(*cause);
+    }
+  u.values["fails"] = std::move(fails);
+  u.values["causes"] = std::move(causes);
+  u.values["fails_n"] = c ? c->fails_n : 0;
   u.values["id_type"] = c && c->id_type ? ojson(*c->id_type) : ojson(nullptr);
   u.values["closed_ms"] = closed_ms ? ojson(*closed_ms) : ojson(nullptr);
   return u;
@@ -410,6 +419,9 @@ int64_t UplinkDosRule::held_window(CellState& c, int64_t now) const {
 
 // 상태표 셀별 누적 evicted(14_ §6.3)의 증가분을 이 칸 시각으로 적는다 — 경보가 열려 있으면 evicted_open도 (이슈 #44)
 void UplinkDosRule::note_evictions(CellState& c, int64_t cell, int64_t t, const UeRuleCtx& ctx) {
+  // 창 밖 시각은 경보가 없을 때도 버린다 (11/05 W-32, 이슈 #92 — 25_ §3.1-4): 그전에는 evicted_window가 열린 경보의 해제 판단과
+  // RAISE에서만 불려, 경보가 없는 포화 홍수에서 밀어내기마다 시각이 무한히 쌓였다
+  evicted_window(c, t);
   const int64_t total = ctx.table.counts(cell).evicted;
   for (; c.evicted_seen < total; ++c.evicted_seen) {
     c.evict_times.push_back(t);

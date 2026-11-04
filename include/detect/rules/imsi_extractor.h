@@ -41,6 +41,7 @@ class ImsiExtractorRule : public UeRule {
   // 셀별 — 경보 누적값과 해제 기준 (20_ §3.5·§3.6). 밀어내기·불확실 경보는 L3-20과 같다(15_ §2.5·§2.6, 14_ §6.2)
   struct CellState {
     int64_t t_hit_last = 0;            // 마지막으로 UE가 걸린 시각(응답 t_r) — CLEAR 기준. extra는 늘리지 않는다
+    int64_t epoch = 0;                 // 경보 세대 — 새 경보마다 +1, 표시의 epoch과 대조 (11/05 W-34)
     int64_t extra_open = 0;            // 경보가 열린 뒤 걸린 연결에서 더 온 요청 없는 응답 수 (20_ §3.3-4)
     int64_t held_open = 0;             // 경보가 열린 뒤 보류된 판정 수
     std::deque<int64_t> held_times;    // 보류 시각 — raise의 held는 직전 clear_quiet_ms 동안 (이동 창)

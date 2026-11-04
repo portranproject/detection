@@ -46,7 +46,9 @@ void ImsiExtractorRule::on_ue_event(const UeEvt& evt, const UeState& before, con
   if (marks_.start(after, kTag, evt.t_ms, std::move(snap), ctx)) return;
   const int64_t cell = after.key.cell_id;
   const LookbackMarks::Mark* m = marks_.find(after.key, after.uid, kTag);
-  if (m && m->phase == LookbackMarks::Phase::Hit && book_.open(cell)) ++cells_[cell].extra_open;
+  // 걸린 연결의 반복 — 그 걸림을 실은 경보가 열려 있을 때만 (W-34): CLEAR 뒤 새 경보에 옛 표시의 반복이 섞이지 않게
+  if (m && m->phase == LookbackMarks::Phase::Hit && book_.open(cell) && m->epoch == cells_[cell].epoch)
+    ++cells_[cell].extra_open;
 }
 
 // 마감 (20_ §3.3-2): 걸리면 hit, 연결 시작 뒤 DL 로스면 보류 — 공격 경보 중이면 values.held로만, 아니면 불확실 경보용으로
@@ -73,12 +75,14 @@ void ImsiExtractorRule::hit(const LookbackMarks::Decision& dc, int64_t now, cons
   CellState& c = cells_[cell];
   if (!book_.open(cell)) {
     close_held(cell, now, out);
+    ++c.epoch;  // 새 경보의 세대 (W-34)
     c.extra_open = 0;
     c.held_open = 0;
     c.evicted_open = 0;
   }
   c.extra_open += dc.mark.extra;
   c.t_hit_last = std::max(c.t_hit_last, dc.mark.t_from);
+  marks_.included(dc.n.key, dc.n.uid, dc.mark.tag, c.epoch);
 
   AlertUe u = alert_ue(dc.n);
   u.cond = {"unsolicited"};
@@ -213,6 +217,9 @@ void ImsiExtractorRule::decorate_held(std::size_t from, RuleOutput& out) {
 
 // 상태표 셀별 누적 evicted(14_ §6.3)의 증가분을 이 칸 시각으로 적는다 — 경보가 열려 있으면 evicted_open도
 void ImsiExtractorRule::note_evictions(CellState& c, int64_t cell, int64_t t, const UeRuleCtx& ctx) {
+  // 창 밖 시각은 경보가 없을 때도 버린다 (11/05 W-32, 이슈 #92 — 25_ §3.1-4): 그전에는 evicted_window가 열린 경보의 해제 판단과
+  // RAISE에서만 불려, 경보가 없는 포화 홍수에서 밀어내기마다 시각이 무한히 쌓였다
+  evicted_window(c, t);
   const int64_t total = ctx.table.counts(cell).evicted;
   for (; c.evicted_seen < total; ++c.evicted_seen) {
     c.evict_times.push_back(t);

@@ -44,11 +44,14 @@ class UplinkDosRule : public UeRule {
 
  private:
   using UeId = std::pair<UeKey, int64_t>;  // (키, uid)
+  static constexpr std::size_t kFailsKeep = 16;  // ues[].values.fails·causes에 싣는 마지막 실패 수 (15_ §5.6, W-32)
 
   // 연결(UE 항목)별 기록 (15_ §5.2·§5.6) — 상태표 cnt에는 원인값이 없어 ignore_causes를 거를 수 없으므로 룰이 들고 있는다
   struct Conn {
-    std::vector<std::string> fails;       // 실패로 센 메시지 이름, 본 순서
-    std::vector<int64_t> causes;          // 그 가운데 원인값이 있는 것의 값
+    // 실패로 센 메시지 (이름, 원인값), 본 순서 — 마지막 kFailsKeep개만 둔다 (15_ §5.6 — 11/05 W-32, 이슈 #92: 한 연결이 거절을
+    // 되풀이하면 레코드가 무한히 커졌다, 25_ §3.1-5). 총수는 fails_n
+    std::deque<std::pair<std::string, std::optional<int64_t>>> fails;
+    int64_t fails_n = 0;
     std::optional<std::string> id_type;   // 마지막 RegistrationRequest의 f.id_type
     bool branch2 = false;                 // 갈래 ②로 걸렸다 — 연결당 한 번
     bool counted = false;                 // 실패 UE로 셌고 그 뒤 새 수락이 없다 — 새로 기다리지 않는다 (15_ §5.3-1)

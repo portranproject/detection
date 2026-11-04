@@ -44,7 +44,9 @@ int64_t CapHijackRule::evidence_horizon_ms() const { return 1000 + alert_.update
 void CapHijackRule::count_extra(const UeState& n, const char* tag) {
   const int64_t cell = n.key.cell_id;
   const LookbackMarks::Mark* m = marks_.find(n.key, n.uid, tag);
-  if (m && m->phase == LookbackMarks::Phase::Hit && book_.open(cell)) ++cells_[cell].extra_open;
+  // 걸린 연결의 반복 — 그 걸림을 실은 경보가 열려 있을 때만 (W-34): CLEAR 뒤 새 경보에 옛 표시의 반복이 섞이지 않게
+  if (m && m->phase == LookbackMarks::Phase::Hit && book_.open(cell) && m->epoch == cells_[cell].epoch)
+    ++cells_[cell].extra_open;
 }
 
 // ue_evt 한 줄 (20_ §4.3):
@@ -106,6 +108,7 @@ void CapHijackRule::hit(const LookbackMarks::Decision& dc, int64_t now, const Ue
     c.branch2_ues = 0;
     c.branch2_seen = false;
     c.premise_mitm = false;
+    ++c.epoch;  // 새 경보의 세대 (W-34)
     c.extra_open = 0;
     c.held_open = 0;
     c.evicted_open = 0;
@@ -117,6 +120,7 @@ void CapHijackRule::hit(const LookbackMarks::Decision& dc, int64_t now, const Ue
   c.premise_mitm = c.premise_mitm || !branch2;
   c.extra_open += dc.mark.extra;
   c.t_hit_last = std::max(c.t_hit_last, dc.mark.t_from);
+  marks_.included(dc.n.key, dc.n.uid, dc.mark.tag, c.epoch);
 
   AlertUe u = alert_ue(dc.n);
   u.cond = {branch2 ? "enquiry_before_as_sec" : "unsolicited"};
@@ -261,6 +265,9 @@ void CapHijackRule::decorate_held(std::size_t from, RuleOutput& out) {
 
 // 상태표 셀별 누적 evicted(14_ §6.3)의 증가분을 이 칸 시각으로 적는다 — 경보가 열려 있으면 evicted_open도
 void CapHijackRule::note_evictions(CellState& c, int64_t cell, int64_t t, const UeRuleCtx& ctx) {
+  // 창 밖 시각은 경보가 없을 때도 버린다 (11/05 W-32, 이슈 #92 — 25_ §3.1-4): 그전에는 evicted_window가 열린 경보의 해제 판단과
+  // RAISE에서만 불려, 경보가 없는 포화 홍수에서 밀어내기마다 시각이 무한히 쌓였다
+  evicted_window(c, t);
   const int64_t total = ctx.table.counts(cell).evicted;
   for (; c.evicted_seen < total; ++c.evicted_seen) {
     c.evict_times.push_back(t);

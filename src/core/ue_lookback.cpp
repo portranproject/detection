@@ -90,6 +90,10 @@ LookbackMarks::Decision LookbackMarks::on_deadline(const Deadline& d, const UeRu
   return r;
 }
 
+void LookbackMarks::included(const UeKey& key, int64_t uid, const std::string& tag, int64_t epoch) {
+  if (auto it = marks_.find(Id{key, uid, tag}); it != marks_.end()) it->second.epoch = epoch;
+}
+
 void LookbackMarks::on_close(const UeState& last, CloseReason reason) {
   const bool keep = reason == CloseReason::Released || reason == CloseReason::Reused || reason == CloseReason::StaleSetup;
   for (auto it = marks_.lower_bound(Id{last.key, last.uid, std::string()});

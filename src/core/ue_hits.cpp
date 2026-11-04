@@ -34,9 +34,15 @@ bool HitWindow::hit_before(const UeId& id) const { return conns_.count(id) > 0; 
 
 // 회복 전 반복 (21_ §1.1·§6.5·§7.5·§8.5 — 11/04 Q-69 (가), 이슈 #86): 그 키를 실은 경보가 열려 있을 때만 해제 기준을 올린다.
 // t_hit_last(기본 해제 기준)와 t_sat(clear_on_satisfied — AN-08) 둘 다 — 어느 기준이든 '그 키가 마지막으로 반복한 시각'이 된다
+bool HitWindow::in_current_alert(const Conn& conn) const {
+  if (!conn.in_alert || !book_.open(conn.cell)) return false;
+  auto c = cells_.find(conn.cell);
+  return c != cells_.end() && c->second.epoch == conn.epoch;
+}
+
 void HitWindow::touch(const UeId& id, int64_t t) {
   auto it = conns_.find(id);
-  if (it == conns_.end() || !it->second.in_alert || !book_.open(it->second.cell)) return;
+  if (it == conns_.end() || !in_current_alert(it->second)) return;
   Cell& c = cells_[it->second.cell];
   c.t_hit_last = std::max(c.t_hit_last, t);
   c.t_sat = std::max(c.t_sat, t);
@@ -45,7 +51,7 @@ void HitWindow::touch(const UeId& id, int64_t t) {
 bool HitWindow::active(const UeId& id) const {
   auto it = conns_.find(id);
   if (it == conns_.end()) return false;
-  return !it->second.in_alert || book_.open(it->second.cell);
+  return !it->second.in_alert || in_current_alert(it->second);
 }
 
 void HitWindow::add(const UeId& id, const std::string& name, int64_t n) {
@@ -53,7 +59,7 @@ void HitWindow::add(const UeId& id, const std::string& name, int64_t n) {
   if (it == conns_.end()) return;
   Cell& c = cells_[it->second.cell];
   if (it->second.in_alert) {
-    if (book_.open(it->second.cell)) c.counts[name] += n;
+    if (in_current_alert(it->second)) c.counts[name] += n;  // 옛 경보의 키면 버린다 (W-34)
     return;
   }
   for (Hit& h : c.fresh)
@@ -75,7 +81,10 @@ void HitWindow::on_close(const UeState& last) {
 // 경보에 실림 — 쌓아 둔 누적 수를 경보 값에 더하고, 그 뒤 누적 수는 바로 더하게 표시한다. 해제 기준 시각을 올린다
 void HitWindow::include(Cell& c, const Hit& h) {
   for (const auto& [name, n] : h.acc) c.counts[name] += n;
-  if (auto it = conns_.find(h.id); it != conns_.end()) it->second.in_alert = true;
+  if (auto it = conns_.find(h.id); it != conns_.end()) {
+    it->second.in_alert = true;
+    it->second.epoch = c.epoch;  // 이 경보의 세대 (W-34)
+  }
   c.t_hit_last = std::max(c.t_hit_last, h.u.t_hit);
 }
 
@@ -96,7 +105,11 @@ void HitWindow::tick(int64_t cell, int64_t t, bool input_lost, const UeRuleCtx& 
   for (Hit& h : c.fresh) {
     if (const UeState* s = ctx.table.find(h.ref.first); s && s->uid == h.ref.second) refresh(h.u, *s);
     c.win.push_back(h);
-    while (c.win.front().u.t_hit <= h.u.t_hit - window_ms_) c.win.pop_front();
+    // 창 밖 걸림 제거 — t_hit 순서가 아니라 값으로 (11/05 W-39, 이슈 #92 — 25_ §3.2-8): fresh는 사건 순이고 t_hit는 단조가 아니다
+    // (stale_setup 닫힘은 d.at, 늦은 줄은 워터마크보다 이른 시각). pop_front 반복이면 앞 칸이 창 안일 때 뒤의 창 밖 칸이 남았다
+    c.win.erase(std::remove_if(c.win.begin(), c.win.end(),
+                               [&](const Hit& x) { return x.u.t_hit <= h.u.t_hit - window_ms_; }),
+                c.win.end());
     const bool sat = h.force || static_cast<int64_t>(c.win.size()) >= n_;
     if (sat) c.t_sat = std::max(c.t_sat, h.u.t_hit);
     from = out.size();
@@ -104,6 +117,7 @@ void HitWindow::tick(int64_t cell, int64_t t, bool input_lost, const UeRuleCtx& 
       include(c, h);
       book_.add(cell, std::vector<AlertUe>{h.u}, Severity::Medium, t, ctx.session, ctx.seq, out);
     } else if (sat) {
+      ++c.epoch;         // 새 경보 — 세대를 올린다 (W-34): 옛 경보에 실린 키는 더 이상 '실린 키'가 아니다
       c.counts.clear();  // 새 경보 — 누적 수를 처음부터 센다
       c.evicted_open = 0;
       std::vector<AlertUe> ues;
@@ -170,6 +184,11 @@ int64_t HitWindow::count(int64_t cell, const std::string& name) const {
   return n == it->second.counts.end() ? 0 : n->second;
 }
 
+std::size_t HitWindow::evict_times_size(int64_t cell) const {
+  auto it = cells_.find(cell);
+  return it == cells_.end() ? 0 : it->second.evict_times.size();
+}
+
 int64_t HitWindow::evicted(int64_t cell, bool raise, int64_t t) {
   Cell& c = cells_[cell];
   return raise ? evicted_window(c, t) : c.evicted_open;
@@ -177,6 +196,9 @@ int64_t HitWindow::evicted(int64_t cell, bool raise, int64_t t) {
 
 // 상태표 셀별 누적 evicted(14_ §6.3)의 증가분을 이 칸 시각으로 적는다 — 경보가 열려 있으면 evicted_open도
 void HitWindow::note_evictions(Cell& c, int64_t cell, int64_t t, const UeRuleCtx& ctx) {
+  // 창 밖 시각은 경보가 없을 때도 버린다 (11/05 W-32, 이슈 #92 — 25_ §3.1-4): 그전에는 evicted_window가 열린 경보의 해제 판단과
+  // RAISE에서만 불려, 경보가 없는 포화 홍수에서 밀어내기마다 시각이 무한히 쌓였다
+  evicted_window(c, t);
   const int64_t total = ctx.table.counts(cell).evicted;
   for (; c.evicted_seen < total; ++c.evicted_seen) {
     c.evict_times.push_back(t);
