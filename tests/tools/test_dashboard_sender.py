@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""전송기 시험 S1~S21 (19_ §9) — ctest가 부른다. 인자: <저장소 경로> <detector 경로> <임시 폴더>
+"""전송기 시험 S1~S21 (19_ §9)·상시 KPM S22~S39 (24_ §8.2) — ctest가 부른다. 인자: <저장소 경로> <detector 경로> <임시 폴더>
 
 - 시험마다 가짜 수집 서버(http.server + ssl)를 로컬 포트에 띄운다. 받은 요청(헤더·본문)을 기록하고, 시험이 정한 응답을 돌려준다.
 - 서버 인증서는 시험 시작 때 openssl 명령으로 만든다(SAN IP:127.0.0.1) — 키·인증서를 저장소에 넣지 않는다.
@@ -590,7 +590,8 @@ class Config(Base):
     needs_server = False
 
     def test_S14_config(self):
-        # S14: 범위 밖 값·http:// 주소·타입 오류 → 종료 코드 1 / 모르는 키 → 경고 후 진행 / kpm2_interval_ms 1000 → 경고 후 0
+        # S14: 범위 밖 값·http:// 주소·타입 오류 → 종료 코드 1 / 모르는 키 → 경고 후 진행
+        #      (24_ §8.2로 바뀜) kpm2_interval_ms 1000·send_ue_evt true는 허용 값 — '다음 단계' 경고가 없다
         self.write(lines_bytes([L(1)]))
         for over in ({"batch_max_lines": 0}, {"batch_max_lines": 5001}, {"url": "http://127.0.0.1/ingest"},
                      {"batch_max_lines": "500"}, {"env": "P4"}, {"retry_max_ms": 50},
@@ -606,10 +607,9 @@ class Config(Base):
                                      inputs=[{"path": self.ev, "kind": "evidence"},
                                              {"path": "input.jsonl", "kind": "input"}]), "--dry-run")
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn("kpm2_interval_ms=1000", r.stderr)
-        self.assertIn("send_ue_evt=true", r.stderr)
-        self.assertIn("kind=input", r.stderr)
-        self.assertIn("lines=1", r.stderr)  # evidence는 그대로 묶었다
+        self.assertNotIn("next-stage", r.stderr)
+        self.assertNotIn("config_warning", r.stderr)
+        self.assertIn("lines=1", r.stderr)  # evidence는 그대로 묶었다(input 파일은 아직 없음 — 생길 때까지 기다림)
         # 사용법 오류도 1 (2는 '약속에 없는 응답')
         r = subprocess.run([sys.executable, SENDER], capture_output=True, text=True)
         self.assertEqual(r.returncode, 1)
@@ -639,6 +639,511 @@ class Config(Base):
         r = check(det)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("evidence_mode_off", r.stderr)
+
+
+# ---------------------------------------------------------------- S22~S39 상시 KPM (24_ §8.2)
+# 입력은 시험 때 만든 100 ms 원본 시나리오. 묶은 줄의 기대값은 원본 줄을 시험 안에서 직접 더해 만든다(전송기 코드를 부르지 않음)
+
+SESSION = "20261104T000000Z"
+T0 = 1793000000000  # 10초의 배수 — 칸 경계가 시나리오 시작과 맞는다
+DET_SCN = os.path.join(REPO, "tests", "data", "scenarios")
+
+
+def jl(d):
+    return json.dumps(d, separators=(",", ":")).encode()
+
+
+def hello_line(seq, session=SESSION):
+    return jl({"type": "hello", "ver": 1, "session": session, "seq": seq, "cells": [{"cell_id": 1, "max_conn": None}],
+               "period_ms": 100, "noreply_timeout_ms": 1000, "ue_evt": True})
+
+
+def kpm2_dict(seq, cell, t, slot, session=SESSION, period=100):
+    att = (slot * 3 + cell) % 5
+    succ = att // 2
+    return {"type": "kpm2", "ver": 1, "session": session, "seq": seq, "cell_id": cell, "t_start_ms": t,
+            "t_end_ms": t + period,
+            "cc": {"RRC.ConnEstabAtt": {"total": att, "mo-Signalling": att}, "RRC.ConnEstabSucc": {"total": succ},
+                   "RRC.ConnEstabFailCause": {"NetworkReject": 0, "NoReply": att - succ, "Other": 0}},
+            "si": {"RRC.ConnMean": slot % 7 + cell + 0.5, "RRC.ConnMax": slot % 7 + cell + 1},
+            "ext": {"UeCtxMax": 30 + slot % 11, "CrntiAlloc": att},
+            "ue_evt_lost": []}
+
+
+def gen_stream(seconds, cells=(1,), session=SESSION, t0=T0, seq0=1, ue=True, f1=True, hello=True):
+    """100 ms 원본 시나리오 — (줄 목록, kpm2 dict 목록). hello 1줄, 칸마다 셀별 kpm2, 가끔 ue_evt, f1_evt 1줄."""
+    lines, kpms = [], []
+    seq = seq0
+    if hello:
+        lines.append(hello_line(seq, session))
+        seq += 1
+    for slot in range(int(round(seconds * 10))):
+        t = t0 + slot * 100
+        for c in cells:
+            d = kpm2_dict(seq, c, t, slot, session)
+            lines.append(jl(d))
+            kpms.append(d)
+            seq += 1
+        if ue and slot % 7 == 3:
+            lines.append(jl({"type": "ue_evt", "ver": 1, "session": session, "seq": seq, "t_ms": t + 50,
+                             "cell_id": cells[0], "du_ue_id": slot, "dir": "UL", "msg": "RRCSetupRequest"}))
+            seq += 1
+        if f1 and slot == 5:
+            lines.append(jl({"type": "f1_evt", "ver": 1, "session": session, "seq": seq, "t_ms": t + 60,
+                             "event": "du_reset"}))
+            seq += 1
+    return lines, kpms
+
+
+def expect_agg(kpms, n_ms):
+    """기대값 — gen_stream 모양의 kpm2를 칸마다 직접 더한다. (session, cell, agg_ms, t_start) → 묶은 줄 바이트 (24_ §5.2)."""
+    groups = {}
+    for d in kpms:
+        groups.setdefault((d["session"], d["cell_id"], d["t_start_ms"] // n_ms * n_ms), []).append(d)
+    out = {}
+    for (s, c, t0), ds in groups.items():
+        att = sum(d["cc"]["RRC.ConnEstabAtt"]["total"] for d in ds)
+        succ = sum(d["cc"]["RRC.ConnEstabSucc"]["total"] for d in ds)
+        nr = sum(d["cc"]["RRC.ConnEstabFailCause"]["NoReply"] for d in ds)
+        means = [d["si"]["RRC.ConnMean"] for d in ds]
+        out[(s, c, n_ms, t0)] = jl({
+            "type": "kpm2", "ver": 1, "agg_ms": n_ms, "session": s, "cell_id": c, "t_start_ms": t0,
+            "t_end_ms": t0 + n_ms, "n": len(ds), "seq_from": min(d["seq"] for d in ds),
+            "seq_to": max(d["seq"] for d in ds),
+            "cc": {"RRC.ConnEstabAtt": {"total": att, "mo-Signalling": att}, "RRC.ConnEstabSucc": {"total": succ},
+                   "RRC.ConnEstabFailCause": {"NetworkReject": 0, "NoReply": nr, "Other": 0}},
+            "si": {"RRC.ConnMean": round(sum(means) / len(means), 3),
+                   "RRC.ConnMax": max(d["si"]["RRC.ConnMax"] for d in ds)},
+            "ext": {"UeCtxMax": max(d["ext"]["UeCtxMax"] for d in ds), "CrntiAlloc": att},
+            "partial": []})
+    return out
+
+
+def skew_cell2(lines):
+    """셀 2의 kpm2 줄을 다음 셀 1 kpm2 줄 뒤로 미룬다 — 셀 2가 한 칸 늦게 오는 순서(셀마다 순서는 그대로)."""
+    out, held = [], None
+    for x in lines:
+        d = json.loads(x)
+        if d.get("type") == "kpm2" and d["cell_id"] == 2:
+            if held is not None:
+                out.append(held)
+            held = x
+            continue
+        out.append(x)
+        if held is not None and d.get("type") == "kpm2" and d["cell_id"] == 1:
+            out.append(held)
+            held = None
+    if held is not None:
+        out.append(held)
+    return out
+
+
+def agg_lines(srv):
+    """받은 묶은 줄 — 키 → 받은 순서대로의 줄 목록(다시 간 줄이 있으면 2개 이상)."""
+    out = {}
+    for x in srv.accepted_lines():
+        if b'"agg_ms"' in x:
+            d = json.loads(x)
+            out.setdefault((d["session"], d["cell_id"], d["agg_ms"], d["t_start_ms"]), []).append(x)
+    return out
+
+
+def first_of(got):
+    return {k: v[0] for k, v in got.items()}
+
+
+class InputSending(Base):
+    def setUp(self):
+        super().setUp()
+        self.inp = os.path.join(self.dir, "input.jsonl")
+
+    def icfg(self, **over):
+        c = {"inputs": [{"path": self.ev, "kind": "evidence"}, {"path": self.inp, "kind": "input"}],
+             "kpm2_interval_ms": 1000}
+        c.update(over)
+        return self.cfg(**c)
+
+    def write_in(self, lines, mode="ab"):
+        self.write(lines_bytes(lines), mode, self.inp)
+
+    def test_S22_kpm2_aggregated_only(self):
+        # S22: 1000·send_ue_evt false — hello·f1_evt는 바이트 그대로, kpm2는 묶은 줄만(원본 0줄), ue_evt는 가지 않음
+        lines, kpms = gen_stream(3)
+        self.write_in(lines)
+        r = self.once(self.icfg(send_ue_evt=False))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        got = self.srv.accepted_lines()
+        self.assertEqual([x for x in got if b'"agg_ms"' not in x],
+                         [x for x in lines if json.loads(x)["type"] in ("hello", "f1_evt")])
+        self.assertFalse(set(got) & {x for x in lines if json.loads(x)["type"] == "kpm2"})
+        self.assertFalse(any(b'"type":"ue_evt"' in x for x in got))
+        self.assertEqual(first_of(agg_lines(self.srv)), expect_agg(kpms, 1000))
+
+    def test_S23_ue_evt_only(self):
+        # S23: 0·send_ue_evt true — hello·f1_evt·ue_evt만 바이트 그대로, kpm2 없음
+        lines, _ = gen_stream(3)
+        self.write_in(lines)
+        r = self.once(self.icfg(kpm2_interval_ms=0, send_ue_evt=True))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.srv.accepted_lines(), [x for x in lines if json.loads(x)["type"] != "kpm2"])
+
+    def test_S24_aggregate_values(self):
+        # S24: N 1000·5000·10000, 셀 2개 — 합·평균·최대·n·seq·칸 경계와 키 순서·바이트 모양이 기대값과 같다
+        lines, kpms = gen_stream(25, cells=(1, 2))
+        self.write_in(lines)
+        for n_ms in (1000, 5000, 10000):
+            with self.subTest(n_ms=n_ms):
+                srv = self.server()
+                r = self.once(self.icfg(kpm2_interval_ms=n_ms, url=srv.url(),
+                                        state_path=os.path.join(self.dir, f"state_{n_ms}.json")))
+                self.assertEqual(r.returncode, 0, r.stderr)
+                got = agg_lines(srv)
+                self.assertTrue(all(len(v) == 1 for v in got.values()), "each bucket once")
+                self.assertEqual(first_of(got), expect_agg(kpms, n_ms))
+                for (v,) in got.values():
+                    self.assertTrue(v.startswith(b'{"type":"kpm2","ver":1,"agg_ms":%d,"session":' % n_ms))
+
+    def test_S25_unknown_values(self):
+        # S25: 모름 — 일부 null → partial / 모두 null → null / 모두 없음 → 키 없음 / cc 자체 null / total 없는 객체
+        lines, ds, seq = [hello_line(1)], [], 2
+        for slot in range(10):
+            d = kpm2_dict(seq, 1, T0 + slot * 100, slot)
+            seq += 1
+            d["cc"]["RRC.ReEstabAtt"] = None                          # 모든 줄 null → null
+            if slot == 0:
+                d["ext"]["DuCannotServe"] = 1                         # 한 줄에만 → partial
+            if slot == 3:
+                d["cc"] = None                                        # 캡처가 멈춘 창 — cc 이름 모두 모름
+            if slot == 5:
+                d["cc"]["RRC.ConnEstabAtt"] = {"mo-Signalling": 2}    # total 없음 → 그 줄에서 모름
+            if slot == 7:
+                del d["si"]                                           # si 없음
+            ds.append(d)
+            lines.append(jl(d))
+        lines.append(jl(kpm2_dict(seq, 1, T0 + 1000, 10)))  # 다음 칸 첫 줄 — 앞 칸을 닫는다
+        self.write_in(lines)
+        r = self.once(self.icfg())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        a = json.loads(agg_lines(self.srv)[(SESSION, 1, 1000, T0)][0])
+        self.assertEqual(a["n"], 10)
+        att = [d for i, d in enumerate(ds) if i not in (3, 5)]
+        self.assertEqual(a["cc"]["RRC.ConnEstabAtt"]["total"], sum(d["cc"]["RRC.ConnEstabAtt"]["total"] for d in att))
+        self.assertEqual(a["cc"]["RRC.ConnEstabSucc"]["total"],
+                         sum(d["cc"]["RRC.ConnEstabSucc"]["total"] for i, d in enumerate(ds) if i != 3))
+        self.assertIsNone(a["cc"]["RRC.ReEstabAtt"])
+        self.assertNotIn("RRC.ResumeAtt", a["cc"])
+        self.assertEqual(a["ext"]["DuCannotServe"], 1)
+        si = [d for i, d in enumerate(ds) if i != 7]
+        self.assertEqual(a["si"]["RRC.ConnMean"], round(sum(d["si"]["RRC.ConnMean"] for d in si) / 9, 3))
+        self.assertEqual(a["partial"], ["cc.RRC.ConnEstabAtt", "cc.RRC.ConnEstabSucc", "cc.RRC.ConnEstabFailCause",
+                                        "si.RRC.ConnMean", "si.RRC.ConnMax", "ext.DuCannotServe"])
+
+    def test_S26_missing_slots(self):
+        # S26: 10줄 가운데 3줄을 뺀 칸 — n 7
+        lines, kpms = gen_stream(2, ue=False, f1=False)
+        drop = {kpms[2]["seq"], kpms[5]["seq"], kpms[7]["seq"]}
+        self.write_in([x for x in lines if json.loads(x).get("seq") not in drop])
+        self.assertEqual(self.once(self.icfg()).returncode, 0)
+        a = json.loads(agg_lines(self.srv)[(SESSION, 1, 1000, T0)][0])
+        self.assertEqual(a["n"], 7)
+
+    def test_S27_late_overlap_bad(self):
+        # S27: 늦은 줄(다른 셀 시각으로 닫힌 칸)·겹친 줄·bad_kpm2 — 보내지 않고 세며 사유마다 경고 한 번, 다른 칸은 그대로
+        lines, good, seq = [hello_line(1)], [], 2
+
+        def k(cell, slot):
+            nonlocal seq
+            d = kpm2_dict(seq, cell, T0 + slot * 100, slot)
+            seq += 1
+            return d
+
+        for slot in range(5):                       # 셀 1: 칸 [0, 1000)의 앞 5줄
+            d = k(1, slot)
+            good.append(d)
+            lines.append(jl(d))
+        for slot in range(31):                      # 셀 2: t 3000(= 1000 + 여유 2000)에서 셀 1의 칸을 닫는다
+            d = k(2, slot)
+            good.append(d)
+            lines.append(jl(d))
+            if slot == 10:
+                lines.append(jl(d))                 # 같은 줄 다시 — overlap
+            if slot in (12, 14):
+                bad = k(2, 99)
+                bad["cc"]["RRC.ConnEstabAtt"]["total"] = -1
+                lines.append(jl(bad))               # bad_kpm2 두 번 — 경고는 한 번
+        lines.append(jl(k(1, 5)))                   # 셀 1의 닫힌 칸에 든 늦은 줄
+        self.write_in(lines)
+        r = self.once(self.icfg())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(first_of(agg_lines(self.srv)), expect_agg(good, 1000))
+        self.assertEqual(r.stderr.count("reason=bad_kpm2"), 1, r.stderr)
+        self.assertEqual(r.stderr.count("reason=overlap"), 1, r.stderr)
+        self.assertEqual(r.stderr.count(" agg_late "), 1, r.stderr)
+
+    def test_S28_session_change(self):
+        # S28: 새 세션 hello — 옛 세션 칸이 그 자리(hello 앞)에서 닫혀 감 / hello 없이 새 세션 kpm2 — 그 셀의 옛 칸이 닫힘
+        a_lines, a_kpms = gen_stream(1.5, session="A", ue=False, f1=False)
+        b_lines, b_kpms = gen_stream(1.2, session="B", t0=T0 + 5000, ue=False, f1=False)
+        self.write_in(a_lines + b_lines)
+        self.assertEqual(self.once(self.icfg()).returncode, 0)
+        got = self.srv.accepted_lines()
+        a_last = expect_agg(a_kpms, 1000)[("A", 1, 1000, T0 + 1000)]
+        self.assertLess(got.index(a_last), got.index(b_lines[0]), "A's open bucket closes before B's hello")
+        self.assertEqual(first_of(agg_lines(self.srv)), {**expect_agg(a_kpms, 1000), **expect_agg(b_kpms, 1000)})
+        # hello 없이 — 상주 모드에서 파일 끝 마무리 없이도 A의 칸이 닫혀 간다(C의 마지막 칸은 열린 채)
+        srv = self.server()
+        inp2 = os.path.join(self.dir, "input2.jsonl")
+        c_lines, c_kpms = gen_stream(1.5, session="C", t0=T0 + 9000, ue=False, f1=False, hello=False)
+        self.write(lines_bytes(a_lines + c_lines), "wb", inp2)
+        p = self.start(self.icfg(url=srv.url(), state_path=os.path.join(self.dir, "state2.json"),
+                                 inputs=[{"path": self.ev, "kind": "evidence"}, {"path": inp2, "kind": "input"}]))
+        self.assertTrue(wait_until(lambda: a_last in srv.accepted_lines()), self.log_of(p))
+        time.sleep(0.5)
+        self.assertNotIn(("C", 1, 1000, T0 + 10000), agg_lines(srv))
+        self.assertEqual(self.term(p), 0)
+
+    def test_S29_one_cell_stops(self):
+        # S29: 셀 2개 중 셀 2만 1.4 s에서 멈춤 — 셀 1의 t_start가 셀 2 칸 끝 + kpm2_close_lag_ms에 닿을 때 셀 2 칸이 닫힘
+        for until, lag, closed in ((50, 2000, True), (39, 2000, False), (50, 3000, False)):
+            with self.subTest(until=until, lag=lag):
+                lines, _ = gen_stream(until / 10, cells=(1, 2), ue=False, f1=False)
+                lines = [x for x in lines if not (json.loads(x).get("cell_id") == 2
+                                                  and json.loads(x)["t_start_ms"] >= T0 + 1500)]
+                inp = os.path.join(self.dir, f"in_{until}_{lag}.jsonl")
+                self.write(lines_bytes(lines), "wb", inp)
+                srv = self.server()
+                p = self.start(self.icfg(url=srv.url(), kpm2_close_lag_ms=lag,
+                                         state_path=os.path.join(self.dir, f"st_{until}_{lag}.json"),
+                                         inputs=[{"path": self.ev, "kind": "evidence"}, {"path": inp, "kind": "input"}]))
+                # 셀 1의 [2000, 3000) 칸까지는 닫혀 간다 — 그 뒤 셀 2의 [1000, 2000) 칸이 닫혔는지 본다
+                self.assertTrue(wait_until(lambda: (SESSION, 1, 1000, T0 + 2000) in agg_lines(srv)), self.log_of(p))
+                time.sleep(0.5)
+                self.assertEqual((SESSION, 2, 1000, T0 + 1000) in agg_lines(srv), closed)
+                self.assertNotIn((SESSION, 1, 1000, T0 + ((until - 1) // 10) * 1000), agg_lines(srv))  # 셀 1 마지막 칸은 열림
+                self.assertEqual(self.term(p), 0)
+
+    def test_S30_restart_keeps_open_buckets(self):
+        # S30: 열린 칸이 있을 때 멈추고 다시 띄움(여러 위치, 셀 2개) — 빠진 칸 없음, 저장 위치 ≤ 열린 칸 첫 줄,
+        #      다시 간 묶은 줄은 처음 것과 바이트 같음(이미 보낸 칸은 반쪽으로 다시 가지 않음)
+        #      skew: 셀 2의 줄이 셀 1보다 한 칸 늦게 옴 — 이미 보낸 셀 2 칸의 끝 줄이 셀 1 열린 칸의 첫 줄 뒤에 있어,
+        #      다시 읽을 때 '보낸 칸'(상태 파일)으로 건너뛰지 않으면 같은 키의 반쪽 줄이 다시 간다(24_ §4.3)
+        base, kpms = gen_stream(8, cells=(1, 2))
+        for skew in (False, True):
+            lines = skew_cell2(base) if skew else base
+            offs, pos = [], 0
+            for x in lines:
+                offs.append(pos)
+                pos += len(x) + 1
+            for cut in (15, 27, 44):
+                with self.subTest(skew=skew, cut=cut):
+                    self._restart_case(lines, offs, kpms, cut, f"{int(skew)}_{cut}")
+
+    def _restart_case(self, lines, offs, kpms, cut, tag):
+        inp = os.path.join(self.dir, f"in_{tag}.jsonl")
+        state = os.path.join(self.dir, f"st_{tag}.json")
+        srv = self.server()
+        # 셀 1의 cut 칸 줄 앞까지 쓰고 상주 전송기로 보낸 뒤 멈춘다
+        ci = next(i for i, x in enumerate(lines)
+                  if json.loads(x).get("cell_id") == 1 and json.loads(x).get("t_start_ms") == T0 + cut * 100)
+        self.write(lines_bytes(lines[:ci]), "wb", inp)
+        cfg = self.icfg(url=srv.url(), state_path=state,
+                        inputs=[{"path": self.ev, "kind": "evidence"}, {"path": inp, "kind": "input"}])
+        p = self.start(cfg)
+        closed = 2 * ((cut - 1) // 10)  # 셀마다 cut 전에 닫힌 칸
+        self.assertTrue(wait_until(lambda: len(agg_lines(srv)) >= closed), self.log_of(p))
+        time.sleep(0.3)
+        self.assertEqual(self.term(p), 0)
+        with open(state) as f:
+            off = json.load(f)["files"][os.path.abspath(inp)]["offset"]
+        open_t = T0 + ((cut - 1) // 10) * 1000
+        first_open = min(offs[i] for i, x in enumerate(lines[:ci]) if json.loads(x).get("t_start_ms") == open_t)
+        self.assertLessEqual(off, first_open)
+        # 나머지를 쓰고 --once로 다시 띄운다
+        self.write(lines_bytes(lines[ci:]), "ab", inp)
+        self.assertEqual(self.once(cfg).returncode, 0)
+        got = agg_lines(srv)
+        for k, v in got.items():
+            self.assertEqual(len(set(v)), 1, f"bucket {k} re-sent with different bytes")
+        self.assertEqual(first_of(got), expect_agg(kpms, 1000))
+
+    def test_S31_once_closes_open_buckets(self):
+        # S31: --once — 파일 끝에서 열린 칸까지 모두 감(마지막 칸은 n 5)
+        lines, kpms = gen_stream(3.5)
+        self.write_in(lines)
+        self.assertEqual(self.once(self.icfg()).returncode, 0)
+        got = first_of(agg_lines(self.srv))
+        self.assertEqual(got, expect_agg(kpms, 1000))
+        self.assertEqual(json.loads(got[(SESSION, 1, 1000, T0 + 3000)])["n"], 5)
+
+    def test_S32_period_mismatch(self):
+        # S32: 원본 주기 P가 N을 나누지 못하는 줄(P 300, N 1000) — 보내지 않고 agg_period 한 번, 다른 셀은 그대로 묶임
+        lines, good, seq = [hello_line(1)], [], 2
+        for slot in range(12):
+            d = kpm2_dict(seq, 1, T0 + slot * 100, slot)
+            good.append(d)
+            lines.append(jl(d))
+            seq += 1
+            if slot % 3 == 0:
+                lines.append(jl(kpm2_dict(seq, 2, T0 + slot * 100, slot, period=300)))
+                seq += 1
+        self.write_in(lines)
+        r = self.once(self.icfg())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(first_of(agg_lines(self.srv)), expect_agg(good, 1000))
+        self.assertEqual(r.stderr.count(" agg_period "), 1, r.stderr)
+        self.assertFalse(any(b'"cell_id":2' in x for x in self.srv.accepted_lines()))  # 셀 2(P 300)는 아무것도 가지 않음
+
+    def test_S33_skipped_lines(self):
+        # S33: JSON 아님·type 없음·모르는 type — 보내지 않고 위치는 넘어감, 사유마다 경고 한 번
+        bad = [b"not json", b"[1,2]", b'{"no":"type"}', b'{"type":5}', b'{"type":"weird"}', b'{"type":"weird2"}']
+        self.write_in(bad + [hello_line(1)])
+        r = self.once(self.icfg())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.srv.accepted_lines(), [hello_line(1)])
+        for reason in ("not_json", "no_type", "unknown_type"):
+            self.assertEqual(r.stderr.count(f"reason={reason}"), 1, r.stderr)
+        self.assertEqual(self.state_offset(self.inp), os.path.getsize(self.inp))
+
+    def test_S34_default_interval(self):
+        # S34 일부: kpm2_interval_ms 키 없음(기본) + input 항목 — 3초 묶음으로 보냄
+        lines, kpms = gen_stream(7)
+        self.write_in(lines)
+        cfg = self.cfg(inputs=[{"path": self.ev, "kind": "evidence"}, {"path": self.inp, "kind": "input"}])
+        self.assertEqual(self.once(cfg).returncode, 0)
+        self.assertEqual(first_of(agg_lines(self.srv)), expect_agg(kpms, 3000))
+
+    def test_S36_two_files(self):
+        # S36: 두 파일 — 파일마다 순서 유지, input이 밀려 있어도 evidence 묶음은 input 묶음 하나 이상 기다리지 않음
+        ev_lines = [L(i) for i in range(150)]  # 50줄 묶음 3개 — 모두 꽉 차 묶음 간격을 기다리지 않는다
+        in_lines = [jl({"type": "ue_evt", "ver": 1, "session": SESSION, "seq": i + 1, "t_ms": T0 + i}) for i in range(500)]
+        self.write(lines_bytes(ev_lines))
+        self.write_in(in_lines)
+        p = self.start(self.icfg(kpm2_interval_ms=0, send_ue_evt=True, batch_max_lines=50))
+        self.assertTrue(wait_until(lambda: len(self.srv.accepted_lines()) == 650), self.log_of(p))
+        self.assertEqual(self.term(p), 0)
+        kinds = ["E" if b'"type":"alert"' in b else "I" for _, b, _ in self.srv.snapshot()]
+        self.assertEqual(kinds[:6], ["E", "I", "E", "I", "E", "I"])
+        got = self.srv.accepted_lines()
+        self.assertEqual([x for x in got if b'"type":"alert"' in x], ev_lines)
+        self.assertEqual([x for x in got if b'"type":"ue_evt"' in x], in_lines)
+
+    def test_S37_end_to_end(self):
+        # S37: detector --replay(기록 켬) + 전송기 N 1000 — 받은 묶은 줄 = 원래 시나리오로 만든 기대값, 증거 줄도 모두 받음
+        scn = os.path.join(DET_SCN, "T05_공격종료.jsonl")
+        det_cfg = os.path.join(self.dir, "detector.json")
+        with open(det_cfg, "w") as f:
+            json.dump({"evidence": {"out_path": self.ev}, "input_record": {"path": self.inp}}, f)
+        d = subprocess.run([DET, "--replay", scn, "--config", det_cfg], capture_output=True, text=True, timeout=60)
+        self.assertEqual(d.returncode, 0, d.stderr)
+        r = self.once(self.icfg())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        raw = [json.loads(x) for x in open(scn, "rb").read().splitlines() if b'"type":"kpm2"' in x]
+        groups = {}
+        for k in raw:
+            groups.setdefault((k["session"], k["cell_id"], 1000, k["t_start_ms"] // 1000 * 1000), []).append(k)
+        got = first_of(agg_lines(self.srv))
+        self.assertEqual(set(got), set(groups))
+        for key, ks in groups.items():
+            a = json.loads(got[key])
+            self.assertEqual(a["n"], len(ks))
+            self.assertEqual((a["seq_from"], a["seq_to"]), (min(k["seq"] for k in ks), max(k["seq"] for k in ks)))
+            for name in ("RRC.ConnEstabAtt", "RRC.ConnEstabSucc"):
+                self.assertEqual(a["cc"][name]["total"], sum(k["cc"][name]["total"] for k in ks))
+            fc = a["cc"]["RRC.ConnEstabFailCause"]
+            for cause in ("NoReply", "NetworkReject", "Other"):
+                self.assertEqual(fc[cause], sum(k["cc"]["RRC.ConnEstabFailCause"][cause] for k in ks))
+            self.assertEqual(a["partial"], [])
+        with open(self.ev, "rb") as f:
+            ev = [x for x in f.read().split(b"\n") if x]
+        self.assertTrue(ev)
+        self.assertEqual([x for x in self.srv.accepted_lines() if b'"type":"alert"' in x or b'"type":"evidence"' in x
+                          or b'"type":"gap"' in x], ev)
+
+    def test_S38_change_interval(self):
+        # S38: N 1000으로 보내다 멈추고 5000으로 다시 띄움 — 모든 원본 kpm2가 어느 묶은 줄에 듦, 원본 줄은 가지 않음
+        lines, kpms = gen_stream(20)
+        ci = next(i for i, x in enumerate(lines) if json.loads(x).get("t_start_ms") == T0 + 4500)
+        self.write_in(lines[:ci])
+        p = self.start(self.icfg(kpm2_interval_ms=1000))
+        self.assertTrue(wait_until(lambda: len(agg_lines(self.srv)) >= 4), self.log_of(p))
+        time.sleep(0.3)
+        self.assertEqual(self.term(p), 0)
+        self.write_in(lines[ci:])
+        self.assertEqual(self.once(self.icfg(kpm2_interval_ms=5000)).returncode, 0)
+        got = [json.loads(v[0]) for v in agg_lines(self.srv).values()]
+        self.assertTrue({a["agg_ms"] for a in got} == {1000, 5000})
+        for d in kpms:
+            self.assertTrue(any(a["cell_id"] == d["cell_id"] and a["t_start_ms"] <= d["t_start_ms"] < a["t_end_ms"]
+                                and a["seq_from"] <= d["seq"] <= a["seq_to"] for a in got), f"kpm2 seq {d['seq']}")
+        self.assertFalse(set(self.srv.accepted_lines()) & {x for x in lines if json.loads(x)["type"] == "kpm2"})
+
+    def test_S39_resend_other_state(self):
+        # S39: 같은 기록 파일을 다른 state_path로 --once(N 10000) — 파일 처음부터 새 주기로
+        lines, kpms = gen_stream(25)
+        self.write_in(lines)
+        self.assertEqual(self.once(self.icfg(kpm2_interval_ms=1000)).returncode, 0)
+        srv = self.server()
+        self.assertEqual(self.once(self.icfg(kpm2_interval_ms=10000, url=srv.url(),
+                                             state_path=os.path.join(self.dir, "other_state.json"))).returncode, 0)
+        self.assertEqual(first_of(agg_lines(srv)), expect_agg(kpms, 10000))
+
+
+class InputConfig(Base):
+    needs_server = False
+
+    def test_S34_config(self):
+        # S34: kpm2_interval_ms 범위 밖 → 1 / input 항목 없음 → 경고 없이 evidence만 / input 2개 → 1 /
+        #      input·evidence 같은 경로 → 1 / input 있는데 0·false → 경고 후 evidence만
+        self.write(lines_bytes([L(1)]))
+        inp = os.path.join(self.dir, "input.jsonl")
+        two = [{"path": self.ev, "kind": "evidence"}, {"path": inp, "kind": "input"}]
+        for over in ({"kpm2_interval_ms": 100}, {"kpm2_interval_ms": 500}, {"kpm2_interval_ms": 1500},
+                     {"kpm2_interval_ms": 700000}, {"kpm2_interval_ms": "3000"}, {"kpm2_close_lag_ms": 50},
+                     {"inputs": two + [{"path": inp + "2", "kind": "input"}]},
+                     {"inputs": [{"path": self.ev, "kind": "evidence"}, {"path": self.ev, "kind": "input"}]}):
+            with self.subTest(over=over):
+                r = self.run_sender(self.cfg(**over), "--dry-run")
+                self.assertEqual(r.returncode, 1, r.stderr)
+                self.assertIn("config_error", r.stderr)
+        for over in ({}, {"kpm2_interval_ms": 5000}):
+            with self.subTest(no_input=over):
+                r = self.run_sender(self.cfg(**over), "--dry-run")
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertNotIn("config_warning", r.stderr)
+                self.assertIn("lines=1", r.stderr)
+        r = self.run_sender(self.cfg(inputs=two, kpm2_interval_ms=0, send_ue_evt=False), "--dry-run")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("kind=input entry ignored", r.stderr)
+        self.assertNotIn("input.jsonl", r.stderr.split("kind=input entry ignored")[1])  # 따라 읽지 않음
+
+    def test_S35_check_detector_config(self):
+        # S35: 시작 전 확인(24_ §7 표) — input 있음 × 탐지 엔진 null·다른 경로·같은 경로 / input 없음 × 경로 있음·null
+        inp = os.path.join(self.dir, "input.jsonl")
+        with_in = self.cfg(inputs=[{"path": self.ev, "kind": "evidence"}, {"path": inp, "kind": "input"}])
+        no_in = self.cfg()
+        det = os.path.join(self.dir, "det.json")
+
+        def check(rec, sender_cfg):
+            with open(det, "w") as f:
+                json.dump({"evidence": {"out_path": self.ev}, "input_record": {"path": rec}}, f)
+            return self.run_sender(sender_cfg, "--check-detector-config", det)
+
+        r = check(None, with_in)
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("not_recording", r.stderr)
+        r = check(os.path.join(self.dir, "other.jsonl"), with_in)
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("mismatch", r.stderr)
+        r = check("input.jsonl", with_in)  # 상대 경로 — 전송기를 띄운 폴더 기준이라 같은 파일
+        self.assertEqual(r.returncode, 0, r.stderr)
+        r = check(inp, no_in)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("input_not_sent", r.stderr)
+        r = check(None, no_in)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("input_not_sent", r.stderr)
+        self.assertNotIn("check_input_path", r.stderr)
+        self.assertEqual(self.run_sender(with_in, "--check-detector-config", "-").returncode, 1)  # 기본값은 기록 끔
 
 
 # ---------------------------------------------------------------- 실행 스크립트 (S16·S18)
@@ -737,6 +1242,19 @@ class RunScript(Base):
         self.assertIn(os.path.realpath(self.ev), log)
         self.assertFalse(os.path.exists(self.ev))  # 가짜 탐지 엔진을 띄우지 않았다
         self.assertFalse(os.path.exists(os.path.join(self.dir, "sender_state.json.lock")))  # 전송기도
+
+    def test_S35_script_input_not_recorded(self):
+        # S35: 전송기에 input 항목이 있는데 탐지 엔진 설정이 기록하지 않음(input_record.path null) → 종료 코드 1, 아무것도 띄우지 않음
+        det = os.path.join(self.dir, "det.json")
+        with open(det, "w") as f:
+            json.dump({"evidence": {"out_path": "evidence.jsonl"}, "input_record": {"path": None}}, f)
+        cfg = self.cfg(inputs=[{"path": "evidence.jsonl", "kind": "evidence"}, {"path": "input.jsonl", "kind": "input"}],
+                       state_path="sender_state.json")
+        p = self.popen_script(cfg, "finite", "--config", det)
+        self.assertEqual(p.wait(timeout=30), 1, self.log_of(p))
+        self.assertIn("not_recording", self.log_of(p))
+        self.assertFalse(os.path.exists(self.ev))
+        self.assertFalse(os.path.exists(os.path.join(self.dir, "sender_state.json.lock")))
 
 
 if __name__ == "__main__":
