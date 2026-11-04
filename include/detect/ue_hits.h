@@ -6,11 +6,13 @@
 // 걸림을 다시 싣지 않는다(23_ §3.1-2, 이슈 #84 — 창 W가 해제 시간보다 길면(AN-04 300 s > 60 s) 옛 S-TMSI가 재수록됐다). '없음'을 기다리지 않으므로
 // 보류·불확실 경보가 없다(§1.1). 걸린 뒤 같은 연결에서 바뀌는 값(반복·재인증 관측 등)은 UE 칸에 다시 싣지 않고 경보 values의
 // 누적 수로 낸다 — update에는 새로 걸린 UE만 실리기 때문이다(§1.1, 14_ §8.3, 1_ §6 11/04). clear·end에도 누적값을 실어(룰 decorate,
-// 14_ §8.3 — 11/04 Q-69 W-28) UE 하나의 지속 공격에서 쌓인 수가 레코드에 남게 한다 — CLEAR·END 뒤에도 다음 RAISE까지 count·evicted가 남는다
+// 14_ §8.3 — 11/04 Q-69 W-28) UE 하나의 지속 공격에서 쌓인 수가 레코드에 남게 한다 — CLEAR·END 뒤에도 다음 RAISE까지 count·evicted가 남는다.
+// 밀어내기 창은 2·3단계와 같은 EvictWindow다(14_ §6.3 — 11/05 26_ R1, 이슈 #96)
 
 #include "detect/alert.h"
 #include "detect/config.h"
 #include "detect/ue_alert.h"
+#include "detect/ue_held.h"
 #include "detect/ue_rule.h"
 #include "detect/ue_table.h"
 
@@ -81,7 +83,7 @@ class HitWindow {
   int64_t count(int64_t cell, const std::string& name) const;       // 열린 경보에 실린 연결의 누적 수
   int64_t evicted(int64_t cell, bool raise, int64_t t);              // raise면 직전 clear_quiet_ms 이동 창, 아니면 경보가 열린 뒤 누적
   bool open(int64_t cell) const { return book_.open(cell); }
-  std::size_t evict_times_size(int64_t cell) const;  // 테스트용 — 밀어내기 시각 목록 길이 (W-32)
+  std::size_t evict_times_size(int64_t cell) const { return evict_.times_size(cell); }  // 테스트용 (W-32)
 
  private:
   struct Hit {
@@ -98,9 +100,6 @@ class HitWindow {
     int64_t t_hit_last = 0;                     // 경보에 실린 마지막 걸림 시각 — CLEAR 기준 (21_ §3.5)
     int64_t t_sat = 0;                          // 마지막 성립 시각 — clear_on_satisfied면 CLEAR 기준 (21_ §5.5)
     std::map<std::string, int64_t> counts;      // 경보가 열린 뒤 누적 수
-    int64_t evicted_seen = 0;                   // 상태표 셀별 누적 evicted 중 이미 적은 수
-    int64_t evicted_open = 0;                   // 경보가 열린 뒤 밀어내기 수
-    std::deque<int64_t> evict_times;            // 밀어내기 시각 (이동 창)
   };
   struct Conn {
     int64_t cell = 0;
@@ -113,14 +112,13 @@ class HitWindow {
 
   void include(Cell& c, const Hit& h);
   void forget_window(Cell& c);  // CLEAR·END 뒤 창·해제 기준을 비운다 (이슈 #84)
-  void note_evictions(Cell& c, int64_t cell, int64_t t, const UeRuleCtx& ctx);
-  int64_t evicted_window(Cell& c, int64_t now) const;
 
   int64_t window_ms_;
   int64_t n_;
   int64_t clear_quiet_ms_;
   bool clear_on_satisfied_ = false;
   UeAlertBook book_;
+  EvictWindow evict_;  // 셀별 밀어내기 창 (14_ §6.3) — 2·3단계와 같은 헬퍼 (R1, 이슈 #96)
   std::map<int64_t, Cell> cells_;
   std::map<UeId, Conn> conns_;  // 걸린 열린 연결
 };

@@ -29,6 +29,7 @@ add_executable(detect_tests
   core/test_imsi_extractor.cpp
   core/test_cap_hijack.cpp
   core/test_nas_desync.cpp
+  core/test_ue_held.cpp
   core/test_ue_hits.cpp
   core/test_sync_failure.cpp
   core/test_sec_reauth.cpp

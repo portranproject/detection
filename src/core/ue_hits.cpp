@@ -20,7 +20,11 @@ void refresh(AlertUe& u, const UeState& s) {
 }  // namespace
 
 HitWindow::HitWindow(std::string rule, AlertConfig alert, int64_t window_ms, int64_t n, int64_t clear_quiet_ms)
-    : window_ms_(window_ms), n_(n), clear_quiet_ms_(clear_quiet_ms), book_(std::move(rule), alert, "anomaly", 4) {}
+    : window_ms_(window_ms),
+      n_(n),
+      clear_quiet_ms_(clear_quiet_ms),
+      book_(std::move(rule), alert, "anomaly", 4),
+      evict_(clear_quiet_ms) {}
 
 bool HitWindow::hit(const UeId& id, AlertUe u, bool force, std::optional<UeId> ref) {
   if (conns_.count(id)) return false;
@@ -95,7 +99,7 @@ void HitWindow::include(Cell& c, const Hit& h) {
 void HitWindow::tick(int64_t cell, int64_t t, bool input_lost, const UeRuleCtx& ctx, std::vector<AlertEvent>& out,
                      const Decorate& fn) {
   Cell& c = cells_[cell];
-  note_evictions(c, cell, t, ctx);
+  evict_.note(cell, t, book_.open(cell), ctx);
   std::size_t from = out.size();
   const bool ended = input_lost && book_.open(cell);
   if (ended) book_.end(cell, t, "input_lost", out);
@@ -119,7 +123,7 @@ void HitWindow::tick(int64_t cell, int64_t t, bool input_lost, const UeRuleCtx& 
     } else if (sat) {
       ++c.epoch;         // 새 경보 — 세대를 올린다 (W-34): 옛 경보에 실린 키는 더 이상 '실린 키'가 아니다
       c.counts.clear();  // 새 경보 — 누적 수를 처음부터 센다
-      c.evicted_open = 0;
+      evict_.reset_open(cell);
       std::vector<AlertUe> ues;
       for (const Hit& w : c.win) {
         include(c, w);
@@ -134,7 +138,7 @@ void HitWindow::tick(int64_t cell, int64_t t, bool input_lost, const UeRuleCtx& 
   from = out.size();
   book_.flush(cell, t, out);
   const int64_t base = clear_on_satisfied_ ? c.t_sat : c.t_hit_last;
-  const bool cleared = book_.open(cell) && t - base >= clear_quiet_ms_ && evicted_window(c, t) == 0;
+  const bool cleared = book_.open(cell) && t - base >= clear_quiet_ms_ && evict_.window(cell, t) == 0;
   if (cleared) book_.clear(cell, t, out);
   fn(from, nullptr);  // 모아 둔 UPDATE·CLEAR — 창을 비우기 전에 채운다(UPDATE의 창 안 수, CLEAR의 누적값 — 14_ §8.3)
   if (cleared) forget_window(c);
@@ -159,6 +163,7 @@ void HitWindow::end_all(const std::string& reason, std::vector<AlertEvent>& out)
 void HitWindow::reset() {
   cells_.clear();
   conns_.clear();
+  evict_.reset();
 }
 
 int64_t HitWindow::window(int64_t cell) const {
@@ -184,32 +189,8 @@ int64_t HitWindow::count(int64_t cell, const std::string& name) const {
   return n == it->second.counts.end() ? 0 : n->second;
 }
 
-std::size_t HitWindow::evict_times_size(int64_t cell) const {
-  auto it = cells_.find(cell);
-  return it == cells_.end() ? 0 : it->second.evict_times.size();
-}
-
 int64_t HitWindow::evicted(int64_t cell, bool raise, int64_t t) {
-  Cell& c = cells_[cell];
-  return raise ? evicted_window(c, t) : c.evicted_open;
-}
-
-// 상태표 셀별 누적 evicted(14_ §6.3)의 증가분을 이 칸 시각으로 적는다 — 경보가 열려 있으면 evicted_open도
-void HitWindow::note_evictions(Cell& c, int64_t cell, int64_t t, const UeRuleCtx& ctx) {
-  // 창 밖 시각은 경보가 없을 때도 버린다 (11/05 W-32, 이슈 #92 — 25_ §3.1-4): 그전에는 evicted_window가 열린 경보의 해제 판단과
-  // RAISE에서만 불려, 경보가 없는 포화 홍수에서 밀어내기마다 시각이 무한히 쌓였다
-  evicted_window(c, t);
-  const int64_t total = ctx.table.counts(cell).evicted;
-  for (; c.evicted_seen < total; ++c.evicted_seen) {
-    c.evict_times.push_back(t);
-    if (book_.open(cell)) ++c.evicted_open;
-  }
-}
-
-// 직전 clear_quiet_ms 동안의 밀어내기 수 (이동 창) — raise의 values.evicted와 해제 보류 기준
-int64_t HitWindow::evicted_window(Cell& c, int64_t now) const {
-  while (!c.evict_times.empty() && c.evict_times.front() <= now - clear_quiet_ms_) c.evict_times.pop_front();
-  return static_cast<int64_t>(c.evict_times.size());
+  return raise ? evict_.window(cell, t) : evict_.open(cell);
 }
 
 }  // namespace detect

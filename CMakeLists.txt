@@ -32,6 +32,7 @@ add_library(detect
   src/core/ue_evidence.cpp
   src/core/ue_alert.cpp
   src/core/ue_lookback.cpp
+  src/core/ue_held.cpp
   src/core/ue_hits.cpp
   src/core/rules/bts_variant.cpp
   src/core/rules/blind_dos.cpp

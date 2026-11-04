@@ -7,12 +7,12 @@
 
 #include "detect/config.h"
 #include "detect/ue_alert.h"
+#include "detect/ue_held.h"
 #include "detect/ue_lookback.h"
 #include "detect/ue_rule.h"
 
 #include <cstddef>
 #include <cstdint>
-#include <deque>
 #include <map>
 #include <vector>
 
@@ -38,35 +38,22 @@ class ImsiExtractorRule : public UeRule {
   const LookbackMarks& marks() const { return marks_; }  // 테스트용: 표시(대기·결정됨)
 
  private:
-  // 셀별 — 경보 누적값과 해제 기준 (20_ §3.5·§3.6). 밀어내기·불확실 경보는 L3-20과 같다(15_ §2.5·§2.6, 14_ §6.2)
+  // 셀별 — 경보 누적값과 해제 기준 (20_ §3.5·§3.6). 밀어내기 창은 evict_, 불확실 경보는 held_ (15_ §2.5·§2.6, 14_ §6.2 — R1, 이슈 #96)
   struct CellState {
     int64_t t_hit_last = 0;            // 마지막으로 UE가 걸린 시각(응답 t_r) — CLEAR 기준. extra는 늘리지 않는다
     int64_t epoch = 0;                 // 경보 세대 — 새 경보마다 +1, 표시의 epoch과 대조 (11/05 W-34)
     int64_t extra_open = 0;            // 경보가 열린 뒤 걸린 연결에서 더 온 요청 없는 응답 수 (20_ §3.3-4)
-    int64_t held_open = 0;             // 경보가 열린 뒤 보류된 판정 수
-    std::deque<int64_t> held_times;    // 보류 시각 — raise의 held는 직전 clear_quiet_ms 동안 (이동 창)
-    int64_t evicted_seen = 0;          // 상태표 셀별 누적 evicted 중 이미 적은 수
-    int64_t evicted_open = 0;          // 경보가 열린 뒤 밀어내기 수 — update의 values.evicted
-    std::deque<int64_t> evict_times;   // 밀어내기 시각 — raise의 values.evicted·해제 보류 (이동 창)
-    std::vector<AlertUe> fresh_held;   // 이번 kpm2의 마감 처리에서 보류된 UE — held_tick에서 본다
-    std::deque<AlertUe> held_ues;      // 마지막 보류 시각 기준 (t − clear_quiet_ms, t] 안의 보류 UE
-    int64_t t_last_held = 0;           // 마지막 보류 시각 — 불확실 경보 CLEAR 기준
   };
 
   void hit(const LookbackMarks::Decision& dc, int64_t now, const UeRuleCtx& ctx, RuleOutput& out);
   void decorate(std::size_t from, RuleOutput& out);
   AlertUe held_ue(const LookbackMarks::Decision& dc, int64_t t_hit) const;
-  void held_tick(int64_t cell, CellState& c, int64_t t, bool input_lost, const UeRuleCtx& ctx, RuleOutput& out);
-  void close_held(int64_t cell, int64_t t, RuleOutput& out);
-  void decorate_held(std::size_t from, RuleOutput& out);
-  int64_t held_window(CellState& c, int64_t now) const;
-  int64_t evicted_window(CellState& c, int64_t now) const;
-  void note_evictions(CellState& c, int64_t cell, int64_t t, const UeRuleCtx& ctx);
 
   ImsiExtractorConfig cfg_;
   AlertConfig alert_;
-  UeAlertBook book_;       // 공격 경보 (kind attack, stage 3)
-  UeAlertBook held_book_;  // 불확실 경보 (kind anomaly, stage 3 — 14_ §6.2, 20_ §3.7)
+  UeAlertBook book_;   // 공격 경보 (kind attack, stage 3)
+  HeldBook held_;      // 불확실 경보 (kind anomaly, stage 3 — 14_ §6.2, 20_ §3.7; 공통 헬퍼 R1)
+  EvictWindow evict_;  // 상태표 밀어내기 창 (14_ §6.3 — Q-56)
   LookbackMarks marks_;
   std::map<int64_t, CellState> cells_;
 };
