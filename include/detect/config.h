@@ -158,6 +158,13 @@ struct KnownRegBurstConfig {
   int64_t clear_quiet_ms = 60000;  // clear_quiet_ms — 마지막 성립 뒤 이만큼 새 성립이 없으면 해제 (21_ §8.5)
 };
 
+// 입력 원본 기록 (24_ §3.1, 4_ §1.2 input_record). 받은 입력 줄을 그대로 파일에 남긴다 — 상시 KPM 전송의 탐지 엔진 쪽.
+// 판정과 무관하다. path가 null이면 끔(기본). evidence.out_path와 같은 파일인지는 실행 파일이 본다(경로 비교에 작업 폴더가 필요)
+struct InputRecordConfig {
+  std::optional<std::string> path;              // path — 기록 파일. null이면 끔. 상대 경로는 탐지 엔진을 띄운 폴더 기준
+  std::size_t queue_max_bytes = 8388608;        // queue_max_bytes — 쓰기를 기다리는 줄의 바이트 합 상한(줄 + \n), 65,536~67,108,864
+};
+
 // 설정 파일 전체 (4_ §1.2). rules는 룰 ID → 그 룰의 설정 객체(JSON 문자열)다 — 공통 파서는 넘기기만 하고
 // 룰별 파서(parse_bts_variant_config 등)가 키·범위를 검사한다 (Q-46, 결정 J4)
 struct DetectorConfig {
@@ -171,6 +178,7 @@ struct DetectorConfig {
   EvidenceConfig evidence;                                // evidence
   UeTableConfig ue_table;                                 // ue_table — 2단계 UE 상태표 (14_ §9)
   AlertConfig alert;                                      // alert — 2단계 UE 경보 (14_ §9)
+  InputRecordConfig input_record;                         // input_record — 입력 원본 기록 (24_ §3.1)
 };
 
 struct ConfigResult {

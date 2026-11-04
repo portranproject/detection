@@ -37,5 +37,6 @@
   "evidence": {
     "mode": "full", "pre_slots": null, "post_slots": 10,
     "queue_max": 4096, "out_path": "evidence.jsonl"
-  }
+  },
+  "input_record": { "path": null, "queue_max_bytes": 8388608 }
 }
