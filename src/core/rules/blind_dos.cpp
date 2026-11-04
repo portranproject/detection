@@ -19,9 +19,10 @@ bool accepted(const UeState& s) {
 }
 
 // 짝의 확실성 (15_ §2.3, 10/29 검수 B4): 불확실 표시가 없거나, loss뿐이고 마지막 로스 창 뒤에 줄이 있으면 확실하다 —
-// 해제 줄을 놓친 유령은 로스 뒤에 줄을 낼 수 없다
-bool certain(const UeState& p) {
-  if (p.mid_join || p.late) return false;
+// 해제 줄을 놓친 유령은 로스 뒤에 줄을 낼 수 없다. late는 late_until이 지나기 전(t0 기준)에만 불확실로 본다 (11/05 Q-72, 이슈 #94 —
+// 그전에는 영구라 세션이 긴 피해자에게 늦은 줄 하나가 붙으면 그 뒤 모든 공격이 peer_uncertain이었다, 25_ §3.3-5)
+bool certain(const UeState& p, int64_t t0) {
+  if (p.mid_join || p.late_blocks(t0)) return false;
   return !p.loss || (p.t_loss && p.t_last > *p.t_loss);
 }
 
@@ -56,8 +57,14 @@ std::string hex48(uint64_t v) {
 BlindDosRule::BlindDosRule(BlindDosConfig cfg, AlertConfig alert)
     : cfg_(cfg), alert_(alert), book_(kId, alert), held_book_(kId, alert, "anomaly") {}
 
-// 증거 지평 (14_ §1.1): 수락 대기 + UPDATE 모음 지연 — 마감 전에 닫힌 n이 걸려 UPDATE로 실릴 때까지 recent가 남게
-int64_t BlindDosRule::evidence_horizon_ms() const { return cfg_.accept_wait_ms + alert_.update_min_ms; }
+// 증거 지평 (14_ §1.1, 15_ §2.6 — 11/05 Q-72, 이슈 #94): 수락 대기 + 보류 창(clear_quiet_ms) + UPDATE 모음 지연 — 불확실 경보가 직전
+// clear_quiet_ms 안 보류 UE를 실을 때 닫힌 UE의 recent가 남아 있게(그전 6 s는 7 s 넘게 전 닫힌 UE를 evidence:false로 실었다, 25_ §3.3-5)
+int64_t BlindDosRule::evidence_horizon_ms() const {
+  return cfg_.accept_wait_ms + cfg_.clear_quiet_ms + alert_.update_min_ms;
+}
+
+// 늦은 줄 지평 (14_ §4.3): 종전 값 그대로 — 수락 대기 + UPDATE 모음 지연. 증거 지평을 늘렸다고 '없음' 판정 제외가 60 s로 늘면 안 된다
+int64_t BlindDosRule::late_horizon_ms() const { return cfg_.accept_wait_ms + alert_.update_min_ms; }
 
 // ue_evt 한 줄 (15_ §2.3 '기다리는 동안'·'기다림 시작'):
 //  1) 짝에 UEContextReleaseCommand가 왔다 — 그 짝을 가진 표시에 피해 확정
@@ -76,16 +83,19 @@ void BlindDosRule::on_ue_event(const UeEvt& evt, const UeState& before, const Ue
   }
 }
 
-// 기다림 시작 (15_ §2.3 1~4): n이 mid_join이거나 이미 망 수락이면 시작하지 않는다. 같은 S-TMSI의 다른 열린 연결(짝)이
-// 없으면 시작하지 않는다 — IDLE형이거나 피해자의 S-TMSI를 모르는 경우다(15_ §2.1·§2.7). 확실한 짝이 하나라도 있으면
-// concurrent, 모두 불확실하면 peer_uncertain — 짝이 해제 줄을 놓친 유령일 수 있어 '동시'를 확정하지 못하기 때문이다
+// 기다림 시작 (15_ §2.3 1~4): n이 mid_join이거나 이미 망 수락이면 시작하지 않는다. 같은 S-TMSI의 다른 열린 연결 가운데 **망 수락을
+// 한 번이라도 얻은 것**(짝)이 없으면 시작하지 않는다 — IDLE형이거나 피해자의 S-TMSI를 모르는 경우다(15_ §2.1·§2.7). 수락을 얻지
+// 못한 항목(앞선 공격 연결 등)은 짝이 아니다 (11/05 Q-72, 이슈 #94 — 그전에는 열린 항목 모두라 앞선 공격 연결의 해제가 victim_released를
+// 켜 반복 공격 2번째부터 high였다, 25_ §3.2-5). 확실한 짝이 하나라도 있으면 concurrent, 모두 불확실하면 peer_uncertain —
+// 짝이 해제 줄을 놓친 유령일 수 있어 '동시'를 확정하지 못하기 때문이다
 void BlindDosRule::start(const UeState& n, int64_t t0, const UeRuleCtx& ctx) {
   if (n.mid_join || accepted(n)) return;
   Mark m;
   for (const UeState* p : ctx.table.by_s_tmsi(*n.s_tmsi)) {
     if (p->key == n.key && p->uid == n.uid) continue;
+    if (!p->ever_accepted) continue;
     m.peers.emplace_back(p->key, p->uid);
-    m.concurrent = m.concurrent || certain(*p);
+    m.concurrent = m.concurrent || certain(*p, t0);
   }
   if (m.peers.empty()) return;
   m.s_tmsi = *n.s_tmsi;
