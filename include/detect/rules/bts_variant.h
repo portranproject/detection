@@ -56,7 +56,8 @@ class BtsVariantRule : public Rule {
                        bool alert_slot, RuleOutput& out);                // 3_ §5
   void emit(CellState& st, const Ctx& c, AlertMode mode, const WindowSums& w, const Verdict& v,
             AlertMachine::Step step, RuleOutput& out);                   // 3_ §7·§6.1 다
-  void end_alert(CellState& st, int64_t cell_id, int64_t t, const char* reason, RuleOutput& out);
+  void end_alert(CellState& st, int64_t cell_id, int64_t t, const char* reason, RuleOutput& out,
+                 const Ctx* c = nullptr);                                 // 3_ §7.1 end 레코드 — c가 있으면 그 칸의 uectx
 
   BtsVariantConfig cfg_;
   std::map<int64_t, CellState> cells_;

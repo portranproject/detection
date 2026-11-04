@@ -366,3 +366,21 @@ TEST(BtsVariant, DlMissingCondHasC3AfterWarmup) {
   EXPECT_EQ(h.alerts[0].mode, AlertMode::DlMissing);
   EXPECT_EQ(h.alerts[0].cond, (std::vector<std::string>{"U", "C3"}));
 }
+
+// input_lost END의 C4 값 (3_ §7.1 — 11/05 Q-76 해결, 이슈 #94): 칸이 있는 input_lost END는 values에 그 칸의 uectx·max_conn을 싣는다
+// (로그 줄에는 없음 — 3_ §7 결정 E2). session_reset·input_silent END는 칸이 없어 생략(EndOnInputSilent)
+TEST(BtsVariant, InputLostEndCarriesUectx) {
+  Harness h({}, 1000, 96);
+  h.slots(10, {0, 0, 0});
+  h.slots(10, {3, 0, 0});
+  h.slots(4, {3, 0, 3});  // 칸 23(t = 2400)에서 RAISE
+  ASSERT_EQ(h.alerts.size(), 1u);
+  h.slots(102, {std::nullopt, 0, 0, 90});  // A·S null → 보류, H_hold(10 s)를 넘기면 input_lost
+  ASSERT_EQ(h.alerts.size(), 2u);
+  const AlertEvent& e = h.alerts[1];
+  EXPECT_EQ(e.kind, AlertEventKind::End);
+  EXPECT_EQ(e.reason, "input_lost");
+  EXPECT_EQ(e.values.at("uectx"), 90);
+  EXPECT_EQ(e.values.at("max_conn"), 96);
+  EXPECT_EQ(format_log_line(e).find("uectx"), std::string::npos);
+}

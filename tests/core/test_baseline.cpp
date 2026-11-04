@@ -43,3 +43,16 @@ TEST(Baseline, LongTimeConstantResistsSpike) {
   for (int i = 0; i < 20; ++i) b.add(3100 + 100 * i, 300);  // 2 s 동안 큰 값
   EXPECT_LT(b.value() - before, 3.0);
 }
+
+// 웜업 표본 0개 (3_ §5 — 11/05 Q-76 해결, 이슈 #94): 웜업 동안 갱신 표본이 없었으면 웜업 뒤 첫 표본으로 시드하고 그 뒤 EWMA.
+// 0에서 EWMA를 시작하면 τ 동안 C3가 늘 참이었다(25_ §3.2-7)
+TEST(Baseline, SeedWhenNoWarmupSamples) {
+  Baseline b(1000, 300, 100);
+  b.tick(0);
+  b.tick(900);
+  EXPECT_DOUBLE_EQ(b.value(), 0.0);
+  b.add(1000, 6);  // 웜업(1 s) 뒤 첫 표본 → 시드
+  EXPECT_DOUBLE_EQ(b.value(), 6.0);
+  b.add(1100, 3006);  // 그 뒤 EWMA (α = 1/3000)
+  EXPECT_NEAR(b.value(), 6.0 + 3000.0 / 3000.0, 1e-9);
+}

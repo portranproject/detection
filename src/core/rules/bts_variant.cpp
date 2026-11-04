@@ -78,8 +78,11 @@ std::optional<double> BtsVariantRule::base(int64_t cell_id) const {
   return it->second.base.value();
 }
 
-// 진행 중 경보 강제 종료 — session 변경·H_hold 초과 (3_ §7.1 end 레코드, §8, 결정 E3)
-void BtsVariantRule::end_alert(CellState& st, int64_t cell_id, int64_t t, const char* reason, RuleOutput& out) {
+// 진행 중 경보 강제 종료 — session 변경·H_hold 초과 (3_ §7.1 end 레코드, §8, 결정 E3).
+// C4 값 uectx·max_conn은 어느 이벤트든 values에 싣는다 (3_ §7.1 — 11/05 Q-76, 이슈 #94): 칸이 있는 input_lost END만 — session_reset·
+// input_silent END는 칸이 없어 생략. 로그 줄에는 RAISE·UPDATE만 uectx (3_ §7, 결정 E2)
+void BtsVariantRule::end_alert(CellState& st, int64_t cell_id, int64_t t, const char* reason, RuleOutput& out,
+                               const Ctx* c) {
   if (st.machine.active()) {
     AlertEvent e;
     e.kind = AlertEventKind::End;
@@ -94,6 +97,13 @@ void BtsVariantRule::end_alert(CellState& st, int64_t cell_id, int64_t t, const 
     e.mode = st.mode.value_or(AlertMode::Normal);
     e.duration_ms = t - st.machine.raised_at();
     e.reason = reason;
+    if (c) {
+      const std::optional<int64_t> max_conn = max_conn_for(c->hello, cell_id, cfg_);
+      if (max_conn && c->k.ue_ctx_max) {
+        e.values["uectx"] = *c->k.ue_ctx_max;
+        e.values["max_conn"] = *max_conn;
+      }
+    }
     out.alerts.push_back(std::move(e));
   }
   st.machine.reset();
@@ -293,7 +303,7 @@ void BtsVariantRule::on_feed(const Series& series, const FeedResult& fed, RuleOu
 
   // 보류 (3_ §8) — series가 판단한다. 보류가 H_hold를 넘었으면(input_lost) 진행 중 경보를 끝낸다.
   // 보류 칸은 성립·불성립 어느 쪽으로도 세지 않는다 — M·K·t_last 유지, 기준선도 그대로
-  if (fed.input_lost) end_alert(st, cell_id, c.t, "input_lost", out);
+  if (fed.input_lost) end_alert(st, cell_id, c.t, "input_lost", out, &c);
   if (fed.hold) return;
   const WindowSums& w = fed.sums;
   const std::optional<AlertMode> mode = decide_mode(w);
