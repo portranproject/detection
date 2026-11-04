@@ -1240,3 +1240,20 @@ TEST(UeTable, UT36RecordRejected) {
   EXPECT_FALSE(c[0]->rejected);
   EXPECT_FALSE(c[0]->connected);
 }
+
+// 14_ §5.3 FAILED 행 (11/05 Q-70 해결, 이슈 #94): SecurityModeFailure 뒤 CU가 다시 보낸 RRC SecurityModeCommand는 FAILED → CMD(rrc_alg
+// 갱신), Complete면 ON. 그전에는 FAILED가 흡수 상태라 재시도 뒤 정상 능력 요청을 L3-14 갈래 ②가 잡았다(25_ §3.2-4)
+TEST(UeTable, RrcSecFailedThenRetryCommand) {
+  Harness h;
+  connect(h, 0, 3);
+  h.rrc(140, 3, "DL", "SecurityModeCommand", R"("cipher":"nea0","integrity":"nia2")");
+  EXPECT_EQ(h.ue_state(3)->rrc_sec, RrcSecState::Cmd);
+  h.rrc(145, 3, "UL", "SecurityModeFailure");
+  EXPECT_EQ(h.ue_state(3)->rrc_sec, RrcSecState::Failed);
+  h.rrc(150, 3, "DL", "SecurityModeCommand", R"("cipher":"nea2","integrity":"nia2")");
+  EXPECT_EQ(h.ue_state(3)->rrc_sec, RrcSecState::Cmd);
+  ASSERT_TRUE(h.ue_state(3)->rrc_alg);
+  EXPECT_EQ(h.ue_state(3)->rrc_alg->cipher, "nea2");
+  h.rrc(155, 3, "UL", "SecurityModeComplete");
+  EXPECT_EQ(h.ue_state(3)->rrc_sec, RrcSecState::On);
+}
