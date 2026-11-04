@@ -1,0 +1,55 @@
+{
+  "scenario": "SAN04_AN-04_CLEAR뒤재개_RAISE",
+  "description": "P × 3(RAISE) → 60 s 조용 → CLEAR → 150 s에 같은 S-TMSI가 다시 짧은 연결 하나 — CLEAR로 회복한 키라 새로 세고 이력 표의 지난 3회로 K 4, 바로 새 RAISE(ues_total 1) — 11/04 Q-69 (가) 'CLEAR = 회복', 이슈 #86 (21_ §6.3-2)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "AN-04",
+      "cell": 1,
+      "t_rel_ms": 42300,
+      "severity": "medium",
+      "alert_kind": "anomaly",
+      "candidates": [
+        "L3-02-Oa",
+        "L3-34-OV",
+        "L3-12-V"
+      ],
+      "ues_total": 1
+    },
+    {
+      "kind": "CLEAR",
+      "rule": "AN-04",
+      "cell": 1,
+      "t_rel_ms": 102200,
+      "alert_kind": "anomaly",
+      "ues_total": 1
+    },
+    {
+      "kind": "RAISE",
+      "rule": "AN-04",
+      "cell": 1,
+      "t_rel_ms": 151300,
+      "severity": "medium",
+      "alert_kind": "anomaly",
+      "candidates": [
+        "L3-02-Oa",
+        "L3-34-OV",
+        "L3-12-V"
+      ],
+      "ues_total": 1,
+      "values": {
+        "extra": 0
+      }
+    },
+    {
+      "kind": "CLEAR",
+      "rule": "AN-04",
+      "cell": 1,
+      "t_rel_ms": 211200,
+      "alert_kind": "anomaly",
+      "ues_total": 1
+    }
+  ]
+}

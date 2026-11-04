@@ -86,10 +86,12 @@ void SyncFailureRule::on_cell_tick(int64_t cell, const Kpm2& k, const CellLoss&,
 void SyncFailureRule::decorate(std::size_t from, RuleOutput& out, const AlertUe* hit) {
   for (std::size_t i = from; i < out.alerts.size(); ++i) {
     AlertEvent& e = out.alerts[i];
-    if (e.kind != AlertEventKind::Raise && e.kind != AlertEventKind::Update) continue;
     const bool raise = e.kind == AlertEventKind::Raise;
+    const bool update = e.kind == AlertEventKind::Update;
     const int64_t sync_w = hits_.window(e.cell_id);
-    e.values["sync_w"] = sync_w;
+    // raise·update는 창 안 수 + 누적값, clear·end는 누적값만 (21_ §3.6, 14_ §8.3 — 11/04 Q-69 W-28: UE 하나의 지속 공격에서 쌓인
+    // extra·reauth가 레코드에 남게)
+    if (raise || update) e.values["sync_w"] = sync_w;
     e.values["sync_total"] = e.ues_total;
     e.values["extra"] = hits_.count(e.cell_id, "extra");
     e.values["reauth"] = hits_.count(e.cell_id, "reauth");
@@ -115,13 +117,19 @@ void SyncFailureRule::decorate(std::size_t from, RuleOutput& out, const AlertUe*
 
 // 새 세션 (14_ §7 hello): 진행 중 경보를 END(session_reset)로 끝내고 걸림·연결 기록을 모두 버린다
 void SyncFailureRule::on_session_reset(const UeRuleCtx&, RuleOutput& out) {
+  const std::size_t from = out.alerts.size();
   hits_.end_all("session_reset", out.alerts);
+  decorate(from, out);  // END에도 누적값 (14_ §8.3 — 11/04 Q-69 W-28)
   hits_.reset();
   id_type_.clear();
   reauth_.clear();
 }
 
 // 입력 침묵 (14_ §6.2 — Q-45): 진행 중 경보를 END(input_silent)로 끝낸다. 걸림·셀 기록은 그대로
-void SyncFailureRule::on_input_silent(const UeRuleCtx&, RuleOutput& out) { hits_.end_all("input_silent", out.alerts); }
+void SyncFailureRule::on_input_silent(const UeRuleCtx&, RuleOutput& out) {
+  const std::size_t from = out.alerts.size();
+  hits_.end_all("input_silent", out.alerts);
+  decorate(from, out);  // END에도 누적값 (14_ §8.3 — 11/04 Q-69 W-28)
+}
 
 }  // namespace detect

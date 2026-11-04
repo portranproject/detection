@@ -319,6 +319,7 @@ TEST(ShortRepeat, T08Clear) {
   EXPECT_EQ(h.alerts[1].kind, AlertEventKind::Clear);
   EXPECT_EQ(h.logs[1], "ALERT CLEAR rule=AN-04 cell=1 t=" + std::to_string(kT0 + 102200) +
                            " duration_ms=59900 ues_total=1");
+  EXPECT_EQ(h.alerts[1].values.dump(), R"({"short_ues":1,"extra":0,"evicted":0})");  // clear에도 누적값 (14_ §8.3, 11/04)
 }
 
 // 회복 (21_ §6.3-2): 걸린 S-TMSI가 창 W 동안 짧은 연결을 만들지 않으면 회복 — 다시 반복하면 새 UE로 RAISE한다
@@ -396,16 +397,63 @@ TEST(ShortRepeat, ClearThenOtherStmsiListsOnlyNew) {
   EXPECT_EQ(h.alerts[3].ues_total, 1);
 }
 
-// 지속 공격 — 지금 동작 고정 (Q-69 미결, 23_ §3.1-1): 같은 S-TMSI가 20 s 간격 20회 — 3번째 닫힘에서 RAISE, 4번째부터 경보 values.extra,
-// 마지막 걸림 + 60 s에 CLEAR, 그 뒤 17회가 이어져도 경보가 없다(회복 전 반복은 해제 시계를 늘리지 않고 CLEAR 뒤 누적 수는 버려짐 —
-// 명세 21_ §6.3-2·§6.5대로). Q-69 결정(W-28) 뒤 기대값을 바꾼다(재생 데이터 SAN04_AN-04_지속공격_CLEAR)
-TEST(ShortRepeat, SustainedRepeat_CurrentBehavior) {
+// 지속 공격 (21_ §6.3-2·§6.5 — 11/04 Q-69 (가), 이슈 #86): 같은 S-TMSI가 20 s 간격 20회 — 3번째 닫힘에서 RAISE, 4번째부터 경보
+// values.extra이고 반복마다 해제 시계가 늘어 공격 내내 경보 하나가 열려 있다. CLEAR는 마지막 닫힘(382,200) + 60 s, CLEAR 레코드의
+// values에 누적값 extra 17(14_ §8.3). 그전(Q-69 결정 전)에는 102,200에 CLEAR되고 그 뒤 17회가 무경보였다(23_ §3.1-1).
+// 재생 데이터 SAN04_AN-04_지속공격_CLEAR
+TEST(ShortRepeat, SustainedRepeatKeepsAlertOpen) {
   Harness h;
   h.play(Pn(20, 1000, 20000, 10, kS));
-  h.tick_to(420000);
-  ASSERT_EQ(h.alerts.size(), 2u);
-  EXPECT_EQ(h.alerts[0].kind, AlertEventKind::Raise);
+  h.tick_to(442100);
+  ASSERT_EQ(h.alerts.size(), 1u);
   EXPECT_EQ(h.alerts[0].t, kT0 + 42300);
+  h.tick_to(442200);
+  ASSERT_EQ(h.alerts.size(), 2u);
+  EXPECT_EQ(h.alerts[1].kind, AlertEventKind::Clear);
+  EXPECT_EQ(h.alerts[1].t, kT0 + 442200);
+  EXPECT_EQ(h.alerts[1].ues_total, 1);
+  EXPECT_EQ(h.alerts[1].values.dump(), R"({"short_ues":1,"extra":17,"evicted":0})");
+  EXPECT_EQ(h.logs[1], "ALERT CLEAR rule=AN-04 cell=1 t=" + std::to_string(kT0 + 442200) +
+                           " duration_ms=399900 ues_total=1");  // 로그 줄은 그대로
+}
+
+// CLEAR = 회복 (21_ §6.3-2 — 11/04 Q-69): 3회 → RAISE → 60 s 조용 → CLEAR(102,200) → 150 s에 다시 짧은 연결 하나 — 창 W(300 s)가
+// 안 지났어도 CLEAR로 회복한 키라 새로 세고, 이력 표에 지난 3회가 있어 K 4로 바로 새 RAISE(151,300). extra 0
+TEST(ShortRepeat, ResumeAfterClearRaisesAgain) {
+  Harness h;
+  h.play(Pn(3, 1000, 20000, 10, kS) + P(150000, 20, kS));
+  h.tick_to(152000);
+  ASSERT_EQ(h.alerts.size(), 3u);  // RAISE, CLEAR, RAISE
   EXPECT_EQ(h.alerts[1].kind, AlertEventKind::Clear);
   EXPECT_EQ(h.alerts[1].t, kT0 + 102200);
+  const AlertEvent& e = h.alerts[2];
+  EXPECT_EQ(e.kind, AlertEventKind::Raise);
+  EXPECT_EQ(e.t, kT0 + 151300);
+  ASSERT_EQ(e.ues.size(), 1u);
+  EXPECT_EQ(e.ues[0].du_ue_id, 20);
+  EXPECT_EQ(e.ues[0].values.at("short_n"), 4);
+  EXPECT_EQ(e.values.dump(), R"({"short_ues":1,"extra":0,"evicted":0})");
+}
+
+// END 레코드에도 누적값 (14_ §8.3 — 11/04 Q-69 W-28): P × 4(4번째는 extra) 뒤 세션 변경 → END values extra 1 / 입력 침묵도 같다
+TEST(ShortRepeat, EndCarriesCounts) {
+  {
+    Harness h;
+    h.play(Pn(4, 1000, 20000, 10, kS));
+    h.tick_to(63000);
+    ASSERT_EQ(h.alerts.size(), 1u);
+    h.hello("S2");
+    ASSERT_EQ(h.alerts.size(), 2u);
+    EXPECT_EQ(h.alerts[1].kind, AlertEventKind::End);
+    EXPECT_EQ(h.alerts[1].values.dump(), R"({"short_ues":1,"extra":1,"evicted":0})");
+  }
+  {
+    Harness h;
+    h.play(Pn(4, 1000, 20000, 10, kS));
+    h.tick_to(63000);
+    EngineOutput o = h.engine.on_input_silent(10000);
+    ASSERT_EQ(o.alerts.size(), 1u);
+    EXPECT_EQ(o.alerts[0].reason, "input_silent");
+    EXPECT_EQ(o.alerts[0].values.dump(), R"({"short_ues":1,"extra":1,"evicted":0})");
+  }
 }

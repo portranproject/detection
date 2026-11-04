@@ -1,0 +1,34 @@
+{
+  "scenario": "SAN07_AN-07_지속공격_CLEAR",
+  "description": "Q × 20(10 s 간격) — 3번째 닫힘에서 RAISE, 그 뒤 반복마다 extra·해제 시계 연장, 마지막 닫힘 + 60 s에 CLEAR(values extra 17) — 11/04 Q-69 (가), 이슈 #86 (21_ §7.3-2·§7.5, 14_ §8.3)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "AN-07",
+      "cell": 1,
+      "t_rel_ms": 23100,
+      "severity": "medium",
+      "alert_kind": "anomaly",
+      "candidates": [
+        "L3-11-V1",
+        "L3-11-V2"
+      ],
+      "ues_total": 1
+    },
+    {
+      "kind": "CLEAR",
+      "rule": "AN-07",
+      "cell": 1,
+      "t_rel_ms": 253000,
+      "alert_kind": "anomaly",
+      "ues_total": 1,
+      "values": {
+        "fail_ues": 1,
+        "extra": 17,
+        "evicted": 0
+      }
+    }
+  ]
+}

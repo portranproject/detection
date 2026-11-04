@@ -97,9 +97,10 @@ void ImsiExtractorRule::hit(const LookbackMarks::Decision& dc, int64_t now, cons
 void ImsiExtractorRule::decorate(std::size_t from, RuleOutput& out) {
   for (std::size_t i = from; i < out.alerts.size(); ++i) {
     AlertEvent& e = out.alerts[i];
-    if (e.kind != AlertEventKind::Raise && e.kind != AlertEventKind::Update) continue;
     CellState& c = cells_[e.cell_id];
     const bool raise = e.kind == AlertEventKind::Raise;
+    // raise·update·clear·end 모두 (14_ §8.3 — 11/04 Q-69 W-28): 경보가 열린 뒤 누적값. clear·end에도 실어 UE 하나의 지속 공격에서
+    // 쌓인 수가 레코드에 남게 한다(raise의 held·evicted는 직전 clear_quiet_ms 이동 창)
     e.values["extra"] = c.extra_open;
     e.values["held"] = raise ? held_window(c, e.t) : c.held_open;
     e.values["evicted"] = raise ? evicted_window(c, e.t) : c.evicted_open;
@@ -233,7 +234,9 @@ void ImsiExtractorRule::on_ue_close(const UeState& last, CloseReason reason, int
 
 // 새 세션 (14_ §7 hello): 진행 중 경보를 END(session_reset)로 끝내고 표시·누적값을 모두 버린다
 void ImsiExtractorRule::on_session_reset(const UeRuleCtx&, RuleOutput& out) {
+  const std::size_t from = out.alerts.size();
   book_.end_all("session_reset", out.alerts);
+  decorate(from, out);  // END에도 누적값 (14_ §8.3 — 11/04 Q-69 W-28). 불확실 경보는 그대로
   held_book_.end_all("session_reset", out.alerts);
   marks_.clear();
   cells_.clear();
@@ -242,7 +245,9 @@ void ImsiExtractorRule::on_session_reset(const UeRuleCtx&, RuleOutput& out) {
 // 입력 침묵 (14_ §6.2 — Q-45): 진행 중 공격·불확실 경보를 END(input_silent)로 끝낸다. 표시·셀 기록은 그대로 —
 // kpm2가 다시 오면 마감이 평소처럼 판정된다
 void ImsiExtractorRule::on_input_silent(const UeRuleCtx&, RuleOutput& out) {
+  const std::size_t from = out.alerts.size();
   book_.end_all("input_silent", out.alerts);
+  decorate(from, out);  // END에도 누적값 (14_ §8.3 — 11/04 Q-69 W-28)
   held_book_.end_all("input_silent", out.alerts);
 }
 

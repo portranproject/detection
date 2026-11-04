@@ -1,6 +1,6 @@
 {
   "scenario": "SAN04_AN-04_지속공격_CLEAR",
-  "description": "P × 20(20 s 간격) — 3번째 닫힘에서 RAISE, 4번째부터 경보 values.extra, 마지막 걸림 + 60 s에 CLEAR, 그 뒤 17회가 이어져도 경보 없음 — 명세(21_ §6.3-2·§6.5)대로의 지금 동작(Q-69 미결, 23_ §3.1-1). 결정(W-28) 뒤 기대값을 바꾼다",
+  "description": "P × 20(20 s 간격) — 3번째 닫힘에서 RAISE, 4번째부터 경보 values.extra이고 반복마다 해제 시계가 늘어 공격 내내 경보 하나, 마지막 닫힘 + 60 s에 CLEAR(values extra 17) — 11/04 Q-69 (가), 이슈 #86 (21_ §6.3-2·§6.5, 14_ §8.3)",
   "t0_ms": 1792209000000,
   "tolerance_ms": 100,
   "alerts": [
@@ -22,9 +22,14 @@
       "kind": "CLEAR",
       "rule": "AN-04",
       "cell": 1,
-      "t_rel_ms": 102200,
+      "t_rel_ms": 442200,
       "alert_kind": "anomaly",
-      "ues_total": 1
+      "ues_total": 1,
+      "values": {
+        "short_ues": 1,
+        "extra": 17,
+        "evicted": 0
+      }
     }
   ]
 }

@@ -519,6 +519,8 @@ TEST(ImsiExtractor, T18Clear) {
     EXPECT_EQ(h.alerts[1].duration_ms, 60000);
     EXPECT_EQ(h.logs[1], "ALERT CLEAR rule=L3-24 cell=1 t=" + std::to_string(kT0 + kB + 60100) +
                              " duration_ms=60000 ues_total=1");
+    // clear에도 누적값 (20_ §3.6, 14_ §8.3 — 11/04 Q-69 W-28): extra는 걸린 연결에서 더 온 수
+    EXPECT_EQ(h.alerts[1].values.dump(), extra ? R"({"extra":1,"held":0,"evicted":0})" : R"({"extra":0,"held":0,"evicted":0})");
     if (extra) {
       EXPECT_EQ(h.mark(3, 1)->extra, 1);
     }
@@ -698,6 +700,7 @@ TEST(ImsiExtractor, EndOnSessionResetAndInputSilent) {
     EXPECT_EQ(h.alerts[1].kind, AlertEventKind::End);
     EXPECT_EQ(h.alerts[1].reason, "session_reset");
     EXPECT_EQ(h.alerts[1].stage, 3);
+    EXPECT_EQ(h.alerts[1].values.dump(), R"({"extra":0,"held":0,"evicted":0})");  // end에도 누적값 (14_ §8.3, 11/04)
     EXPECT_EQ(h.rule->marks().size(), 0u);
   }
   {

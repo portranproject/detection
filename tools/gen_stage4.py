@@ -162,13 +162,15 @@ class Scenario4(gen_stage3.Scenario3):
         return h
 
     def alert(self, kind, t_rel, rule, cell=1, mode=None, severity=None, branch=None, reason=None, alert_kind=None,
-              conditions=None, candidates=None, ues_total=None):
+              conditions=None, candidates=None, ues_total=None, values=None):
         a = super().alert(kind, t_rel, rule, cell=cell, mode=mode, severity=severity, branch=branch, reason=reason,
                           alert_kind=alert_kind, conditions=conditions)
         if candidates is not None:
             a["candidates"] = candidates   # raise의 후보 (14_ §8.3, 21_ §1) — 시험이 그 이벤트의 값과 비교
         if ues_total is not None:
             a["ues_total"] = ues_total     # 지금까지 걸린 UE 수 — CLEAR 뒤 옛 걸림 재수록 회귀(이슈 #84), 시험이 비교
+        if values is not None:
+            a["values"] = values           # 경보 값 부분 객체 — 적은 키만 비교(clear·end 누적값, 14_ §8.3 — 이슈 #86)
         return a
 
 
@@ -422,9 +424,9 @@ RAN04 = "AN-04"
 CAND04_PAGING = ["L3-02-Oa", "L3-34-OV", "L3-12-V"]
 
 
-def an04(sc, kind, t_rel, candidates=None, ues_total=None):
+def an04(sc, kind, t_rel, candidates=None, ues_total=None, values=None):
     return sc.alert(kind, t_rel, RAN04, severity="medium" if kind in ("RAISE", "UPDATE") else None, alert_kind="anomaly",
-                    candidates=candidates, ues_total=ues_total)
+                    candidates=candidates, ues_total=ues_total, values=values)
 
 
 def p_n(sc, n, t0, gap, du0, s=S_SHORT, **kw):
@@ -527,11 +529,24 @@ def san04_clear_then_other():
 
 def san04_sustained():
     sc = Scenario4("SAN04_AN-04_지속공격_CLEAR",
-                   "P × 20(20 s 간격) — 3번째 닫힘에서 RAISE, 4번째부터 경보 values.extra, 마지막 걸림 + 60 s에 CLEAR, 그 뒤 17회가 이어져도 "
-                   "경보 없음 — 명세(21_ §6.3-2·§6.5)대로의 지금 동작(Q-69 미결, 23_ §3.1-1). 결정(W-28) 뒤 기대값을 바꾼다", 420000)
-    p_n(sc, 20, B, 20000, 10)
+                   "P × 20(20 s 간격) — 3번째 닫힘에서 RAISE, 4번째부터 경보 values.extra이고 반복마다 해제 시계가 늘어 공격 내내 경보 "
+                   "하나, 마지막 닫힘 + 60 s에 CLEAR(values extra 17) — 11/04 Q-69 (가), 이슈 #86 (21_ §6.3-2·§6.5, 14_ §8.3)", 450000)
+    t_end = p_n(sc, 20, B, 20000, 10)
     an04(sc, "RAISE", K(B + 40000 + 1200), CAND04_PAGING, ues_total=1)
-    an04(sc, "CLEAR", K(B + 40000 + 1200 + 60000 - 1), ues_total=1)
+    an04(sc, "CLEAR", K(t_end + 60000 - 1), ues_total=1, values={"short_ues": 1, "extra": 17, "evicted": 0})
+    return sc
+
+
+def san04_resume():
+    sc = Scenario4("SAN04_AN-04_CLEAR뒤재개_RAISE",
+                   "P × 3(RAISE) → 60 s 조용 → CLEAR → 150 s에 같은 S-TMSI가 다시 짧은 연결 하나 — CLEAR로 회복한 키라 새로 세고 이력 표의 "
+                   "지난 3회로 K 4, 바로 새 RAISE(ues_total 1) — 11/04 Q-69 (가) 'CLEAR = 회복', 이슈 #86 (21_ §6.3-2)", 215000)
+    t1 = p_n(sc, 3, B, 20000, 10)
+    sc.ue(20).flow_P(150000)
+    an04(sc, "RAISE", K(t1), CAND04_PAGING, ues_total=1)
+    an04(sc, "CLEAR", K(t1 + 60000 - 1), ues_total=1)
+    an04(sc, "RAISE", K(150000 + 1200), CAND04_PAGING, ues_total=1, values={"extra": 0})
+    an04(sc, "CLEAR", K(150000 + 1200 + 60000 - 1), ues_total=1)
     return sc
 
 
@@ -541,9 +556,9 @@ RAN07 = "AN-07"
 CAND07 = ["L3-11-V1", "L3-11-V2"]
 
 
-def an07(sc, kind, t_rel):
+def an07(sc, kind, t_rel, ues_total=None, values=None):
     return sc.alert(kind, t_rel, RAN07, severity="medium" if kind in ("RAISE", "UPDATE") else None, alert_kind="anomaly",
-                    candidates=CAND07 if kind == "RAISE" else None)
+                    candidates=CAND07 if kind == "RAISE" else None, ues_total=ues_total, values=values)
 
 
 def q_n(sc, n, t0, gap, du0, s=S_SHORT, **kw):
@@ -644,6 +659,16 @@ def san07_clear():
     return sc
 
 
+def san07_sustained():
+    sc = Scenario4("SAN07_AN-07_지속공격_CLEAR",
+                   "Q × 20(10 s 간격) — 3번째 닫힘에서 RAISE, 그 뒤 반복마다 extra·해제 시계 연장, 마지막 닫힘 + 60 s에 CLEAR(values extra 17) "
+                   "— 11/04 Q-69 (가), 이슈 #86 (21_ §7.3-2·§7.5, 14_ §8.3)", 260000)
+    t_end = q_n(sc, 20, B, 10000, 10)
+    an07(sc, "RAISE", K(B + 20000 + 2000), ues_total=1)
+    an07(sc, "CLEAR", K(t_end + 60000 - 1), ues_total=1, values={"fail_ues": 1, "extra": 17, "evicted": 0})
+    return sc
+
+
 # ============ AN-08 기존 UE들의 재등록 급증 (21_ §8.8 AN08-T1~T8 — known_ms·RRC 또는 NAS·설정·결정성·회복은 단위 시험) ============
 
 RAN08 = "AN-08"
@@ -651,9 +676,9 @@ CAND08 = ["L3-17-OV", "L3-26-O"]
 M0 = 21000   # 이동 등록 시작 — 첫 등록(1~10 s) 뒤 (명세 M의 '2분 뒤'를 줄임 — known_ms 10분 안이면 같다)
 
 
-def an08(sc, kind, t_rel):
+def an08(sc, kind, t_rel, ues_total=None, values=None):
     return sc.alert(kind, t_rel, RAN08, severity="medium" if kind in ("RAISE", "UPDATE") else None, alert_kind="anomaly",
-                    candidates=CAND08 if kind == "RAISE" else None)
+                    candidates=CAND08 if kind == "RAISE" else None, ues_total=ues_total, values=values)
 
 
 def alloc_all(sc, accept=True):
@@ -765,6 +790,24 @@ def san08_clear():
     return sc
 
 
+def san08_sustained():
+    sc = Scenario4("SAN08_AN-08_지속공격_CLEAR",
+                   "S1~S5 할당 뒤 5 UE가 20 s 간격으로 12회씩 이동 등록 — 5번째에서 RAISE, 그 뒤 회복 전 재등록 55회는 extra이고 반복마다 "
+                   "마지막 성립이 밀려 공격 내내 경보 하나, 마지막 재등록 + 60 s에 CLEAR(values extra 55) — 11/04 Q-69 (가), 이슈 #86 "
+                   "(21_ §8.3-1·§8.5, 14_ §8.3)", 320000)
+    alloc_all(sc)
+    du = 100
+    t_last = 0
+    for k in range(12):
+        for i in range(5):
+            t_last = M0 + 20000 * k + 2000 * i
+            sc.ue(du).flow_mob(t_last, S_MOB[i])
+            du += 1
+    an08(sc, "RAISE", K(M0 + 8000 + 20), ues_total=5)
+    an08(sc, "CLEAR", K(t_last + 20 + 60000 - 1), ues_total=5, values={"extra": 55, "evicted": 0})
+    return sc
+
+
 SCENARIOS = [
     san01_normal, san01_raise, san01_second_failure, san01_mac_failure, san01_no_cause, san01_mid_join, san01_loss,
     san01_clear, san01_two_ues,
@@ -773,11 +816,11 @@ SCENARIOS = [
     san02_suci, san02_guti_no_idreq, san02_known_guti, san02_attack_shape, san02_unknown_guti, san02_five, san02_four,
     san02_clear,
     san04_long, san04_three, san04_two, san04_du_release, san04_four, san04_part1, san04_du_reset, san04_two_stmsi,
-    san04_clear, san04_clear_then_other, san04_sustained,
+    san04_clear, san04_clear_then_other, san04_sustained, san04_resume,
     san07_connected, san07_three, san07_two, san07_outside, san07_reject_release, san07_reject_stale, san07_random,
-    san07_stale, san07_du_reset, san07_two_part1, san07_clear,
+    san07_stale, san07_du_reset, san07_two_part1, san07_clear, san07_sustained,
     san08_initial, san08_five, san08_four, san08_outside, san08_periodic, san08_initial_again, san08_history,
-    san08_unknown, san08_retries, san08_retries_then_four, san08_clear,
+    san08_unknown, san08_retries, san08_retries_then_four, san08_clear, san08_sustained,
 ]
 
 

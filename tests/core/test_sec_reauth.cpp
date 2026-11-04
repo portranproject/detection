@@ -315,6 +315,7 @@ TEST(SecReauth, T09Clear) {
     EXPECT_EQ(h.alerts[1].t, kT0 + kB + 61300);
     EXPECT_EQ(h.logs[1], "ALERT CLEAR rule=AN-06a cell=1 t=" + std::to_string(kT0 + kB + 61300) +
                              " duration_ms=60000 ues_total=1");
+    EXPECT_EQ(h.alerts[1].values.dump(), R"({"reauth_ues":1,"extra":0,"evicted":0})");  // clear에도 누적값 (14_ §8.3, 11/04)
   }
   {
     UeTableConfig ue_cfg;
@@ -382,4 +383,18 @@ TEST(SecReauth, EvidenceHorizon) {
   Harness h;
   EXPECT_EQ(h.rule->evidence_horizon_ms(), 2000);
   EXPECT_EQ(h.engine.ue_table().recent_keep_ms(), 3000);
+}
+
+// 연결 키 룰은 그대로 (21_ §1.1 — 11/04 Q-69 (가)는 S-TMSI 키 룰만): 같은 연결의 두 번째 재등장(extra)은 해제 시계를 늘리지 않는다 —
+// CLEAR는 걸림(t0+1,250) + 60 s, CLEAR values extra 1
+TEST(SecReauth, ExtraDoesNotDelayClear) {
+  Harness h;
+  h.play(R(kB, 3) + std::vector<L>{auth_req(kB + 30000, 3)});
+  h.tick_to(kB + 61200);
+  ASSERT_EQ(h.alerts.size(), 1u);
+  h.tick_to(kB + 61300);
+  ASSERT_EQ(h.alerts.size(), 2u);
+  EXPECT_EQ(h.alerts[1].kind, AlertEventKind::Clear);
+  EXPECT_EQ(h.alerts[1].t, kT0 + kB + 61300);
+  EXPECT_EQ(h.alerts[1].values.dump(), R"({"reauth_ues":1,"extra":1,"evicted":0})");
 }

@@ -143,8 +143,8 @@ void CapHijackRule::decorate(std::size_t from, RuleOutput& out, bool premise_cha
     AlertEvent& e = out.alerts[i];
     CellState& c = cells_[e.cell_id];
     e.branch = c.branch2_seen ? "2" : "1";
-    if (e.kind != AlertEventKind::Raise && e.kind != AlertEventKind::Update) continue;
     const bool raise = e.kind == AlertEventKind::Raise;
+    // raise·update·clear·end 모두 (14_ §8.3 — 11/04 Q-69 W-28): 갈래별 걸림 수·extra·held·evicted는 경보가 열린 뒤 누적값
     e.values["branch1_ues"] = c.branch1_ues;
     e.values["branch2_ues"] = c.branch2_ues;
     e.values["extra"] = c.extra_open;

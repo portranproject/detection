@@ -354,6 +354,7 @@ TEST(SetupRepeat, T07Clear) {
   ASSERT_EQ(h.alerts.size(), 2u);
   EXPECT_EQ(h.alerts[1].kind, AlertEventKind::Clear);
   EXPECT_EQ(h.logs[1], "ALERT CLEAR rule=AN-07 cell=1 t=" + std::to_string(kT0 + 83000) + " duration_ms=59900 ues_total=1");
+  EXPECT_EQ(h.alerts[1].values.dump(), R"({"fail_ues":1,"extra":0,"evicted":0})");  // clear에도 누적값 (14_ §8.3, 11/04)
 }
 
 // 회복 (21_ §7.3-2): 걸린 Part1이 창 W 동안 미완료 연결을 만들지 않으면 회복 — 다시 반복하면 새 UE로 RAISE한다
@@ -407,4 +408,31 @@ TEST(SetupRepeat, EndOnSessionResetAndInputSilent) {
 TEST(SetupRepeat, EvidenceHorizon) {
   Harness h;
   EXPECT_EQ(h.rule->evidence_horizon_ms(), 2000);
+}
+
+// 지속 공격 (21_ §7.3-2·§7.5 — 11/04 Q-69 (가), 이슈 #86): 같은 Part1 미완료 Setup 10 s 간격 20회 — 3번째 닫힘(23,000)에서 RAISE, 그 뒤
+// 반복마다 extra·해제 시계 연장, CLEAR는 마지막 닫힘(193,000) + 60 s, CLEAR values extra 17. 재생 데이터 SAN07_AN-07_지속공격_CLEAR
+TEST(SetupRepeat, SustainedRepeatKeepsAlertOpen) {
+  Harness h;
+  h.play(Qn(20, 1000, 10000, 10, kS));
+  h.tick_to(252900);
+  ASSERT_EQ(h.alerts.size(), 1u);
+  EXPECT_EQ(h.alerts[0].t, kT0 + 23100);
+  h.tick_to(253000);
+  ASSERT_EQ(h.alerts.size(), 2u);
+  EXPECT_EQ(h.alerts[1].kind, AlertEventKind::Clear);
+  EXPECT_EQ(h.alerts[1].t, kT0 + 253000);
+  EXPECT_EQ(h.alerts[1].values.dump(), R"({"fail_ues":1,"extra":17,"evicted":0})");
+}
+
+// END 레코드에도 누적값 (14_ §8.3 — 11/04 Q-69 W-28): Q × 4(4번째는 extra) 뒤 세션 변경 → END values extra 1
+TEST(SetupRepeat, EndCarriesCounts) {
+  Harness h;
+  h.play(Qn(4, 1000, 10000, 10, kS));
+  h.tick_to(34000);
+  ASSERT_EQ(h.alerts.size(), 1u);
+  h.hello("S2");
+  ASSERT_EQ(h.alerts.size(), 2u);
+  EXPECT_EQ(h.alerts[1].kind, AlertEventKind::End);
+  EXPECT_EQ(h.alerts[1].values.dump(), R"({"fail_ues":1,"extra":1,"evicted":0})");
 }

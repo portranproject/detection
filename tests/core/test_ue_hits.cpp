@@ -307,3 +307,93 @@ TEST(HitWindow, TriggeringHitUnderUesMax) {
   ASSERT_EQ(h.hits.size(), 5u);  // 시작·걸림 3·끝
   EXPECT_EQ(h.hits[3], std::optional<int64_t>(3));
 }
+
+// 회복 전 반복이 해제 시계를 늘림 (21_ §1.1·§6.5·§8.5 — 11/04 Q-69 (가), 이슈 #86): touch는 그 키를 실은 경보가 열려 있을 때만 해제 기준을
+// 올린다 — 기본(마지막 걸림)·clear_on_satisfied(마지막 성립) 둘 다. CLEAR 뒤의 touch는 무동작
+TEST(HitWindow, TouchExtendsClearWhileOpen) {
+  for (bool on_sat : {false, true}) {
+    H h(1, 300000, 60000);
+    h.w.set_clear_on_satisfied(on_sat);
+    h.w.hit(uid(1), ue(1, 100));
+    h.tick(200);
+    ASSERT_EQ(h.out.size(), 1u) << on_sat;
+    h.w.touch(uid(1), 30000);
+    h.tick(60100);  // 걸림 + 60 s — 마지막 반복 뒤 30 s라 아직
+    EXPECT_EQ(h.out.size(), 1u) << on_sat;
+    h.tick(89900);
+    EXPECT_EQ(h.out.size(), 1u) << on_sat;
+    h.tick(90000);  // 반복 + 60 s
+    ASSERT_EQ(h.out.size(), 2u) << on_sat;
+    EXPECT_EQ(h.out[1].kind, AlertEventKind::Clear);
+    EXPECT_FALSE(h.w.active(uid(1)));  // CLEAR 뒤 — 회복
+    h.w.touch(uid(1), 95000);          // 경보가 없어 무동작
+    h.w.hit(uid(2), ue(2, 100000));
+    h.tick(100100);
+    ASSERT_EQ(h.out.size(), 3u) << on_sat;
+    h.tick(160100);  // 둘째 걸림 + 60 s — 95,000의 touch는 영향이 없다
+    ASSERT_EQ(h.out.size(), 4u) << on_sat;
+    EXPECT_EQ(h.out[3].kind, AlertEventKind::Clear);
+  }
+}
+
+// active (11/04 Q-69): 걸렸고 아직 실리기 전이거나 그 키를 실은 경보가 열려 있으면 true, CLEAR·END 뒤면 false, 걸린 적 없으면 false.
+// 실리기 전의 touch는 무동작(해제 기준은 실릴 때의 걸림 시각)
+TEST(HitWindow, ActiveUntilClearOrEnd) {
+  H h(2, 300000);
+  EXPECT_FALSE(h.w.active(uid(1)));
+  h.w.hit(uid(1), ue(1, 100));
+  EXPECT_TRUE(h.w.active(uid(1)));  // 실리기 전(창 안 1 < N 2)
+  h.tick(200);
+  EXPECT_TRUE(h.w.active(uid(1)));
+  h.w.touch(uid(1), 250);  // 실리기 전 — 무동작
+  h.w.hit(uid(2), ue(2, 300));
+  h.tick(400);  // RAISE
+  ASSERT_EQ(h.out.size(), 1u);
+  EXPECT_TRUE(h.w.active(uid(1)));
+  h.tick(400, true);  // END input_lost
+  ASSERT_EQ(h.out.size(), 2u);
+  EXPECT_FALSE(h.w.active(uid(1)));
+  EXPECT_FALSE(h.w.active(uid(2)));
+}
+
+// CLEAR·END 뒤에도 누적 수는 다음 RAISE까지 남는다 — 룰 decorate가 clear·end 레코드의 values에 싣는다 (14_ §8.3, 11/04 Q-69 W-28).
+// 모아 둔 UPDATE가 CLEAR와 함께 나오면 창 안 수는 창을 비우기 전 값이다
+TEST(HitWindow, CountsSurviveClearAndEnd) {
+  {
+    H h(1, 300000, 60000);
+    h.w.hit(uid(1), ue(1, 100));
+    h.w.add(uid(1), "extra");
+    h.tick(200);
+    h.w.add(uid(1), "extra");
+    h.tick(60100);  // CLEAR
+    ASSERT_EQ(h.out.size(), 2u);
+    EXPECT_EQ(h.out[1].kind, AlertEventKind::Clear);
+    EXPECT_EQ(h.w.count(1, "extra"), 2);
+    EXPECT_EQ(h.w.window(1), 0);
+  }
+  {
+    H h(1, 300000, 60000);
+    h.w.hit(uid(1), ue(1, 100));
+    h.w.add(uid(1), "extra");
+    h.tick(200);
+    h.w.end_all("input_silent", h.out);
+    ASSERT_EQ(h.out.size(), 2u);
+    EXPECT_EQ(h.w.count(1, "extra"), 1);
+  }
+  {
+    H h(1, 300000, 60000);  // 걸림 2가 모아 둔 UPDATE로 CLEAR 칸에 함께 나올 때 — decorate 시점의 창 안 수는 2
+    h.w.hit(uid(1), ue(1, 100));
+    h.tick(200);
+    h.w.hit(uid(2), ue(2, 300));
+    h.tick(400);  // 모아 둠(1 s 전)
+    std::vector<int64_t> windows;
+    h.w.tick(1, 60300, false, h.c.ctx(), h.out, [&](std::size_t from, const AlertUe*) {
+      for (std::size_t i = from; i < h.out.size(); ++i) windows.push_back(h.w.window(1));
+    });
+    ASSERT_EQ(h.out.size(), 3u);  // RAISE, (모아 둔) UPDATE, CLEAR
+    EXPECT_EQ(h.out[1].kind, AlertEventKind::Update);
+    EXPECT_EQ(h.out[2].kind, AlertEventKind::Clear);
+    EXPECT_EQ(windows, (std::vector<int64_t>{2, 2}));
+    EXPECT_EQ(h.w.window(1), 0);
+  }
+}

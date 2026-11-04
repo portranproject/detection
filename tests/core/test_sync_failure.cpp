@@ -303,6 +303,8 @@ TEST(SyncFailure, T10Clear) {
     EXPECT_EQ(h.alerts[1].t, kT0 + kB + 60200);
     EXPECT_EQ(h.logs[1], "ALERT CLEAR rule=AN-01 cell=1 t=" + std::to_string(kT0 + kB + 60200) +
                              " duration_ms=60000 ues_total=1");
+    // clear에는 누적값만 — 창 안 수(sync_w)는 없다 (21_ §3.6, 14_ §8.3 — 11/04 Q-69 W-28)
+    EXPECT_EQ(h.alerts[1].values.dump(), R"({"sync_total":1,"extra":0,"reauth":1,"evicted":0})");
   }
   {
     UeTableConfig ue_cfg;
@@ -410,4 +412,31 @@ TEST(SyncFailure, EvidenceHorizon) {
   AlertConfig a;
   a.update_min_ms = 5000;
   EXPECT_EQ(SyncFailureRule(wide, a).evidence_horizon_ms(), 6000);
+}
+
+// 연결 키 룰은 그대로 (21_ §1.1 — 11/04 Q-69 (가)는 S-TMSI 키 룰만): 같은 연결의 두 번째 동기 실패(extra)는 해제 시계를 늘리지 않는다 —
+// CLEAR는 첫 걸림(t0+118) + 60 s. CLEAR·END(입력 침묵) 레코드 values에 누적값 extra 1·reauth 1
+TEST(SyncFailure, ExtraDoesNotDelayClearAndCountsOnClearEnd) {
+  std::vector<L> v = head(kB, 3) + std::vector<L>{auth_fail(kB + 118, 3), nas(kB + 160, 3, "DL", "AuthenticationRequest"),
+                                                  auth_fail(kB + 30000, 3)};
+  {
+    Harness h;
+    h.play(v);
+    h.tick_to(kB + 60100);
+    ASSERT_EQ(h.alerts.size(), 1u);
+    h.tick_to(kB + 60200);
+    ASSERT_EQ(h.alerts.size(), 2u);
+    EXPECT_EQ(h.alerts[1].kind, AlertEventKind::Clear);
+    EXPECT_EQ(h.alerts[1].t, kT0 + kB + 60200);
+    EXPECT_EQ(h.alerts[1].values.dump(), R"({"sync_total":1,"extra":1,"reauth":1,"evicted":0})");
+  }
+  {
+    Harness h;
+    h.play(v);
+    h.tick_to(kB + 31000);
+    EngineOutput o = h.engine.on_input_silent(10000);
+    ASSERT_EQ(o.alerts.size(), 1u);
+    EXPECT_EQ(o.alerts[0].kind, AlertEventKind::End);
+    EXPECT_EQ(o.alerts[0].values.dump(), R"({"sync_total":1,"extra":1,"reauth":1,"evicted":0})");
+  }
 }

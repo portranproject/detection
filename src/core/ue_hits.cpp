@@ -32,6 +32,22 @@ bool HitWindow::hit(const UeId& id, AlertUe u, bool force, std::optional<UeId> r
 
 bool HitWindow::hit_before(const UeId& id) const { return conns_.count(id) > 0; }
 
+// 회복 전 반복 (21_ §1.1·§6.5·§7.5·§8.5 — 11/04 Q-69 (가), 이슈 #86): 그 키를 실은 경보가 열려 있을 때만 해제 기준을 올린다.
+// t_hit_last(기본 해제 기준)와 t_sat(clear_on_satisfied — AN-08) 둘 다 — 어느 기준이든 '그 키가 마지막으로 반복한 시각'이 된다
+void HitWindow::touch(const UeId& id, int64_t t) {
+  auto it = conns_.find(id);
+  if (it == conns_.end() || !it->second.in_alert || !book_.open(it->second.cell)) return;
+  Cell& c = cells_[it->second.cell];
+  c.t_hit_last = std::max(c.t_hit_last, t);
+  c.t_sat = std::max(c.t_sat, t);
+}
+
+bool HitWindow::active(const UeId& id) const {
+  auto it = conns_.find(id);
+  if (it == conns_.end()) return false;
+  return !it->second.in_alert || book_.open(it->second.cell);
+}
+
 void HitWindow::add(const UeId& id, const std::string& name, int64_t n) {
   auto it = conns_.find(id);
   if (it == conns_.end()) return;
@@ -72,11 +88,10 @@ void HitWindow::tick(int64_t cell, int64_t t, bool input_lost, const UeRuleCtx& 
   Cell& c = cells_[cell];
   note_evictions(c, cell, t, ctx);
   std::size_t from = out.size();
-  if (input_lost && book_.open(cell)) {
-    book_.end(cell, t, "input_lost", out);
-    forget_window(c);
-  }
-  fn(from, nullptr);
+  const bool ended = input_lost && book_.open(cell);
+  if (ended) book_.end(cell, t, "input_lost", out);
+  fn(from, nullptr);  // END에도 누적값 (14_ §8.3 — 11/04 Q-69 W-28)
+  if (ended) forget_window(c);
 
   for (Hit& h : c.fresh) {
     if (const UeState* s = ctx.table.find(h.ref.first); s && s->uid == h.ref.second) refresh(h.u, *s);
@@ -105,11 +120,10 @@ void HitWindow::tick(int64_t cell, int64_t t, bool input_lost, const UeRuleCtx& 
   from = out.size();
   book_.flush(cell, t, out);
   const int64_t base = clear_on_satisfied_ ? c.t_sat : c.t_hit_last;
-  if (book_.open(cell) && t - base >= clear_quiet_ms_ && evicted_window(c, t) == 0) {
-    book_.clear(cell, t, out);
-    forget_window(c);
-  }
-  fn(from, nullptr);
+  const bool cleared = book_.open(cell) && t - base >= clear_quiet_ms_ && evicted_window(c, t) == 0;
+  if (cleared) book_.clear(cell, t, out);
+  fn(from, nullptr);  // 모아 둔 UPDATE·CLEAR — 창을 비우기 전에 채운다(UPDATE의 창 안 수, CLEAR의 누적값 — 14_ §8.3)
+  if (cleared) forget_window(c);
 }
 
 // CLEAR·END 뒤 (23_ §3.1-2, 이슈 #84): 창과 해제 기준을 비운다 — 새 경보는 그 뒤 걸림만 싣고 창 안 수(window)도 새로 센다. 그전에는 창 W가
