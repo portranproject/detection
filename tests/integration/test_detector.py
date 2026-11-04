@@ -129,6 +129,33 @@ for name, text, key in [("bad_l3_21", '{"rules":{"L3-21":{"reg_repeat":1}}}', "r
     r = subprocess.run([DET, "--replay", os.path.join(SCN, "T03_공격.jsonl"), "--config", p],
                        capture_output=True, text=True)
     check(r.returncode == 1 and key + ": out of range" in r.stderr, f"{name}: exit {r.returncode} {r.stderr}")
+# 설정 교차 제약 (4_ §1.2 — 11/05 W-31, 이슈 #92): 어기면 종료 코드 1. tomb 60 s < 기본 AN-04 창 300 s / short 400 s > 창 300 s
+for name, text, key in [("bad_tomb", '{"ue_table":{"tomb_ms":60000}}', "ue_table.tomb_ms 60000 < rules.AN-04.window_ms"),
+                        ("bad_short", '{"rules":{"AN-04":{"short_ms":400000}}}', "rules.AN-04.short_ms 400000 > rules.AN-04.window_ms")]:
+    p = os.path.join(TMP, name + ".json")
+    with open(p, "w") as f:
+        f.write(text)
+    r = subprocess.run([DET, "--replay", os.path.join(SCN, "T03_공격.jsonl"), "--config", p],
+                       capture_output=True, text=True)
+    check(r.returncode == 1 and key in r.stderr, f"{name}: exit {r.returncode} {r.stderr}")
+
+# hello·설정 경계 (2_ §3, 3_ §3 — 11/05 W-31, 이슈 #92): 거대 noreply_timeout_ms는 hello를 버리고 계속 돈다(그전에는 bad_alloc 종료),
+# window_ms가 period_ms의 배수가 아니면 진단 1회와 경보 없음(그전에는 무음)
+huge = os.path.join(TMP, "huge_tnr.jsonl")
+with open(huge, "w") as f:
+    f.write('{"type":"hello","ver":1,"session":"h","seq":1,"cells":[{"cell_id":1,"max_conn":null}],"period_ms":100,'
+            '"noreply_timeout_ms":1000000000000000000,"clock":"realtime"}\n')
+    f.write('{"type":"kpm2","ver":1,"session":"h","seq":2,"cell_id":1,"t_start_ms":1792209000000,"t_end_ms":1792209000100,'
+            '"cc":{"RRC.ConnEstabAtt":{"total":1},"RRC.ConnEstabSucc":{"total":1}}}\n')
+r = subprocess.run([DET, "--replay", huge], capture_output=True, text=True)
+check(r.returncode == 0 and "hello_rejected" in r.stderr and "kpm_before_hello" in r.stderr,
+      f"huge T_nr: exit {r.returncode} {r.stderr[-400:]}")
+mis = os.path.join(TMP, "misaligned.json")
+with open(mis, "w") as f:
+    f.write('{"rules":{"L3-01-V":{"window_ms":1050}}}')
+r = subprocess.run([DET, "--replay", os.path.join(SCN, "T03_공격.jsonl"), "--config", mis], capture_output=True, text=True)
+check(r.returncode == 0 and r.stderr.count("window_misaligned") == 1 and not alerts(r.stdout),
+      f"misaligned window: exit {r.returncode} alerts {alerts(r.stdout)} {r.stderr[-400:]}")
 
 # 6) 입력 침묵 — 소켓 모드 T25(1단계)·U-T31(2단계)와 재생 모드 대조
 def silent_case(tag, scenario_path, rule):

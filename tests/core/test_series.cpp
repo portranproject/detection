@@ -471,3 +471,103 @@ TEST(Series, MissingRequiredKeysStreakDiag) {
   EXPECT_TRUE(has_diag(feed(s, null_line(35)), DiagKind::RuleInactive));  // 11칸째
   EXPECT_TRUE(has_diag(feed(s, kpm_line("s1", seq++, 1, 36, 1, 1, 0)), DiagKind::RuleResumed));
 }
+
+// ---- hello·설정 경계 (2_ §3, 3_ §3·§8 — 11/05 W-31, 이슈 #92) ----
+
+namespace {
+bool has_diag_with(const FeedResult& r, DiagKind k, const std::string& text) {
+  return std::any_of(r.diags.begin(), r.diags.end(),
+                     [&](const Diag& d) { return d.kind == k && d.message.find(text) != std::string::npos; });
+}
+}  // namespace
+
+// 거대 noreply_timeout_ms: 버퍼 칸 수가 max_slots를 넘는 hello는 버리고 진단, 세션 상태는 그대로 (그전에는 bad_alloc 종료 — 25_ §3.1-1)
+TEST(Series, HelloRejectedWhenSlotsExceedMax) {
+  Series s;
+  auto r = feed(s, hello_line("s1", 1, kP, 1000000000000000000LL));
+  EXPECT_EQ(r.outcome, FeedOutcome::Dropped);
+  EXPECT_TRUE(has_diag(r, DiagKind::HelloRejected));
+  EXPECT_FALSE(s.active());
+  // 세션이 있을 때 받은 거대 hello(새 세션·파라미터 변경) — 옛 세션과 버퍼 유지
+  feed(s, hello_line("s1", 1));
+  ASSERT_TRUE(s.active());
+  int64_t seq = fill(s, 3);
+  auto r2 = feed(s, hello_line("s2", 1, kP, 1000000000000000000LL));
+  EXPECT_EQ(r2.outcome, FeedOutcome::Dropped);
+  EXPECT_TRUE(has_diag(r2, DiagKind::HelloRejected));
+  auto r3 = feed(s, hello_line("s1", seq++, kP, 1000000000000000000LL));
+  EXPECT_EQ(r3.outcome, FeedOutcome::Dropped);
+  EXPECT_TRUE(has_diag(r3, DiagKind::HelloRejected));
+  EXPECT_EQ(s.session(), "s1");
+  ASSERT_NE(s.cell(1), nullptr);
+  EXPECT_EQ(s.cell(1)->size(), 3u);
+  EXPECT_EQ(s.hello()->noreply_timeout_ms, 1000);
+  // 경계 — 상한 32: 10 + 20 + 1 = 31 통과, 10 + 22 + 1 = 33 거부, pre_slots 33 거부
+  SeriesConfig cfg;
+  cfg.max_slots = 32;
+  Series t(cfg);
+  EXPECT_EQ(feed(t, hello_line("s1", 1, kP, 2000)).outcome, FeedOutcome::SessionStarted);
+  Series u(cfg);
+  EXPECT_EQ(feed(u, hello_line("s1", 1, kP, 2200)).outcome, FeedOutcome::Dropped);
+  SeriesConfig pre = cfg;
+  pre.pre_slots = 33;
+  Series v(pre);
+  EXPECT_EQ(feed(v, hello_line("s1", 1)).outcome, FeedOutcome::Dropped);
+  EXPECT_TRUE(slots_within(1000, 100, 1000, std::nullopt, 21));
+  EXPECT_FALSE(slots_within(1000, 100, 1000, std::nullopt, 20));
+  EXPECT_FALSE(slots_within(1000, 1, 9223372036854775807LL, std::nullopt, 65536));
+}
+
+// window_ms가 period_ms의 배수가 아니면 진단 1회 + 그 세션 동안 모든 칸 보류, input_lost 없음 (그전에는 무음 영구 보류 — 25_ §3.1-2)
+TEST(Series, WindowMisalignedDiagnosesAndHolds) {
+  SeriesConfig cfg;
+  cfg.window_ms = 1050;
+  Series s(cfg);
+  auto r = feed(s, hello_line("s1", 1));
+  EXPECT_EQ(r.outcome, FeedOutcome::SessionStarted);
+  EXPECT_TRUE(has_diag(r, DiagKind::WindowMisaligned));
+  int64_t seq = 2;
+  for (int64_t i = 0; i < 150; ++i) {  // 15 s > H_hold 10 s — input_lost 순환이 없어야 한다
+    auto k = feed(s, kpm_line("s1", seq++, 1, i, 1, 1, 0));
+    ASSERT_EQ(k.outcome, FeedOutcome::Stored);
+    EXPECT_TRUE(k.hold);
+    EXPECT_FALSE(k.input_lost);
+    EXPECT_FALSE(has_diag(k, DiagKind::InputLost));
+  }
+  EXPECT_FALSE(has_diag(feed(s, hello_line("s1", seq++)), DiagKind::WindowMisaligned));  // 같은 세션 재수신에는 다시 안 냄
+  Series ok;
+  EXPECT_FALSE(has_diag(feed(ok, hello_line("s1", 1)), DiagKind::WindowMisaligned));
+}
+
+// h_hold_ms가 창 채움 시간(W + T_nr − P = 1,900 ms) 이하면 경고 + 채움 시간 + P로 올려 쓴다 (그전에는 input_lost 순환 — 25_ §3.1-3)
+TEST(Series, HHoldBelowWindowFillIsClamped) {
+  SeriesConfig cfg;
+  cfg.h_hold_ms = 1500;
+  Series s(cfg);
+  auto r = feed(s, hello_line("s1", 1));
+  EXPECT_TRUE(has_diag_with(r, DiagKind::Warning, "h_hold_ms 1500 <= window fill 1900 ms: using 2000"));
+  int64_t seq = 2;
+  bool lost = false, judged = false;
+  for (int64_t i = 0; i < 40; ++i) {
+    auto k = feed(s, kpm_line("s1", seq++, 1, i, 1, 1, 0));
+    lost = lost || k.input_lost || has_diag(k, DiagKind::InputLost);
+    judged = judged || !k.hold;
+  }
+  EXPECT_FALSE(lost);
+  EXPECT_TRUE(judged);
+  SeriesConfig ok;
+  ok.h_hold_ms = 2000;  // 채움 시간보다 길면 그대로
+  Series t(ok);
+  EXPECT_FALSE(has_diag_with(feed(t, hello_line("s1", 1)), DiagKind::Warning, "h_hold_ms"));
+}
+
+// input_lost마다 진단 1줄 — 경보가 없어도 남는다 (3_ §8 — 11/05 W-31)
+TEST(Series, InputLostEmitsDiag) {
+  Series s;
+  feed(s, hello_line("s1", 1));
+  int64_t seq = fill(s, 3);
+  auto r = feed(s, kpm_line("s1", seq++, 1, 150, 1, 1, 0));  // 14.7 s 끊김 > H_hold 10 s
+  EXPECT_TRUE(r.input_lost);
+  EXPECT_TRUE(has_diag_with(r, DiagKind::InputLost, "> h_hold 10000 ms"));
+  EXPECT_EQ(r.diags.front().cell_id, 1);
+}

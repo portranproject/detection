@@ -210,6 +210,28 @@ int main(int argc, char** argv) {
         id != ShortRepeatRule::kId && id != SetupRepeatRule::kId && id != KnownRegBurstRule::kId)
       log_err("WARN", "unknown rule id rules." + id + " (ignored)");
 
+  // 설정 교차 제약 (4_ §1.2 — 11/05 W-31, 이슈 #92): 이력 표 보관이 4단계 창보다 짧으면 이력이 창보다 먼저 지워져 감도만 조용히
+  // 떨어지고(14_ §3.2), AN-04의 짧은 연결 기준이 창보다 길면 창 안 모든 연결이 짧다. 어기면 기동 오류(종료 코드 1)
+  {
+    bool ok = true;
+    auto require = [&](bool cond, const std::string& what) {
+      if (cond) return;
+      log_err("ERROR", "config: " + what);
+      ok = false;
+    };
+    const int64_t tomb = cfg.ue_table.tomb_ms;
+    require(tomb >= short_repeat.window_ms, "ue_table.tomb_ms " + std::to_string(tomb) + " < rules.AN-04.window_ms " +
+                                                std::to_string(short_repeat.window_ms));
+    require(tomb >= setup_repeat.window_ms, "ue_table.tomb_ms " + std::to_string(tomb) + " < rules.AN-07.window_ms " +
+                                                std::to_string(setup_repeat.window_ms));
+    require(tomb >= known_reg_burst.known_ms, "ue_table.tomb_ms " + std::to_string(tomb) + " < rules.AN-08.known_ms " +
+                                                  std::to_string(known_reg_burst.known_ms));
+    require(short_repeat.short_ms <= short_repeat.window_ms,
+            "rules.AN-04.short_ms " + std::to_string(short_repeat.short_ms) + " > rules.AN-04.window_ms " +
+                std::to_string(short_repeat.window_ms));
+    if (!ok) return 1;
+  }
+
   // 엔진·룰·증거 (4_ §3). 버퍼 크기는 W와 pre_slots에서 정한다 (3_ §3·§7.1)
   SeriesConfig scfg;
   scfg.window_ms = bts.window_ms;
@@ -217,6 +239,7 @@ int main(int argc, char** argv) {
   scfg.missing_key_slots = bts.missing_key_slots;
   scfg.pre_slots = cfg.evidence.pre_slots;
   scfg.max_cells = cfg.max_cells;              // 결정 D7 — 설정 키 max_cells (16_ W-24)
+  scfg.max_slots = cfg.max_slots;              // 셀 버퍼 칸 수 상한 (2_ §3 — 11/05 W-31, 이슈 #92)
   Engine engine(scfg, cfg.max_line_bytes, cfg.ue_table);
   engine.add_rule(std::make_unique<BtsVariantRule>(bts));
   // 2단계 룰 (15_). hello에 ue_evt 표시가 있을 때만 돈다(2_ §6.5). 경보 묶음·UE 증거는 alert.*를 함께 쓴다 (14_ §9)
@@ -244,8 +267,16 @@ int main(int argc, char** argv) {
   auto start_sink = [&]() {
     if (cfg.evidence.mode == EvidenceMode::Off) return true;
     if (sink.start()) return true;
-    log_err("ERROR", "cannot open evidence file " + cfg.evidence.out_path);
+    log_err("ERROR", "cannot open evidence file " + cfg.evidence.out_path + ": " + sink.error());
     return false;
+  };
+  // 증거 쓰기 오류 (3_ §7.1 — 11/05 W-33, 이슈 #92): 스레드 B가 남긴 표시를 스레드 A가 읽어 한 번만 로그. 판정은 계속된다
+  bool sink_error_logged = false;
+  auto check_sink_error = [&]() {
+    if (!sink_error_logged && sink.failed()) {
+      sink_error_logged = true;
+      log_err("ERROR", "evidence_error detail=\"" + sink.error() + "\" (evidence stopped)");
+    }
   };
   // 입력 원본 기록 (24_ §3): input_record.path를 줄 때만 만든다 — 꺼져 있으면 큐·스레드가 없어 지금 동작과 같다.
   // 증거 기록기 다음에 연다 — 기동에 실패한 실행이 기록 파일을 건드리지 않게. 열지 못하면 종료 코드 1 (24_ §3.3)
@@ -319,6 +350,7 @@ int main(int argc, char** argv) {
       silent_flagged = false;
     }
     emit(out);
+    check_sink_error();
   };
 
   int rc = 0;
@@ -368,6 +400,7 @@ int main(int argc, char** argv) {
         }
         for (const auto& e : server.take_events()) log_err("INFO", e);
         check_input_rec_error();  // 줄이 오지 않는 동안에도 쓰기 오류를 알린다 (24_ §3.4)
+        check_sink_error();
         // 입력 침묵 (3_ §8, 14_ §6.2 — 10/29 Q-45 해결, 이슈 #50): 벽시계로 마지막 저장 kpm2 뒤 input_silent_ms 동안 kpm2가 없으면
         // 진단 input_silent 1회와 1·2단계 진행 중 경보 END(reason=input_silent). 셀 시계·버퍼·기준선·상태표는 그대로 두고, 다시
         // kpm2가 저장될 때까지 반복하지 않는다. 첫 kpm2 전에는 감시하지 않고, 재생 모드에서는 하지 않는다(결정성)
@@ -388,8 +421,10 @@ int main(int argc, char** argv) {
 
   // 종료 (결정 G7): 전달 스레드가 큐에 남은 레코드를 다 쓴 뒤 끝낸다
   sink.stop();
+  check_sink_error();
   if (cfg.evidence.mode != EvidenceMode::Off && rc == 0)
-    log_err("INFO", "evidence written=" + std::to_string(sink.written()) + " to " + cfg.evidence.out_path);
+    log_err("INFO", "evidence written=" + std::to_string(sink.written()) + " dropped=" + std::to_string(sink.dropped()) +
+                        " to " + cfg.evidence.out_path);
   // 입력 기록 (24_ §3.3·§3.4): 입력을 닫은 뒤 큐에 남은 줄을 다 쓰고 끝낸다. 끝 로그는 오류 종료(rc 1)에도 낸다
   if (input_rec) {
     input_rec->stop();

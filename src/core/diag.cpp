@@ -34,6 +34,9 @@ const char* to_string(DiagKind kind) {
     case DiagKind::NgapUnlinked: return "ngap_unlinked";
     case DiagKind::UeEvtLostMissing: return "ue_evt_lost_missing";
     case DiagKind::DlUnobserved: return "dl_unobserved";
+    case DiagKind::HelloRejected: return "hello_rejected";
+    case DiagKind::WindowMisaligned: return "window_misaligned";
+    case DiagKind::InputLost: return "input_lost";
   }
   return "unknown";
 }

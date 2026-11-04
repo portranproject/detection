@@ -1,7 +1,7 @@
 {
   "socket_path": "/run/ran-detect/kpm.sock",
   "max_line_bytes": 65536,
-  "max_cells": 64, "input_silent_ms": 10000,
+  "max_cells": 64, "max_slots": 1024, "input_silent_ms": 10000,
   "rules": {
     "L3-01-V": {
       "window_ms": 1000, "a_min": 5, "theta": 0.5, "f_abs": 10, "k": 3,

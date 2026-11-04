@@ -6,12 +6,14 @@
 
 #include <atomic>
 #include <cstddef>
-#include <fstream>
 #include <string>
 #include <thread>
 
 namespace detect {
 
+// 11/05 W-33 (이슈 #92, 25_ §3.1-6): ofstream 버퍼 대신 write(2)로 레코드마다 바로 쓴다 — 쓴 수와 쓰기 오류를 정확히 알고,
+// 오류(디스크 가득 등)면 그 실행의 전달을 멈추고 그 뒤 레코드를 버린 수로 센다(입력 기록기 io/input_recorder와 같은 방식, 3_ §7.1).
+// 그전에는 스트림이 실패 상태가 되어도 '쓴 것'으로 세고 로그가 없었다. 로그는 실행 파일(스레드 A)이 failed()·error()를 읽어 낸다
 class EvidenceSink {
  public:
   EvidenceSink(EvidenceQueue& queue, std::string path);
@@ -20,21 +22,27 @@ class EvidenceSink {
   EvidenceSink(const EvidenceSink&) = delete;
   EvidenceSink& operator=(const EvidenceSink&) = delete;
 
-  // 파일을 이어 쓰기로 열고(결정 F8) 스레드를 띄운다. 열지 못하면 false
+  // 파일을 이어 쓰기로 열고(결정 F8) 스레드를 띄운다. 열지 못하면 false, 이유는 error()
   bool start();
   // 큐를 닫고, 남은 레코드를 다 쓴 뒤 스레드를 끝낸다
   void stop();
 
-  std::size_t written() const { return written_.load(); }
+  std::size_t written() const { return written_.load(); }  // 끝까지 쓴 레코드 수
+  std::size_t dropped() const { return dropped_.load(); }  // 쓰기 오류로 버린 레코드 수(오류가 난 레코드 포함)
+  bool failed() const { return failed_.load(); }           // 쓰기 오류로 전달을 멈췄는지
+  std::string error() const;                               // 열기·쓰기 오류 문구
 
  private:
   void run();
 
   EvidenceQueue& queue_;
   std::string path_;
-  std::ofstream out_;
+  int fd_ = -1;
   std::thread th_;
   std::atomic<std::size_t> written_{0};
+  std::atomic<std::size_t> dropped_{0};
+  std::atomic<bool> failed_{false};
+  std::atomic<int> err_{0};  // errno — error()가 문구로 바꾼다
 };
 
 }  // namespace detect

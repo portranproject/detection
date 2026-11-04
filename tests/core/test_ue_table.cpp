@@ -860,9 +860,9 @@ TEST(UeTable, CellTickLossAndInputLost) {
 
   // 1단계 필수 키(A·S)가 없어 보류가 H_hold를 넘으면 series가 input_lost — 2단계 룰에도 그대로 넘긴다
   SeriesConfig scfg;
-  scfg.h_hold_ms = 1000;
+  scfg.h_hold_ms = 3000;  // 창 채움 시간 1,900 ms보다 길게 — 더 짧으면 series가 채움 + P로 올려 쓴다 (3_ §8, 11/05 W-31)
   Harness g({}, true, scfg);
-  for (int64_t t = 0; t <= 1100; t += 100) g.kpm(t, "[]", 1, "");
+  for (int64_t t = 0; t <= 3100; t += 100) g.kpm(t, "[]", 1, "");
   int lost = 0;
   for (const auto& x : g.rule->ticks) lost += std::get<3>(x) ? 1 : 0;
   EXPECT_EQ(lost, 1);
