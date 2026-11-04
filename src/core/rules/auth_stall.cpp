@@ -191,9 +191,12 @@ void AuthStallRule::on_cell_tick(int64_t cell, const Kpm2& k, const CellLoss&, b
   if (high && book_.severity(cell) == Severity::Medium) book_.update(cell, Severity::High, t, out.alerts);
   book_.flush(cell, t, out.alerts);
   // 6) 직전 clear_quiet_ms 동안 그 셀에 상태표 밀어내기가 있었으면 풀지 않는다 (15_ §4.5, Q-56 해결 — 이슈 #44)
-  if (book_.open(cell) && t - c.t_sat >= cfg_.clear_quiet_ms && evicted_window(c, t) == 0)
-    book_.clear(cell, t, out.alerts);
+  const bool cleared = book_.open(cell) && t - c.t_sat >= cfg_.clear_quiet_ms && evicted_window(c, t) == 0;
+  if (cleared) book_.clear(cell, t, out.alerts);
   decorate(cell, from, cx, max_conn, out);
+  // CLEAR 뒤 걸림만 싣는다 (15_ §4.5 — 11/05 Q-73, 이슈 #94): 창 안 고착 목록을 비워 옛 경보에 실렸던 UE가 새 RAISE에 다시 실리지
+  // 않게(4단계 이슈 #84와 같음). 그전에는 CLEAR 뒤 고착 하나로 창 안 수가 N이 되면 옛 UE 4개가 증거 없이 재수록됐다(25_ §3.2-3)
+  if (cleared) c.stalls.clear();
 
   // 창 밖 기록 정리. 경보 중에는 값의 기준이 마지막 고착 시각이고, 경보가 없으면 다음 기준은 앞으로의 고착(> t)이다
   const int64_t bound = (book_.open(cell) && c.t_last_stall ? *c.t_last_stall : t) - cfg_.window_ms;

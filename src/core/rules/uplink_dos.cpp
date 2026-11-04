@@ -261,9 +261,12 @@ void UplinkDosRule::on_cell_tick(int64_t cell, const Kpm2& k, const CellLoss&, b
   from = out.alerts.size();
   book_.flush(cell, t, out.alerts);
   // 직전 clear_quiet_ms 동안 그 셀에 상태표 밀어내기가 있었으면 풀지 않는다 (15_ §5.5, Q-56 해결 — 이슈 #44)
-  if (book_.open(cell) && t - cs.t_active >= cfg_.clear_quiet_ms && evicted_window(cs, t) == 0)
-    book_.clear(cell, t, out.alerts);
+  const bool cleared = book_.open(cell) && t - cs.t_active >= cfg_.clear_quiet_ms && evicted_window(cs, t) == 0;
+  if (cleared) book_.clear(cell, t, out.alerts);
   decorate(from, out);
+  // CLEAR 뒤 걸림만 싣는다 (15_ §5.5 — 11/05 Q-73, 이슈 #94): 창 안 실패 UE 목록을 비워 옛 경보에 실렸던 UE가 새 RAISE에 다시 실리지
+  // 않게(4단계 이슈 #84와 같음, 25_ §3.2-3). fail_msgs는 창 안 실패 메시지 수(측정값 fail_msgs_w)라 그대로 둔다
+  if (cleared) cs.failed.clear();
 
   // 창 밖 기록 정리. 경보 중에는 값의 기준이 가장 최근 걸림이고, 경보가 없으면 다음 기준은 앞으로의 걸림(≥ t)이다
   const int64_t bound = (book_.open(cell) && cs.t_last_hit ? *cs.t_last_hit : t) - cfg_.window_ms;

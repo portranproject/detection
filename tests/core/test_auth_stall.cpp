@@ -870,3 +870,28 @@ TEST(AuthStall, EvidenceHorizon) {
   EXPECT_EQ(h.rule->evidence_horizon_ms(), 13000);
   EXPECT_EQ(h.engine.ue_table().recent_keep_ms(), 14000);
 }
+
+// L01-T23 (15_ §4.5 — 11/05 Q-73 해결, 이슈 #94): CLEAR 때 창 안 고착 목록을 비운다 — 경보 중 불성립 고착 4건(60~63 s)이 CLEAR(64.4 s)
+// 뒤에도 창(10 s) 안에 남아 65 s 고착 하나로 S_W 5가 되어 옛 UE 4개를 새 RAISE에 다시 싣던 것(25_ §3.2-3). 이제 S_W 1 → 경보 없음,
+// 그 뒤 4건 더 → 새 RAISE의 ues는 CLEAR 뒤 걸림 5개뿐(ues_total 5)
+TEST(AuthStall, T23ClearEmptiesWindow) {
+  Harness h;
+  attack(h, 5);                                                       // RAISE 4400, t_sat 4332
+  for (int i = 0; i < 4; ++i) h.stall_ue(58000 + 1000 * i, 30 + i);  // 고착 60000~63000 — UPDATE, 불성립
+  h.stall_ue(63000, 40);                                              // 고착 65000 — CLEAR 뒤 창 안 수 1
+  for (int i = 0; i < 4; ++i) h.stall_ue(63300 + 300 * i, 41 + i);   // 고착 65300~66200 → S_W 5
+  h.tick_to(64400);
+  ASSERT_FALSE(h.alerts.empty());
+  EXPECT_EQ(h.alerts.back().kind, AlertEventKind::Clear);
+  const std::size_t n = h.alerts.size();
+  h.tick_to(65200);
+  EXPECT_EQ(h.alerts.size(), n);
+  h.tick_to(66400);
+  ASSERT_EQ(h.alerts.size(), n + 1);
+  const AlertEvent& e = h.alerts.back();
+  EXPECT_EQ(e.kind, AlertEventKind::Raise);
+  EXPECT_EQ(e.t, kT0 + 66200);
+  EXPECT_EQ(e.ues.size(), 5u);
+  EXPECT_EQ(e.ues_total, 5);
+  for (const AlertUe& u : e.ues) EXPECT_GE(u.du_ue_id, 40);
+}
