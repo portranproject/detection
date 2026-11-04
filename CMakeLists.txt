@@ -63,6 +63,7 @@ add_library(detect_io
   src/io/evidence_sink.cpp
   src/io/uds_server.cpp
   src/io/file_replay.cpp
+  src/io/input_recorder.cpp   # 입력 원본 기록 — 스레드 C (24_ §3.3)
 )
 target_link_libraries(detect_io PUBLIC detect)
 target_compile_options(detect_io PRIVATE -Wall -Wextra -Wpedantic)

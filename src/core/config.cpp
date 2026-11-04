@@ -313,6 +313,24 @@ void parse_evidence(const json& e, EvidenceConfig& c, std::vector<std::string>& 
   read_string(e, "out_path", c.out_path, w);
 }
 
+// input_record (24_ §3.1): 받은 입력 줄을 남길 파일. path는 null(끔) 또는 빈 문자열이 아닌 경로, 큐 상한은 범위 검사.
+// 증거 파일과 같은 파일인지는 작업 폴더가 있어야 비교할 수 있어 실행 파일이 본다 (core는 I/O 없음, 4_ §2)
+void parse_input_record(const json& e, InputRecordConfig& c, std::vector<std::string>& warnings) {
+  const std::string w = "input_record.";
+  if (!e.is_object()) throw ConfigErr("input_record: not an object");
+  warn_unknown(e, {"path", "queue_max_bytes"}, w, warnings);
+  if (const json* p = find(e, "path")) {
+    if (p->is_null()) {
+      c.path.reset();
+    } else {
+      std::string s;
+      read_string(e, "path", s, w);  // 문자열이 아니거나 빈 문자열이면 오류
+      c.path = s;
+    }
+  }
+  read_int_in(e, "queue_max_bytes", c.queue_max_bytes, 65536, 67108864, w);
+}
+
 }  // namespace
 
 // 설정 파일 해석 (4_ §1.2). 빠진 키는 구조체 기본값(= 4_ §1.2 제안값)을 그대로 쓴다
@@ -328,7 +346,8 @@ ConfigResult parse_config(std::string_view json_text) {
     return r;
   }
   try {
-    warn_unknown(j, {"socket_path", "max_line_bytes", "max_cells", "input_silent_ms", "rules", "evidence", "ue_table", "alert"},
+    warn_unknown(j, {"socket_path", "max_line_bytes", "max_cells", "input_silent_ms", "rules", "evidence", "ue_table", "alert",
+                     "input_record"},
                  "", r.warnings);
     read_string(j, "socket_path", r.config.socket_path, "");
     read_int(j, "max_line_bytes", r.config.max_line_bytes, 1, "");
@@ -346,6 +365,7 @@ ConfigResult parse_config(std::string_view json_text) {
     if (const json* e = find(j, "evidence")) parse_evidence(*e, r.config.evidence, r.warnings);
     if (const json* u = find(j, "ue_table")) parse_ue_table(*u, r.config.ue_table, r.warnings);
     if (const json* a = find(j, "alert")) parse_alert(*a, r.config.alert, r.warnings);
+    if (const json* ir = find(j, "input_record")) parse_input_record(*ir, r.config.input_record, r.warnings);  // 24_ §3.1
     r.ok = true;
   } catch (const ConfigErr& e) {
     r.error = std::string("config: ") + e.what();

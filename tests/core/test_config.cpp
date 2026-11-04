@@ -55,6 +55,9 @@ TEST(Config, RepoConfigFileParses) {
   EXPECT_EQ(r.config.evidence.post_slots, 10u);
   EXPECT_EQ(r.config.evidence.queue_max, 4096u);
   EXPECT_EQ(r.config.evidence.out_path, "evidence.jsonl");
+  // 입력 원본 기록은 저장소 설정에서 끔 — 현장 설정에서 켠다 (24_ §3.1)
+  EXPECT_FALSE(r.config.input_record.path);
+  EXPECT_EQ(r.config.input_record.queue_max_bytes, d.input_record.queue_max_bytes);
 
   // 2단계 키는 모두 구조체 기본값과 같다 — 설정 파일을 더해도 판정은 그대로 (4_ §1.2, 10/29 이슈 #33)
   const UeTableConfig ud;
@@ -580,4 +583,37 @@ TEST(Config, Stage4KnownRegBurst) {
   auto r = parse_known_reg_burst_config(R"({"n_fail":3})");
   ASSERT_TRUE(r.ok);
   EXPECT_EQ(r.warnings, (std::vector<std::string>{"unknown key rules.AN-08.n_fail (ignored)"}));
+}
+
+// IR-T9 설정 부분 (24_ §3.1·§8.1): input_record — 기본은 끔·8 MiB, path는 null 또는 빈 문자열이 아닌 문자열,
+// queue_max_bytes는 65,536~67,108,864, 모르는 키는 경고만. 증거 파일과 같은 경로인지는 실행 파일이 본다(통합 시험)
+TEST(Config, InputRecord) {
+  const InputRecordConfig d;
+  EXPECT_FALSE(d.path);
+  EXPECT_EQ(d.queue_max_bytes, 8388608u);
+
+  auto r = parse_config(R"({"input_record":{"path":"input.jsonl","queue_max_bytes":65536}})");
+  ASSERT_TRUE(r.ok) << r.error;
+  EXPECT_TRUE(r.warnings.empty());
+  ASSERT_TRUE(r.config.input_record.path);
+  EXPECT_EQ(*r.config.input_record.path, "input.jsonl");
+  EXPECT_EQ(r.config.input_record.queue_max_bytes, 65536u);
+
+  r = parse_config(R"({"input_record":{"path":null,"queue_max_bytes":67108864}})");
+  ASSERT_TRUE(r.ok) << r.error;
+  EXPECT_FALSE(r.config.input_record.path);
+  EXPECT_EQ(r.config.input_record.queue_max_bytes, 67108864u);
+
+  r = parse_config(R"({"input_record":{"path":"input.jsonl","patth":1}})");
+  ASSERT_TRUE(r.ok) << r.error;
+  EXPECT_EQ(r.warnings, (std::vector<std::string>{"unknown key input_record.patth (ignored)"}));
+
+  EXPECT_FALSE(parse_config(R"({"input_record":{"path":""}})").ok);
+  EXPECT_FALSE(parse_config(R"({"input_record":{"path":5}})").ok);
+  EXPECT_FALSE(parse_config(R"({"input_record":{"queue_max_bytes":65535}})").ok);
+  EXPECT_FALSE(parse_config(R"({"input_record":{"queue_max_bytes":67108865}})").ok);
+  EXPECT_FALSE(parse_config(R"({"input_record":{"queue_max_bytes":"8M"}})").ok);
+  EXPECT_FALSE(parse_config(R"({"input_record":"input.jsonl"})").ok);
+  auto e = parse_config(R"({"input_record":{"queue_max_bytes":1}})");
+  EXPECT_NE(e.error.find("input_record.queue_max_bytes"), std::string::npos) << e.error;
 }

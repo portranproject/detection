@@ -2,5 +2,6 @@ build/
 build-*/
 __pycache__/
 evidence.jsonl
+input.jsonl
 sender_state.json
 sender_state.json.lock

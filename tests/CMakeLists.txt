@@ -38,6 +38,7 @@ add_executable(detect_tests
   core/test_known_reg_burst.cpp
   io/test_uds_server.cpp
   io/test_file_replay.cpp
+  io/test_input_recorder.cpp
 )
 target_link_libraries(detect_tests PRIVATE detect detect_io GTest::gtest_main)
 target_compile_definitions(detect_tests PRIVATE
@@ -58,6 +59,12 @@ find_package(Python3 COMPONENTS Interpreter REQUIRED)
 add_test(NAME integration.detector
   COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/integration/test_detector.py
           $<TARGET_FILE:detector> ${PROJECT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/integration)
+
+# 입력 원본 기록 통합 시험 (24_ §8.1 IR-T1~T11·T13, 이슈 #88) — tests/data/ 전체를 기록 켬·끔으로 재생, 소켓 모드, 설정 오류
+add_test(NAME integration.input_record
+  COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/integration/test_input_record.py
+          $<TARGET_FILE:detector> ${PROJECT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/input_record)
+set_tests_properties(integration.input_record PROPERTIES TIMEOUT 600)
 
 # CU 로그 변환기 테스트 (4_ §4.1) — 변환 규칙 + 변환 결과를 detector로 재생
 add_test(NAME tools.ocu_log_to_kpm2
