@@ -595,7 +595,8 @@ class Config(Base):
         self.write(lines_bytes([L(1)]))
         for over in ({"batch_max_lines": 0}, {"batch_max_lines": 5001}, {"url": "http://127.0.0.1/ingest"},
                      {"batch_max_lines": "500"}, {"env": "P4"}, {"retry_max_ms": 50},
-                     {"inputs": [{"path": "x.jsonl", "kind": "input"}]}, {"start_at": "middle"}):
+                     {"inputs": [{"path": "x.jsonl", "kind": "input"}]}, {"start_at": "middle"},
+                     {"batch_max_bytes": 4096}):  # < line_max_bytes + 1 (11/05 W-31)
             with self.subTest(over=over):
                 r = self.run_sender(self.cfg(**over), "--dry-run")
                 self.assertEqual(r.returncode, 1, r.stderr)
@@ -837,6 +838,37 @@ class InputSending(Base):
         self.assertEqual(a["si"]["RRC.ConnMean"], round(sum(d["si"]["RRC.ConnMean"] for d in si) / 9, 3))
         self.assertEqual(a["partial"], ["cc.RRC.ConnEstabAtt", "cc.RRC.ConnEstabSucc", "cc.RRC.ConnEstabFailCause",
                                         "si.RRC.ConnMean", "si.RRC.ConnMax", "ext.DuCannotServe"])
+
+    def test_S40_nested_null_cause(self):
+        # S40 (11/05 W-40, 24_ §5.1): 원인별 객체의 하위 값 null은 그 원인만 '모름'이고 줄은 받는다(엔진 파서와 같음).
+        #      total null은 그 줄에서 그 이름을 모름(total 없음과 같음). bad_kpm2가 나지 않는다
+        lines, ds, seq = [hello_line(1)], [], 2
+        for slot in range(10):
+            d = kpm2_dict(seq, 1, T0 + slot * 100, slot)
+            seq += 1
+            if slot == 2:
+                d["cc"]["RRC.ConnEstabAtt"]["mo-Signalling"] = None   # 하위 null — total은 셈, 원인만 뺌
+            if slot == 4:
+                d["cc"]["RRC.ConnEstabFailCause"]["NoReply"] = None  # total 없는 객체의 하위 null
+            if slot == 6:
+                d["cc"]["RRC.ConnEstabSucc"]["total"] = None         # total null → 그 줄에서 모름
+            ds.append(d)
+            lines.append(jl(d))
+        lines.append(jl(kpm2_dict(seq, 1, T0 + 1000, 10)))
+        self.write_in(lines)
+        r = self.once(self.icfg())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("bad_kpm2", r.stderr)
+        a = json.loads(agg_lines(self.srv)[(SESSION, 1, 1000, T0)][0])
+        self.assertEqual(a["n"], 10)
+        att = a["cc"]["RRC.ConnEstabAtt"]
+        self.assertEqual(att["total"], sum(d["cc"]["RRC.ConnEstabAtt"]["total"] for d in ds))
+        self.assertEqual(att["mo-Signalling"], sum(d["cc"]["RRC.ConnEstabAtt"]["total"] for i, d in enumerate(ds) if i != 2))
+        self.assertEqual(a["cc"]["RRC.ConnEstabFailCause"]["NoReply"],
+                         sum(d["cc"]["RRC.ConnEstabFailCause"]["NoReply"] for i, d in enumerate(ds) if i != 4))
+        self.assertEqual(a["cc"]["RRC.ConnEstabSucc"]["total"],
+                         sum(d["cc"]["RRC.ConnEstabSucc"]["total"] for i, d in enumerate(ds) if i != 6))
+        self.assertEqual(a["partial"], ["cc.RRC.ConnEstabSucc"])
 
     def test_S26_missing_slots(self):
         # S26: 10줄 가운데 3줄을 뺀 칸 — n 7

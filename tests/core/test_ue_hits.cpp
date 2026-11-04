@@ -397,3 +397,73 @@ TEST(HitWindow, CountsSurviveClearAndEnd) {
     EXPECT_EQ(h.w.window(1), 0);
   }
 }
+
+// 11/05 W-32 (이슈 #92, 25_ §3.1-4): 밀어내기 시각 목록은 열린 경보가 없어도 clear_quiet_ms 창 밖은 버린다 — 그전에는 경보가 없으면
+// 영원히 안 잘라 포화 홍수에서 무한히 쌓였다(룰 6개 × 8 B/밀어내기)
+TEST(HitWindow, EvictTimesTrimmedWithoutAlert) {
+  UeTableConfig tc;
+  tc.max_ues = 100;
+  UeTable table(tc);
+  DeadlineQueue dq;
+  Hello hello;
+  std::string session = "S";
+  UeRuleCtx ctx(table, dq, hello, session, 1, 0);
+  for (int64_t du = 1; du <= 150; ++du) {  // 상한 100 → 50건 밀어내기
+    UeEvt e;
+    e.t_ms = 1000 + du;
+    e.cell_id = 1;
+    e.du_ue_id = du;
+    e.crnti = du;
+    e.dir = Dir::UL;
+    e.proto = Proto::RRC;
+    e.msg = "RRCSetupRequest";
+    table.apply(e, du, dq);
+  }
+  ASSERT_EQ(table.counts(1).evicted, 50);
+  HitWindow w("AN-xx", AlertConfig{}, 1000, 1, 60000);
+  std::vector<AlertEvent> out;
+  auto fn = [](std::size_t, const AlertUe*) {};
+  w.tick(1, 2000, false, ctx, out, fn);
+  EXPECT_EQ(w.evict_times_size(1), 50u);
+  w.tick(1, 2000 + 60000, false, ctx, out, fn);  // 창 밖 — 경보 없이도 비운다
+  EXPECT_EQ(w.evict_times_size(1), 0u);
+  EXPECT_TRUE(out.empty());
+}
+
+// 11/05 W-34 (이슈 #92, 25_ §3.2-1): CLEAR 뒤 새 경보가 열려도 옛 경보에 실린 키의 반복은 새 경보에 닿지 않는다 — active는 false,
+// add·touch는 무효. 그전에는 '그 셀에 경보가 열려 있나'만 봐서 옛 키의 반복이 새 경보의 extra가 되고 해제를 늦췄다
+TEST(HitWindow, OldAlertKeyDoesNotReachNewAlert) {
+  H h(1);
+  h.w.hit(uid(1), ue(1, 100));
+  h.tick(200);    // RAISE A
+  h.tick(60300);  // 100 + 60,000 ≤ 60,300 → CLEAR A
+  ASSERT_EQ(h.out.size(), 2u);
+  EXPECT_EQ(h.out[1].kind, AlertEventKind::Clear);
+  EXPECT_FALSE(h.w.active(uid(1)));
+  h.w.hit(uid(2), ue(2, 60400));
+  h.tick(60500);  // RAISE B
+  ASSERT_EQ(h.out.size(), 3u);
+  EXPECT_TRUE(h.w.active(uid(2)));
+  EXPECT_FALSE(h.w.active(uid(1)));  // 옛 경보의 키 — 회복한 것으로 본다
+  h.w.add(uid(1), "extra");
+  EXPECT_EQ(h.w.count(1, "extra"), 0);
+  h.w.touch(uid(1), 61000);  // 해제 기준을 올리지 못한다
+  h.tick(120450);  // B의 마지막 걸림 60,400 + 60,000 ≤ 120,450 → CLEAR (touch가 먹었다면 61,000 + 60,000 > 120,450이라 안 풀림)
+  ASSERT_EQ(h.out.size(), 4u);
+  EXPECT_EQ(h.out[3].kind, AlertEventKind::Clear);
+  h.w.add(uid(2), "extra");  // CLEAR 뒤 — 둘 다 무효
+  EXPECT_FALSE(h.w.active(uid(2)));
+}
+
+// 11/05 W-39 (이슈 #92, 25_ §3.2-8): 창 앞 자르기는 걸림 시각 순서가 아니라 값으로 — fresh 순서가 t_hit 순이 아니어도 창 밖 걸림이 남지 않는다
+TEST(HitWindow, WindowTrimIgnoresInsertionOrder) {
+  H h(3);  // N 3, W 1,000
+  h.w.hit(uid(1), ue(1, 1050));
+  h.w.hit(uid(2), ue(2, 1020));  // 뒤에 넣었지만 시각은 앞 (stale_setup 닫힘·늦은 줄 모양)
+  h.tick(1100);
+  EXPECT_EQ(h.w.window(1), 2);
+  h.w.hit(uid(3), ue(3, 2020));  // 창 (1,020, 2,020] — 1,020은 밖, 1,050은 안
+  h.tick(2100);
+  EXPECT_EQ(h.w.window(1), 2);  // pop_front 반복이면 앞 칸 1,050이 창 안이라 멈춰 1,020이 남아 3 → 잘못된 RAISE
+  EXPECT_TRUE(h.out.empty());
+}

@@ -171,6 +171,8 @@ struct DetectorConfig {
   std::string socket_path = "/run/ran-detect/kpm.sock";  // socket_path (2_ §1)
   std::size_t max_line_bytes = 65536;                     // max_line_bytes (2_ §1 줄 길이 상한)
   std::size_t max_cells = 64;                             // max_cells — 셀 수 상한 (결정 D7, 16_ W-24로 설정 키)
+  // max_slots — 셀 버퍼 칸 수 상한 (2_ §3, 4_ §1.2 — 11/05 W-31, 이슈 #92). hello의 W/P + D + 1·pre_slots가 넘으면 hello를 버림. 32~65,536
+  std::size_t max_slots = 1024;
   // input_silent_ms — 벽시계로 마지막 kpm2 뒤 이만큼 kpm2가 없으면 진단 input_silent 1회 + 진행 중 경보 전부 END(reason=input_silent).
   // 기본 10,000 = H_hold와 같은 값(제안값), 1,000~600,000. 소켓 모드만 (3_ §8, 14_ §6.2 — 10/29 Q-45 해결, 이슈 #50)
   int64_t input_silent_ms = 10000;

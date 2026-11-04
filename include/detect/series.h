@@ -16,9 +16,12 @@
 
 namespace detect {
 
-// 버퍼 칸 수 = max(W/P + D + 1, pre_slots), D = ⌈T_nr / P⌉ (3_ §3·§7.1)
+// 버퍼 칸 수 = max(W/P + D + 1, pre_slots), D = ⌈T_nr / P⌉ (3_ §3·§7.1). 부르기 전에 slots_within으로 상한을 확인한다
 std::size_t buffer_slots(int64_t window_ms, int64_t period_ms, int64_t noreply_timeout_ms,
                          std::optional<std::size_t> pre_slots = std::nullopt);
+// 버퍼 칸 수가 max_slots 안인가 (2_ §3, 3_ §3 — 11/05 W-31, 이슈 #92). 넘침 없이 센다 — 거대 T_nr이 와도 안전
+bool slots_within(int64_t window_ms, int64_t period_ms, int64_t noreply_timeout_ms, std::optional<std::size_t> pre_slots,
+                  std::size_t max_slots);
 
 // 버퍼 한 칸 = kpm2 한 줄. 파싱 값과 원본 줄(kpm.raw)을 함께 보관한다 (3_ §7.1)
 struct Slot {
@@ -66,6 +69,7 @@ struct SeriesConfig {
   std::size_t max_cells = 64;             // 결정 D7
   int64_t h_hold_ms = 10000;              // 3_ §8 H_hold — 보류가 이보다 길면 input_lost (결정 J5: L3-01-V 설정에서 복사)
   int missing_key_slots = 10;             // 3_ §8 필수 키 A·S 누락 연속 칸 상한
+  std::size_t max_slots = 1024;           // 셀 버퍼 칸 수 상한 (2_ §3, 4_ §1.2 — 11/05 W-31). 넘는 hello는 버린다
 };
 
 // 셀 구간 끊김 (2_ §4.1, 3_ §8). 경보 중이면 룰이 gap 레코드로 낸다 (3_ §7.1)
@@ -130,10 +134,13 @@ class Series {
   };
 
   FeedResult on_hello(const Common& c, const Hello& h);
+  // hello·설정 경계 (2_ §3, 3_ §3 — 11/05 W-31): 버퍼 칸 수가 상한 안이면 true, 아니면 진단을 넣고 Dropped (세션 유지)
+  bool accept_hello(const Common& c, const Hello& h, FeedResult& out) const;
   FeedResult on_kpm2(const Common& c, const Kpm2& k);
   // 저장된 칸의 입력 건전성 평가: 누락 streak → 표준 윈도우 합계 → 보류·H_hold (3_ §3·§8)
   void assess(const Kpm2& k, CellSeries& cs, InputHealth& h, FeedResult& out);
-  void start_session(const Common& c, const Hello& h);
+  // 세션 시작 — 버퍼 크기, W % P 정렬(3_ §3), h_hold 하한(3_ §8)을 정하고 진단을 out에 넣는다 (11/05 W-31)
+  void start_session(const Common& c, const Hello& h, FeedResult& out);
   // seq 검사 (2_ §2). 역행·중복이면 false(버림, 결정 D5), 건너뜀은 진단만
   bool check_seq(int64_t seq, FeedResult& out);
 
@@ -142,6 +149,8 @@ class Series {
   std::optional<Hello> hello_;
   std::optional<int64_t> last_seq_;
   std::size_t capacity_ = 0;
+  bool misaligned_ = false;    // window_ms가 period_ms의 배수가 아님 — 이 세션은 판정하지 않는다 (3_ §3, 11/05 W-31)
+  int64_t h_hold_eff_ = 0;     // 실제 쓰는 H_hold — 창 채움 시간 이하면 채움 시간 + P로 올린 값 (3_ §8, 11/05 W-31)
   std::map<int64_t, CellSeries> cells_;
   std::map<int64_t, InputHealth> health_;
 };

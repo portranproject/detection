@@ -190,6 +190,11 @@ Hello parse_hello(const json& j, std::vector<std::string>& warnings) {
       CellInfo ci;
       ci.cell_id = req_int(e, "cell_id", 0);
       ci.max_conn = opt_count(e, "max_conn");
+      // 0은 미정으로 (2_ §3 — 11/05 W-31, 이슈 #92): 0이면 C4(Cx ≥ 0.9 × max_conn)가 늘 참이라 모든 RAISE가 high였다
+      if (ci.max_conn && *ci.max_conn == 0) {
+        warnings.push_back("hello: cells[].max_conn 0 treated as null (cell_id " + std::to_string(ci.cell_id) + ")");
+        ci.max_conn.reset();
+      }
       h.cells.push_back(ci);
     }
   }

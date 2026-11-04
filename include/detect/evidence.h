@@ -22,6 +22,7 @@
 #include <deque>
 #include <map>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -50,6 +51,7 @@ class EvidenceRecorder {
   enum class Phase { Active, Post };
   struct Track {
     std::string rule;
+    std::string kind;       // attack·anomaly — 같은 룰·셀의 두 묶음을 가른다 (14_ §8.4, 11/05 W-33)
     int64_t cell_id = 0;
     bool cell_unit = true;  // 셀 단위 경보(unit = "cell")만 kpm2 칸 증거를 낸다 (14_ §8.4)
     Phase phase = Phase::Active;
@@ -67,7 +69,9 @@ class EvidenceRecorder {
   EvidenceConfig cfg_;
   EvidenceQueue& queue_;
   std::map<std::string, Track> tracks_;                                 // alert_id → 진행 중(active·post) 경보
-  std::map<std::pair<std::string, int64_t>, std::string> by_rule_cell_;  // (룰, 셀) → alert_id
+  // (룰, 종류, 셀) → alert_id — 종류를 가르지 않으면 한 룰의 공격·불확실 묶음이 같은 셀에 동시에 열릴 때 둘째 RAISE가 첫째 track을 끊었다
+  // (11/05 W-33, 이슈 #92 — 25_ §3.5)
+  std::map<std::tuple<std::string, std::string, int64_t>, std::string> by_rule_cell_;
   std::map<std::string, Counts> finished_;                              // 끝난 경보의 집계 (kFinishedMax까지)
   std::deque<std::string> finished_order_;                              // finished_의 삽입 순서 — 오래된 것부터 지운다
   UeEvidence ue_;                                                       // UE 단위 경보의 증거 UE (14_ §8.4)

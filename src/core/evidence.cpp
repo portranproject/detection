@@ -194,7 +194,7 @@ void EvidenceRecorder::finish_post(const std::string& alert_id, std::vector<Diag
     finished_.erase(finished_order_.front());
     finished_order_.pop_front();
   }
-  by_rule_cell_.erase({it->second.rule, it->second.cell_id});
+  by_rule_cell_.erase({it->second.rule, it->second.kind, it->second.cell_id});
   tracks_.erase(it);
   ue_.finish(alert_id);
 }
@@ -252,13 +252,14 @@ std::vector<Diag> EvidenceRecorder::on_feed(const Series& series, const UeTable&
 
   // 2) 경보 이벤트
   for (const AlertEvent& e : out.alerts) {
-    const auto key = std::make_pair(e.rule, e.cell_id);
+    const auto key = std::make_tuple(e.rule, e.alert_kind, e.cell_id);  // 종류까지 (11/05 W-33)
     switch (e.kind) {
       case AlertEventKind::Raise: {
         // post 중 같은 셀·룰이 다시 RAISE하면 이전 post를 끝내고 새 경보 시작 (3_ §7.1)
         if (auto it = by_rule_cell_.find(key); it != by_rule_cell_.end()) finish_post(it->second, diags);
         Track tr;
         tr.rule = e.rule;
+        tr.kind = e.alert_kind;
         tr.cell_id = e.cell_id;
         tr.cell_unit = e.unit == "cell";
         tracks_[e.alert_id] = tr;

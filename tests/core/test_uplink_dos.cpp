@@ -242,7 +242,7 @@ TEST(UplinkDos, T04FloodRaisesBranch1) {
     EXPECT_EQ(u.t_hit, kT0 + 6000 + 1000 * static_cast<int64_t>(i));
     EXPECT_EQ(u.cond, (std::vector<std::string>{"fail_not_accepted"}));
     EXPECT_EQ(u.values.dump(),
-              R"({"branch":"1","reg_req_n":1,"fails":["RegistrationReject"],"causes":[3],"id_type":"SUCI","closed_ms":20})");
+              R"({"branch":"1","reg_req_n":1,"fails":["RegistrationReject"],"causes":[3],"fails_n":1,"id_type":"SUCI","closed_ms":20})");
   }
   EXPECT_EQ(h.logs[0], "ALERT RAISE rule=L3-21 cell=1 t=" + t_str(10000) +
                            " branch=1 fails_w=5 n_fail=5 window_ms=10000 severity=medium mode=normal candidates=AN-01");
@@ -284,7 +284,7 @@ TEST(UplinkDos, T06RepeatRaisesBranch2) {
   EXPECT_EQ(e.ues[0].t_hit, kT0 + 2000);
   EXPECT_EQ(e.ues[0].cond, (std::vector<std::string>{"reg_repeat", "fail"}));
   EXPECT_EQ(e.ues[0].values.dump(),
-            R"({"branch":"2","reg_req_n":3,"fails":["RegistrationReject"],"causes":[3],"id_type":"SUCI","closed_ms":null})");
+            R"({"branch":"2","reg_req_n":3,"fails":["RegistrationReject"],"causes":[3],"fails_n":1,"id_type":"SUCI","closed_ms":null})");
   EXPECT_EQ(h.logs[0], "ALERT RAISE rule=L3-21 cell=1 t=" + t_str(2000) +
                            " branch=2 ue=1/3/1 reg_req_n=3 fails=RegistrationReject severity=medium mode=normal "
                            "candidates=AN-01");
@@ -292,6 +292,24 @@ TEST(UplinkDos, T06RepeatRaisesBranch2) {
   EXPECT_NE(rec.find(R"("mode":"normal","branch":"2","cond":["reg_repeat","fail"])"), std::string::npos);
   h.nas(2500, 3, "UL", "RegistrationRequest", kSuci);  // 연결당 한 번
   EXPECT_EQ(h.alerts.size(), 1u);
+}
+
+// 11/05 W-32 (이슈 #92, 25_ §3.1-5): 한 연결의 실패 목록은 마지막 16개 + 총수 fails_n — 거절을 되풀이해도 레코드가 커지지 않는다
+TEST(UplinkDos, FailsListCappedAtSixteen) {
+  Opt o;
+  o.cfg.n_fail = 1;  // 실패 UE 하나로 RAISE해 ues[].values를 본다
+  Harness h(o);
+  h.connect(1000, 3);
+  for (int i = 0; i < 40; ++i) h.reject(1020 + i * 20, 3, i % 2 ? 3 : 7, i % 3 ? "RegistrationReject" : "ServiceReject");
+  h.tick_to(6200);  // 첫 실패 1020 + 5,000 마감 → kpm2 [6000, 6100)에서 실패 UE·RAISE
+  ASSERT_EQ(h.alerts.size(), 1u);
+  const auto& v = h.alerts[0].ues[0].values;
+  EXPECT_EQ(v.at("fails").size(), 16u);
+  EXPECT_EQ(v.at("causes").size(), 16u);
+  EXPECT_EQ(v.at("fails_n").get<int64_t>(), 40);
+  EXPECT_EQ(v.at("fails")[0].get<std::string>(), "ServiceReject");  // 25번째(i = 24, 3의 배수)부터 — 마지막 16개
+  EXPECT_EQ(v.at("causes")[0].get<int64_t>(), 7);                  // i = 24는 짝수 → 7
+  EXPECT_EQ(v.at("fails")[15].get<std::string>(), "ServiceReject");  // i = 39: 3의 배수 → ServiceReject
 }
 
 // L21-T7: 한 연결에서 RegistrationRequest 3번, 실패 없음(응답 없는 재전송) — 갈래 ② 아님(L3-01-O 쪽)

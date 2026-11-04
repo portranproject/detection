@@ -334,6 +334,9 @@ void BlindDosRule::decorate_held(std::size_t from, RuleOutput& out) {
 
 // 상태표 셀별 누적 evicted(14_ §6.3)의 증가분을 이 칸 시각으로 적는다 — 경보가 열려 있으면 evicted_open도
 void BlindDosRule::note_evictions(CellState& c, int64_t cell, int64_t t, const UeRuleCtx& ctx) {
+  // 창 밖 시각은 경보가 없을 때도 버린다 (11/05 W-32, 이슈 #92 — 25_ §3.1-4): 그전에는 evicted_window가 열린 경보의 해제 판단과
+  // RAISE에서만 불려, 경보가 없는 포화 홍수에서 밀어내기마다 시각이 무한히 쌓였다
+  evicted_window(c, t);
   const int64_t total = ctx.table.counts(cell).evicted;
   for (; c.evicted_seen < total; ++c.evicted_seen) {
     c.evict_times.push_back(t);

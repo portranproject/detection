@@ -40,6 +40,10 @@ enum class DiagKind {
   NgapUnlinked,        // F1AP UE에 잇지 못한 NGAP NAS 줄 — 셀별로 세고 셀마다 처음 1회만 (14_ §7, 2_ §6.6)
   UeEvtLostMissing,    // ue_evt_lost 없는 kpm2가 한 셀에서 연속 50칸 (14_ §6.2)
   DlUnobserved,        // ue_evt_lost에 "DL"이 한 셀에서 연속 50칸 (14_ §6.2, 15_ §2.7·§4.7)
+  // 11/05 W-31 (이슈 #92) — hello·설정 경계 (2_ §3, 3_ §3·§8)
+  HelloRejected,       // hello의 버퍼 칸 수(W/P + D + 1·pre_slots)가 max_slots를 넘음 — hello를 버림, 세션 유지
+  WindowMisaligned,    // window_ms가 period_ms의 배수가 아님 — 창이 칸 경계에 걸려 이 세션 동안 1단계 룰 비활성
+  InputLost,           // 보류가 H_hold를 넘어 그 셀 버퍼를 비움 (3_ §8) — 경보가 없어도 남긴다
 };
 
 const char* to_string(DiagKind kind);

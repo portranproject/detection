@@ -482,6 +482,58 @@ TEST(EvidenceSink, WritesAndDrainsOnStop) {
   EXPECT_EQ(lines[50], "{\"n\":49}");
 }
 
+// 11/05 W-33 (이슈 #92, 25_ §3.1-6): 쓰기 오류면 전달을 멈추고 그 뒤 레코드를 버린 수로 센다 — /dev/full. 열지 못하면 start false + 이유
+TEST(EvidenceSink, WriteErrorStopsAndCounts) {
+  if (!std::ifstream("/dev/full")) GTEST_SKIP() << "/dev/full not available";
+  EvidenceQueue q(100);
+  EvidenceSink sink(q, "/dev/full");
+  ASSERT_TRUE(sink.start());
+  for (int i = 0; i < 5; ++i) q.push(ev("a", "{\"n\":" + std::to_string(i) + "}"));
+  sink.stop();
+  EXPECT_TRUE(sink.failed());
+  EXPECT_EQ(sink.written(), 0u);
+  EXPECT_EQ(sink.dropped(), 5u);
+  EXPECT_NE(sink.error().find("No space"), std::string::npos);
+  EvidenceQueue q2(10);
+  EvidenceSink bad(q2, std::string(DETECT_TMP_DIR) + "/no_such_dir/x.jsonl");
+  EXPECT_FALSE(bad.start());
+  EXPECT_FALSE(bad.error().empty());
+}
+
+// 11/05 W-33 (25_ §3.5): 같은 룰·셀의 공격·불확실 track이 동시에 열려도 둘째 RAISE가 첫째를 끝내지 않는다 — (룰, 종류, 셀)로 찾는다
+TEST(Evidence, AttackAndAnomalyTracksCoexist) {
+  EvidenceQueue q(1000);
+  EvidenceRecorder rec({}, q);
+  Engine engine;
+  auto mk = [](AlertEventKind kind, const char* akind, const char* id, int64_t cell) {
+    AlertEvent e;
+    e.kind = kind;
+    e.rule = "L3-20";
+    e.stage = 2;
+    e.unit = "ue";
+    e.alert_kind = akind;
+    e.cell_id = cell;
+    e.alert_id = id;
+    return e;
+  };
+  int stored = 0;
+  for (const auto& line : read_lines(scenario("T01_평상시"))) {
+    auto out = engine.feed_line(line);
+    if (out.outcome == FeedOutcome::Stored && out.cell_id) {
+      ++stored;
+      if (stored == 10) out.alerts.push_back(mk(AlertEventKind::Raise, "attack", "A", *out.cell_id));
+      if (stored == 11) out.alerts.push_back(mk(AlertEventKind::Raise, "anomaly", "B", *out.cell_id));
+      if (stored == 12) {
+        EXPECT_EQ(rec.finished_count(), 0u);  // 둘 다 진행 중 — 그전에는 B의 RAISE가 A를 끝냈다
+      }
+      if (stored == 20) out.alerts.push_back(mk(AlertEventKind::Clear, "attack", "A", *out.cell_id));
+      if (stored == 21) out.alerts.push_back(mk(AlertEventKind::Clear, "anomaly", "B", *out.cell_id));
+    }
+    rec.on_feed(engine.series(), engine.ue_table(), out);
+  }
+  EXPECT_EQ(rec.finished_count(), 2u);
+}
+
 // 끝난 경보의 집계는 상한(kFinishedMax)까지만 보관하고 오래된 것부터 지운다 (3_ §7.1, 10/27 이슈 #13 W-2)
 TEST(Evidence, FinishedCountsAreBounded) {
   EvidenceQueue q(100000);

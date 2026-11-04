@@ -81,6 +81,7 @@ class HitWindow {
   int64_t count(int64_t cell, const std::string& name) const;       // 열린 경보에 실린 연결의 누적 수
   int64_t evicted(int64_t cell, bool raise, int64_t t);              // raise면 직전 clear_quiet_ms 이동 창, 아니면 경보가 열린 뒤 누적
   bool open(int64_t cell) const { return book_.open(cell); }
+  std::size_t evict_times_size(int64_t cell) const;  // 테스트용 — 밀어내기 시각 목록 길이 (W-32)
 
  private:
   struct Hit {
@@ -93,6 +94,7 @@ class HitWindow {
   struct Cell {
     std::vector<Hit> fresh;                     // 이번 kpm2 전에 적은 걸림
     std::deque<Hit> win;                        // 가장 최근 걸림 기준 (t − W, t] 안 걸림 (성립 전 포함). CLEAR·END 때 비운다 (이슈 #84)
+    int64_t epoch = 0;                          // 경보 세대 — RAISE마다 +1. 걸림이 어느 경보에 실렸는지 (11/05 W-34, 이슈 #92)
     int64_t t_hit_last = 0;                     // 경보에 실린 마지막 걸림 시각 — CLEAR 기준 (21_ §3.5)
     int64_t t_sat = 0;                          // 마지막 성립 시각 — clear_on_satisfied면 CLEAR 기준 (21_ §5.5)
     std::map<std::string, int64_t> counts;      // 경보가 열린 뒤 누적 수
@@ -103,7 +105,11 @@ class HitWindow {
   struct Conn {
     int64_t cell = 0;
     bool in_alert = false;  // 열린 경보에 실렸나 — 그 뒤 누적 수는 바로 경보 값에 더한다
+    int64_t epoch = 0;      // 실린 경보의 세대 (Cell::epoch) — 지금 열린 경보와 같을 때만 '그 키를 실은 경보'다 (W-34)
   };
+  // 그 키가 지금 열린 경보에 실려 있나 (11/05 W-34, 이슈 #92 — 25_ §3.2-1): 그전에는 '그 셀에 경보가 열려 있나'만 봐서 CLEAR 뒤
+  // 새 경보가 열리면 옛 경보 키의 반복이 새 경보의 extra가 되고 해제를 늦췄다
+  bool in_current_alert(const Conn& conn) const;
 
   void include(Cell& c, const Hit& h);
   void forget_window(Cell& c);  // CLEAR·END 뒤 창·해제 기준을 비운다 (이슈 #84)

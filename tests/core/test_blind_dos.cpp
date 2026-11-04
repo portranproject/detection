@@ -652,15 +652,15 @@ TEST(BlindDos, T27KeyReuseKeepsOldUid) {
 TEST(BlindDos, EndOnInputLostAndSessionReset) {
   {
     SeriesConfig scfg;
-    scfg.h_hold_ms = 1000;
+    scfg.h_hold_ms = 3000;  // 창 채움 시간 1,900 ms보다 길게 — 더 짧으면 series가 채움 + P로 올려 쓴다 (3_ §8, 11/05 W-31)
     Harness h(scfg);
     h.victim(3, kS, 0);
     h.tick_to(1000);
     h.attack(7, kS, 1000);
     h.tick_to(6100);
     ASSERT_EQ(h.alerts.size(), 1u);
-    h.cc.clear();  // 1단계 필수 키가 빠진 칸 — 보류가 H_hold를 넘으면 input_lost
-    h.tick_to(7400);
+    h.cc.clear();  // 1단계 필수 키가 빠진 칸 — 보류가 H_hold를 넘으면 input_lost (보류 시작 6100 → 9200 칸에서)
+    h.tick_to(9400);
     ASSERT_EQ(h.alerts.size(), 2u);
     EXPECT_EQ(h.alerts[1].kind, AlertEventKind::End);
     EXPECT_EQ(h.alerts[1].reason, "input_lost");

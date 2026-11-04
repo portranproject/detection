@@ -7,13 +7,26 @@ namespace detect {
 
 // 버퍼 최소 크기 (3_ §3): A 윈도우가 T_nr만큼 과거로 밀리므로 W/P + D칸에 현재 칸 1을 더한다.
 // 증거 pre 스냅샷을 더 길게 잡으면 그만큼 키운다 (3_ §7.1 '버퍼 크기 = max(W/P + D + 1, pre_slots)')
+namespace {
+// ⌈a / b⌉ — a + b − 1이 넘치지 않게 나눗셈 먼저 (11/05 W-31: noreply_timeout_ms가 INT64 끝에 가까워도 안전)
+uint64_t ceil_div(int64_t a, int64_t b) { return static_cast<uint64_t>(a / b) + (a % b != 0 ? 1 : 0); }
+}  // namespace
+
 std::size_t buffer_slots(int64_t window_ms, int64_t period_ms, int64_t noreply_timeout_ms,
                          std::optional<std::size_t> pre_slots) {
-  auto ceil_div = [](int64_t a, int64_t b) { return (a + b - 1) / b; };
   const std::size_t w = static_cast<std::size_t>(ceil_div(window_ms, period_ms));
   const std::size_t d = static_cast<std::size_t>(ceil_div(noreply_timeout_ms, period_ms));
   const std::size_t min_slots = w + d + 1;
   return pre_slots ? std::max(min_slots, *pre_slots) : min_slots;
+}
+
+// 상한 확인 (2_ §3 — 11/05 W-31, 이슈 #92): W/P·D를 각각 상한과 먼저 비교해 합이 넘치지 않게 한다
+bool slots_within(int64_t window_ms, int64_t period_ms, int64_t noreply_timeout_ms, std::optional<std::size_t> pre_slots,
+                  std::size_t max_slots) {
+  const uint64_t w = ceil_div(window_ms, period_ms);
+  const uint64_t d = ceil_div(noreply_timeout_ms, period_ms);
+  if (w > max_slots || d > max_slots || w + d + 1 > max_slots) return false;
+  return !pre_slots || *pre_slots <= max_slots;
 }
 
 // ---- CellSeries ----
@@ -92,7 +105,7 @@ bool same_params(const Hello& a, const Hello& b) {
 
 }  // namespace
 
-Series::Series(SeriesConfig cfg) : cfg_(std::move(cfg)) {}
+Series::Series(SeriesConfig cfg) : cfg_(std::move(cfg)), h_hold_eff_(cfg_.h_hold_ms) {}
 
 const CellSeries* Series::cell(int64_t cell_id) const {
   auto it = cells_.find(cell_id);
@@ -180,13 +193,44 @@ bool Series::check_seq(int64_t seq, FeedResult& out) {
   return true;
 }
 
-void Series::start_session(const Common& c, const Hello& h) {
+// 버퍼 칸 수 상한 (2_ §3, 3_ §3 — 11/05 W-31, 이슈 #92): W/P + D + 1(pre_slots 포함)이 max_slots를 넘으면 hello를 버린다 —
+// 거대한 noreply_timeout_ms 한 줄이 벡터 할당(bad_alloc)으로 엔진을 멈추지 않게. 세션 상태는 그대로다(FR-6 — 형식 오류는 버리고 진단)
+bool Series::accept_hello(const Common& c, const Hello& h, FeedResult& out) const {
+  if (slots_within(cfg_.window_ms, h.period_ms, h.noreply_timeout_ms, cfg_.pre_slots, cfg_.max_slots)) return true;
+  out.outcome = FeedOutcome::Dropped;
+  out.diags.push_back(diag(DiagKind::HelloRejected, std::nullopt, c.seq,
+                           "hello dropped: buffer slots for window_ms " + std::to_string(cfg_.window_ms) + " period_ms " +
+                               std::to_string(h.period_ms) + " noreply_timeout_ms " + std::to_string(h.noreply_timeout_ms) +
+                               (cfg_.pre_slots ? " pre_slots " + std::to_string(*cfg_.pre_slots) : std::string()) +
+                               " exceed max_slots " + std::to_string(cfg_.max_slots)));
+  return false;
+}
+
+void Series::start_session(const Common& c, const Hello& h, FeedResult& out) {
   session_ = c.session;
   hello_ = h;
   last_seq_ = c.seq;
   cells_.clear();
   health_.clear();
-  capacity_ = buffer_slots(cfg_.window_ms, h.period_ms, h.noreply_timeout_ms, cfg_.pre_slots);
+  capacity_ = buffer_slots(cfg_.window_ms, h.period_ms, h.noreply_timeout_ms, cfg_.pre_slots);  // accept_hello 뒤라 상한 안
+  const int64_t P = h.period_ms;
+  // W는 P의 배수여야 한다 (3_ §3 — 11/05 W-31): 아니면 모든 창이 칸 경계에 일부만 걸려 늘 보류된다(판정 0·진단 0이었음).
+  // 창을 올림 정렬하지 않고(명세의 W를 코드가 바꾸지 않게) 진단 1회를 내고 이 세션 동안 판정하지 않는다(assess)
+  misaligned_ = cfg_.window_ms % P != 0;
+  if (misaligned_)
+    out.diags.push_back(diag(DiagKind::WindowMisaligned, std::nullopt, c.seq,
+                             "window_ms " + std::to_string(cfg_.window_ms) + " is not a multiple of period_ms " +
+                                 std::to_string(P) + ": L3-01-V inactive for this session"));
+  // h_hold 하한 (3_ §8 — 11/05 W-31): 보류 길이는 첫 보류 칸부터 재는데 창이 차는 데 (W/P + D − 1)칸이 걸리므로, H_hold가
+  // 그 채움 시간 이하면 버퍼를 비우고 다시 채우다 또 넘겨 input_lost가 순환한다 → 채움 시간 + P로 올려 쓰고 경고 1회
+  const int64_t fill_ms = (cfg_.window_ms / P + static_cast<int64_t>(ceil_div(h.noreply_timeout_ms, P)) - 1) * P;
+  h_hold_eff_ = cfg_.h_hold_ms;
+  if (h_hold_eff_ <= fill_ms) {
+    h_hold_eff_ = fill_ms + P;
+    out.diags.push_back(diag(DiagKind::Warning, std::nullopt, c.seq,
+                             "h_hold_ms " + std::to_string(cfg_.h_hold_ms) + " <= window fill " + std::to_string(fill_ms) +
+                                 " ms: using " + std::to_string(h_hold_eff_)));
+  }
 }
 
 // hello 처리 규칙 (2_ §3, 3_ §8):
@@ -196,17 +240,19 @@ void Series::start_session(const Common& c, const Hello& h) {
 FeedResult Series::on_hello(const Common& c, const Hello& h) {
   FeedResult out;
   if (!active()) {
-    start_session(c, h);
+    if (!accept_hello(c, h, out)) return out;
     out.outcome = FeedOutcome::SessionStarted;
     out.diags.push_back(diag(DiagKind::SessionStarted, std::nullopt, c.seq, "session " + c.session));
+    start_session(c, h, out);
     return out;
   }
   if (c.session != session_) {
+    if (!accept_hello(c, h, out)) return out;  // 새 세션 hello가 상한을 넘으면 옛 세션 유지 (11/05 W-31)
     const std::string old = session_;
-    start_session(c, h);
     out.outcome = FeedOutcome::SessionReset;
     out.diags.push_back(diag(DiagKind::SessionReset, std::nullopt, c.seq,
                              "session changed " + old + " -> " + c.session));
+    start_session(c, h, out);
     return out;
   }
   if (!check_seq(c.seq, out)) {
@@ -219,9 +265,10 @@ FeedResult Series::on_hello(const Common& c, const Hello& h) {
     out.diags.push_back(diag(DiagKind::SessionResumed, std::nullopt, c.seq, "hello again, same params"));
     return out;
   }
-  start_session(c, h);
+  if (!accept_hello(c, h, out)) return out;  // 파라미터가 바뀐 hello가 상한을 넘으면 옛 상태 유지 (11/05 W-31)
   out.outcome = FeedOutcome::SessionReset;
   out.diags.push_back(diag(DiagKind::SessionReset, std::nullopt, c.seq, "hello params changed"));
+  start_session(c, h, out);
   return out;
 }
 
@@ -310,6 +357,12 @@ void Series::assess(const Kpm2& k, CellSeries& cs, InputHealth& h, FeedResult& o
 
   if (out.gap) h.hold_start = h.hold_start ? std::min(*h.hold_start, out.gap->t_from) : out.gap->t_from;
 
+  // W가 P의 배수가 아닌 세션 (3_ §3 — 11/05 W-31): 창 합이 늘 불완전하므로 보류만 하고 H_hold·input_lost는 재지 않는다
+  if (misaligned_) {
+    out.hold = true;
+    return;
+  }
+
   if (!get_att(k) || !get_succ(k)) {
     if (++h.missing_streak > cfg_.missing_key_slots && !h.inactive) {
       h.inactive = true;
@@ -334,8 +387,13 @@ void Series::assess(const Kpm2& k, CellSeries& cs, InputHealth& h, FeedResult& o
   }
   out.hold = true;
   if (!h.hold_start) h.hold_start = k.t_start_ms;
-  if (k.t_start_ms - *h.hold_start > cfg_.h_hold_ms) {
+  if (k.t_start_ms - *h.hold_start > h_hold_eff_) {
     out.input_lost = true;
+    // input_lost 진단 (3_ §8 — 11/05 W-31): 경보가 없을 때는 아무 줄도 남지 않았다
+    out.diags.push_back(diag(DiagKind::InputLost, k.cell_id, std::nullopt,
+                             "hold " + std::to_string(k.t_start_ms - *h.hold_start) + " ms > h_hold " +
+                                 std::to_string(h_hold_eff_) + " ms: buffer before " + std::to_string(k.t_start_ms) +
+                                 " dropped"));
     cs.drop_before(k.t_start_ms);
     h.hold_start = k.t_start_ms;
   }

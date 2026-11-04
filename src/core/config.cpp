@@ -108,13 +108,14 @@ void parse_bts(const json& r, BtsVariantConfig& c, std::vector<std::string>& war
   read_real(r, "theta", c.theta, 0.0, w);
   read_int(r, "f_abs", c.f_abs, 1, w);  // C2a 문턱 — 1 이상, 끄는 값은 두지 않음 (3_ §4, 결정 I1)
   read_real(r, "k", c.k, 0.0, w);
-  read_int(r, "m_raise", c.m_raise, 1, w);
-  read_int(r, "k_clear", c.k_clear, 1, w);
+  // 상한도 검사 (4_ §1.2 — 11/05 W-31): int 필드라 INT_MAX 초과값이 잘려 들어갔다
+  read_int_in(r, "m_raise", c.m_raise, 1, 1000000, w);
+  read_int_in(r, "k_clear", c.k_clear, 1, 1000000, w);
   read_int(r, "h_sat_ms", c.h_sat_ms, 0, w);
   read_int(r, "warmup_ms", c.warmup_ms, 0, w);
   read_real(r, "baseline_tau_s", c.baseline_tau_s, 0.0, w);
   read_int(r, "h_hold_ms", c.h_hold_ms, 0, w);
-  read_int(r, "missing_key_slots", c.missing_key_slots, 0, w);
+  read_int_in(r, "missing_key_slots", c.missing_key_slots, 0, 1000000, w);
   read_nullable_int(r, "max_conn", c.max_conn, 1, w);
 }
 
@@ -346,12 +347,13 @@ ConfigResult parse_config(std::string_view json_text) {
     return r;
   }
   try {
-    warn_unknown(j, {"socket_path", "max_line_bytes", "max_cells", "input_silent_ms", "rules", "evidence", "ue_table", "alert",
-                     "input_record"},
+    warn_unknown(j, {"socket_path", "max_line_bytes", "max_cells", "max_slots", "input_silent_ms", "rules", "evidence",
+                     "ue_table", "alert", "input_record"},
                  "", r.warnings);
     read_string(j, "socket_path", r.config.socket_path, "");
     read_int(j, "max_line_bytes", r.config.max_line_bytes, 1, "");
     read_int_in(j, "max_cells", r.config.max_cells, 1, 1024, "");  // 결정 D7 — 16_ W-24로 설정 키 (이슈 #44)
+    read_int_in(j, "max_slots", r.config.max_slots, 32, 65536, "");  // 셀 버퍼 칸 수 상한 (2_ §3 — 11/05 W-31, 이슈 #92)
     read_int_in(j, "input_silent_ms", r.config.input_silent_ms, 1000, 600000, "");  // 입력 침묵 (3_ §8, Q-45 — 이슈 #50)
     // rules: 룰 ID → 설정 객체. 여기서는 객체인지만 보고 JSON 그대로 넘긴다 — 해석은 룰별 파서, 모르는 룰 ID는
     // 등록된 룰을 아는 실행 파일이 경고한다 (Q-46, 결정 J4)

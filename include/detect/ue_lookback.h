@@ -48,6 +48,7 @@ class LookbackMarks {
     Phase phase = Phase::Waiting;
     int64_t t_from = 0;             // 판정할 줄의 t_ms — 응답 t_r 또는 요청 t_e. 걸리면 t_hit
     int64_t extra = 0;              // 이 연결에서 더 온 같은 갈래 신호 수 (20_ §1.2-2)
+    int64_t epoch = 0;              // 걸림이 실린 경보의 세대 — 룰이 included()로 적는다 (11/05 W-34, 이슈 #92)
     nlohmann::ordered_json snap;    // 판정할 줄 때의 값 — 룰이 정한다(ues[].values). 마감 전에 닫혀도 판정할 수 있게
     std::optional<UeState> closed;  // 마감 전에 닫혔으면 닫힐 때의 상태 (20_ §1.2-5)
   };
@@ -73,6 +74,9 @@ class LookbackMarks {
   void clear() { marks_.clear(); }
 
   const Mark* find(const UeKey& key, int64_t uid, const std::string& tag) const;  // 룰·테스트용
+  // 걸림이 경보에 실렸다 — 그 경보의 세대를 적는다 (11/05 W-34, 이슈 #92 — 25_ §3.2-2): 같은 연결의 반복(extra)은 그 세대의 경보가
+  // 열려 있을 때만 세어야 한다. 그전에는 '결정된 표시 + 열린 경보'만 봐서 CLEAR 뒤 새 경보에 옛 표시의 반복이 섞였다
+  void included(const UeKey& key, int64_t uid, const std::string& tag, int64_t epoch);
   std::size_t size() const { return marks_.size(); }
 
  private:

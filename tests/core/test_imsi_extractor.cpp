@@ -527,6 +527,31 @@ TEST(ImsiExtractor, T18Clear) {
   }
 }
 
+// 11/05 W-34 (이슈 #92, 25_ §3.2-2): CLEAR 뒤 새 경보가 열린 뒤 옛 경보에 실렸던 연결(아직 열림)의 응답이 더 와도 새 경보의 extra가
+// 아니다 — 표시의 extra는 오르지만 경보 세대가 달라 values.extra에는 들지 않는다. 그전에는 '결정된 표시 + 열린 경보'만 봐서 섞였다
+TEST(ImsiExtractor, ExtraOfOldAlertNotCountedInNewAlert) {
+  Harness h;
+  h.play(head(kB, 3) + std::vector<L>{id_resp(kB + 98, 3)});  // UE3 → RAISE A (kB+100)
+  h.tick_to(kB + 60100);                                       // CLEAR A
+  ASSERT_EQ(h.alerts.size(), 2u);
+  EXPECT_EQ(h.alerts[1].kind, AlertEventKind::Clear);
+  h.play(head(kB + 61200, 4) + std::vector<L>{id_resp(kB + 61298, 4)});  // UE4 → RAISE B
+  h.tick_to(kB + 61400);
+  ASSERT_EQ(h.alerts.size(), 3u);
+  EXPECT_EQ(h.alerts[2].kind, AlertEventKind::Raise);
+  h.play({id_resp(kB + 61450, 3)});  // 옛 경보의 UE3(보안 전에 머문 열린 연결)이 응답을 하나 더
+  ASSERT_NE(h.mark(3, 1), nullptr);
+  EXPECT_EQ(h.mark(3, 1)->extra, 1);
+  h.play(head(kB + 62600, 5) + std::vector<L>{id_resp(kB + 62698, 5)});  // UE5 → UPDATE
+  h.tick_to(kB + 62800);
+  ASSERT_EQ(h.alerts.size(), 4u);
+  EXPECT_EQ(h.alerts[3].kind, AlertEventKind::Update);
+  EXPECT_EQ(h.alerts[3].values.at("extra"), 0);  // 그전에는 1
+  h.play({id_resp(kB + 62900, 4)});  // 이 경보의 UE4가 더 보내면 센다
+  h.tick_to(kB + 63000);
+  EXPECT_EQ(h.rule->marks().find(UeKey{1, 4}, 2, "unsolicited")->extra, 1);
+}
+
 // L24-T19: 두 UE — A는 T4, B는 t0+500에 같은 공격. RAISE + UPDATE(update_min_ms 1 s 모음), ues_total 2, 심각도 그대로
 TEST(ImsiExtractor, T19TwoUesUpdate) {
   Harness h;

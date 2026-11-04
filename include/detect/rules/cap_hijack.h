@@ -50,6 +50,7 @@ class CapHijackRule : public UeRule {
     int64_t branch2_ues = 0;
     bool branch2_seen = false;         // 갈래 ②가 한 번이라도 걸렸다 — branch "2" (심각도가 높은 쪽)
     bool premise_mitm = false;         // 실린 UE들의 전제 합 — 갈래 ① UE가 있으면 mitm_ul_relay (20_ §4.6)
+    int64_t epoch = 0;                 // 경보 세대 — 새 경보마다 +1, 표시의 epoch과 대조 (11/05 W-34)
     int64_t extra_open = 0;            // 경보가 열린 뒤 걸린 연결에서 더 온 같은 갈래 신호 수
     int64_t held_open = 0;             // 경보가 열린 뒤 보류된 판정 수
     std::deque<int64_t> held_times;    // 보류 시각 — raise의 held는 직전 clear_quiet_ms 동안 (이동 창)

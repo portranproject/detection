@@ -32,6 +32,7 @@ TEST(Config, RepoConfigFileParses) {
   const DetectorConfig d;
   EXPECT_EQ(r.config.socket_path, d.socket_path);
   EXPECT_EQ(r.config.max_line_bytes, d.max_line_bytes);
+  EXPECT_EQ(r.config.max_slots, d.max_slots);  // 11/05 W-31 — 저장소 설정 1,024 = 기본값
   // L3-01-V + 2단계 L3-20·L3-01-O·L3-21 (10/29 이슈 #33) + 3단계 L3-24·L3-14 (20_ §1.5) + 3단계로 올린 L3-06 (20_ §5.4)
   // + 4단계 AN-01·AN-06a·AN-02·AN-04·AN-07·AN-08 (21_ §1.2)
   ASSERT_EQ(r.config.rules.size(), 13u);
@@ -237,6 +238,23 @@ TEST(Config, Errors) {
   auto b = bts_of(R"({"rules":{"L3-01-V":{"window_ms":-1}}})");
   EXPECT_FALSE(b.ok);
   EXPECT_NE(b.error.find("window_ms"), std::string::npos);
+}
+
+// 11/05 W-31 (이슈 #92): 정수 필드 상한 — INT_MAX 초과값이 잘려 들어가지 않게 (m_raise 4294967297이 1이 됐다), 최상위 max_slots 범위
+TEST(Config, IntegerBoundsAndMaxSlots) {
+  EXPECT_FALSE(bts_of(R"({"rules":{"L3-01-V":{"m_raise":4294967297}}})").ok);
+  EXPECT_FALSE(bts_of(R"({"rules":{"L3-01-V":{"k_clear":0}}})").ok);
+  EXPECT_FALSE(bts_of(R"({"rules":{"L3-01-V":{"k_clear":1000001}}})").ok);
+  EXPECT_FALSE(bts_of(R"({"rules":{"L3-01-V":{"missing_key_slots":-1}}})").ok);
+  auto ok = bts_of(R"({"rules":{"L3-01-V":{"m_raise":1000000,"k_clear":1,"missing_key_slots":0}}})");
+  ASSERT_TRUE(ok.ok) << ok.error;
+  EXPECT_EQ(ok.config.m_raise, 1000000);
+  EXPECT_EQ(parse_config("{}").config.max_slots, 1024u);
+  EXPECT_EQ(parse_config(R"({"max_slots":32})").config.max_slots, 32u);
+  EXPECT_EQ(parse_config(R"({"max_slots":65536})").config.max_slots, 65536u);
+  EXPECT_FALSE(parse_config(R"({"max_slots":31})").ok);
+  EXPECT_FALSE(parse_config(R"({"max_slots":65537})").ok);
+  EXPECT_FALSE(parse_config(R"({"max_slots":"many"})").ok);
 }
 
 // 2단계 키 (10/29 이슈 #33): 없으면 구조체 기본값, 있으면 그 값 — ue_table·alert는 최상위, 룰은 rules.<룰 ID> (14_ §9, 15_ §1.2)

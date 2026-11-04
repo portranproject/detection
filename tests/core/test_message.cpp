@@ -262,6 +262,18 @@ TEST(Message, HelloMaxConnNullVsInt) {
   EXPECT_FALSE(h.cells[2].max_conn);
 }
 
+// hello cells[].max_conn 0은 미정 + 경고 (2_ §3 — 11/05 W-31, 이슈 #92): 0이면 C4가 늘 참이었다 (25_ §3.2-9 ②)
+TEST(Message, HelloMaxConnZeroIsNull) {
+  auto r = parse_line(hello_with(
+      R"("period_ms":100,"noreply_timeout_ms":1000,"clock":"realtime","cells":[{"cell_id":1,"max_conn":0},{"cell_id":2,"max_conn":1}])"));
+  ASSERT_EQ(r.status, ParseStatus::Ok) << r.error;
+  const auto& h = std::get<Hello>(r.msg);
+  EXPECT_FALSE(h.cells[0].max_conn);
+  EXPECT_EQ(h.cells[1].max_conn, 1);
+  ASSERT_EQ(r.warnings.size(), 1u);
+  EXPECT_NE(r.warnings[0].find("max_conn 0"), std::string::npos);
+}
+
 TEST(Message, HelloRequiredFields) {
   EXPECT_EQ(parse_line(hello_with(R"("noreply_timeout_ms":1000)")).status, ParseStatus::FormatError);
   EXPECT_EQ(parse_line(hello_with(R"("period_ms":100)")).status, ParseStatus::FormatError);
