@@ -6,11 +6,11 @@
 
 #include "detect/config.h"
 #include "detect/ue_alert.h"
+#include "detect/ue_held.h"
 #include "detect/ue_rule.h"
 
 #include <cstddef>
 #include <cstdint>
-#include <deque>
 #include <map>
 #include <optional>
 #include <set>
@@ -53,24 +53,12 @@ class BlindDosRule : public UeRule {
     std::optional<UeState> closed;     // 마감 전에 닫혔으면 닫힐 때의 상태 (15_ §1)
     std::optional<int64_t> closed_at;
   };
-  // 셀별 — 경보 누적값과 해제 기준 (15_ §2.5·§2.6)
+  // 셀별 — 경보 누적값과 해제 기준 (15_ §2.5·§2.6). 보류·불확실 경보는 held_, 밀어내기 창은 evict_ (14_ §6.2·§6.3 — R1, 이슈 #96)
   struct CellState {
     int64_t t_hit_last = 0;                  // 마지막으로 UE가 걸린 시각 — CLEAR 기준
     int64_t concurrent = 0;                  // 경보가 열린 뒤 표시 종류별 걸린 UE 수
     int64_t peer_uncertain = 0;
     std::map<uint64_t, int64_t> victims;     // 피해 S-TMSI → 이 경보에서 걸린 연결 수 (repeat)
-    int64_t held_open = 0;                   // 경보가 열린 뒤 보류된 판정 수
-    std::deque<int64_t> held_times;          // 보류 시각 — raise의 held는 직전 clear_quiet_ms 동안 (이동 창)
-    // 상태표 밀어내기 (15_ §2.5·§2.6, 14_ §6.3 — Q-56 해결, 이슈 #44): 밀려난 UE는 판정되지 않아 조용해 보이므로
-    // 직전 clear_quiet_ms 동안 밀어내기가 있으면 풀지 않는다. 시각은 그것을 본 kpm2의 t_end_ms
-    int64_t evicted_seen = 0;                // 상태표 셀별 누적 evicted 중 이미 적은 수
-    int64_t evicted_open = 0;                // 경보가 열린 뒤 밀어내기 수 — update의 values.evicted
-    std::deque<int64_t> evict_times;         // 밀어내기 시각 — raise의 values.evicted·해제 보류 (이동 창)
-    // 불확실 경보 (14_ §6.2 — Q-58 해결, 이슈 #48): 공격 경보가 없을 때 보류된 UE가 쌓이면 kind anomaly로 알린다.
-    // 창은 clear_quiet_ms, 문턱 1
-    std::vector<AlertUe> fresh_held;         // 이번 kpm2의 마감 처리에서 보류된 UE — held_tick에서 본다
-    std::deque<AlertUe> held_ues;            // 마지막 보류 시각 기준 (t − clear_quiet_ms, t] 안의 보류 UE
-    int64_t t_last_held = 0;                 // 마지막 보류 시각 — 불확실 경보 CLEAR 기준
   };
 
   void start(const UeState& n, int64_t t0, const UeRuleCtx& ctx);
@@ -79,17 +67,12 @@ class BlindDosRule : public UeRule {
   void hit(const Mark& m, const UeState& n, int64_t t_hit, int64_t now, const UeRuleCtx& ctx, RuleOutput& out);
   void decorate(std::size_t from, RuleOutput& out);
   AlertUe held_ue(const UeState& n, int64_t t_hit) const;
-  void held_tick(int64_t cell, CellState& c, int64_t t, bool input_lost, const UeRuleCtx& ctx, RuleOutput& out);
-  void close_held(int64_t cell, int64_t t, RuleOutput& out);
-  void decorate_held(std::size_t from, RuleOutput& out);
-  int64_t held_window(CellState& c, int64_t now) const;
-  int64_t evicted_window(CellState& c, int64_t now) const;
-  void note_evictions(CellState& c, int64_t cell, int64_t t, const UeRuleCtx& ctx);
 
   BlindDosConfig cfg_;
   AlertConfig alert_;
-  UeAlertBook book_;       // 공격 경보 (kind attack)
-  UeAlertBook held_book_;  // 불확실 경보 (kind anomaly, 14_ §6.2 — 이슈 #48)
+  UeAlertBook book_;   // 공격 경보 (kind attack)
+  HeldBook held_;      // 불확실 경보 (kind anomaly, 14_ §6.2 — 이슈 #48; 공통 헬퍼 R1)
+  EvictWindow evict_;  // 상태표 밀어내기 창 (15_ §2.5·§2.6, 14_ §6.3 — Q-56 해결, 이슈 #44)
   std::map<UeId, Mark> marks_;
   std::map<UeId, std::set<UeId>> by_peer_;  // 짝 → 그 짝을 가진 대기 표시 — 짝의 해제를 표시에 적으려고
   std::map<int64_t, CellState> cells_;

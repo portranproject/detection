@@ -27,10 +27,40 @@ std::optional<int64_t> max_conn_for(const Hello& h, int64_t cell, const AuthStal
   return cfg.max_conn;
 }
 
+// 불확실 경보 묶음의 값 (14_ §6.2, 15_ §4.7): 창 W, 문턱 N. raise의 params는 auth_wait_ms·window_ms·n_stall·clear_quiet_ms,
+// 로그 줄은 kind=anomaly held_w= 뒤에 n_stall= window_ms= auth_wait_ms=
+HeldBook::Spec held_spec(const AuthStallConfig& cfg) {
+  HeldBook::Spec s;
+  s.rule = AuthStallRule::kId;
+  s.stage = 2;
+  s.window_ms = cfg.window_ms;
+  s.n = cfg.n_stall;
+  s.clear_quiet_ms = cfg.clear_quiet_ms;
+  s.params["auth_wait_ms"] = cfg.auth_wait_ms;
+  s.params["window_ms"] = cfg.window_ms;
+  s.params["n_stall"] = cfg.n_stall;
+  s.params["clear_quiet_ms"] = cfg.clear_quiet_ms;
+  s.log_fields = {{"n_stall", std::to_string(cfg.n_stall)},
+                  {"window_ms", std::to_string(cfg.window_ms)},
+                  {"auth_wait_ms", std::to_string(cfg.auth_wait_ms)}};
+  return s;
+}
+
 }  // namespace
 
+// 공격 묶음 (15_ §4.3·§4.5 — R2, 이슈 #96): HitWindow를 2단계 모양으로 — 종류 attack·단계 2, 연결당 한 번은 룰 몫(stalled_ —
+// 응답 뒤 새 기다림은 같은 연결이 다시 고착할 수 있다, §4.3-4), CLEAR 기준은 마지막 성립 t_sat(§4.5 — 성립하지 않는 드문 고착은
+// 해제를 늦추지 않는다), END 뒤 창은 그대로(§4.5는 CLEAR 때만 비운다 — 11/05 Q-73), 공격 RAISE 직전 불확실 경보 CLEAR는 held_ 고리로
 AuthStallRule::AuthStallRule(AuthStallConfig cfg, AlertConfig alert)
-    : cfg_(cfg), alert_(alert), book_(kId, alert), held_book_(kId, alert, "anomaly") {}
+    : cfg_(cfg),
+      alert_(alert),
+      hits_(kId, alert, cfg.window_ms, cfg.n_stall, cfg.clear_quiet_ms, "attack", 2),
+      held_(held_spec(cfg), alert) {
+  hits_.set_once_per_conn(false);
+  hits_.set_clear_on_satisfied(true);
+  hits_.set_forget_on_end(false);
+  hits_.set_held(&held_);
+}
 
 // 증거 지평 (14_ §1.1): 응답 대기 + 셀 창 + UPDATE 모음 지연 — RAISE는 창 안의 고착 UE를 모두 싣고, 그 대부분은 경보 때
 // 이미 닫혀 있다
@@ -84,9 +114,10 @@ void AuthStallRule::start(const UeId& id, const UeEvt& evt, const UeRuleCtx& ctx
 // 항목이 닫힘 (15_ §1·§4.3-5, 14_ §2.4): n이 마감 전에 released·reused·stale_setup으로 닫히면 표시를 남기고 닫힐 때
 // 상태를 복사한다 — 판정을 마감까지 미루는 것은 닫힌 줄이 든 창의 로스 여부가 그 창 kpm2가 와야 정해지기 때문이다
 // (L3-20과 같은 이유). du_reset·evicted·ghost_purge·superseded·session_reset이면 표시를 지운다(ghost_purge는 이슈 #44).
-// 앞선 요청·고착 표시는 지운다
+// 앞선 요청·고착 표시는 지운다. 아직 kpm2를 거치지 않은 고착은 헬퍼가 마지막 상태로 둔다
 void AuthStallRule::on_ue_close(const UeState& last, CloseReason reason, int64_t t, const UeRuleCtx&, RuleOutput&) {
   const UeId id{last.key, last.uid};
+  hits_.on_close(last);
   requests_.erase(id);
   stalled_.erase(id);
   auto it = marks_.find(id);
@@ -102,7 +133,7 @@ void AuthStallRule::on_ue_close(const UeState& last, CloseReason reason, int64_t
 // 마감 처리 (15_ §4.3-6): 표시가 그대로(uid·t_from)이고 마감 전 응답이 없고(있었으면 표시를 지웠다), 대기 구간에 UL 로스가
 // 없고(있으면 보류 — 14_ §6.2), n이 mid_join이 아니고 늦은 줄 제외 기간(late_until)이 지났으면(14_ §4.3, 이슈 #46) 고착이다.
 // t_hit = 마감.
-// 여기서는 고착을 기록만 하고 셀 단위 성립·RAISE·심각도는 같은 kpm2의 on_cell_tick에서 본다(10/29 이슈 #29) — 그 칸의
+// 여기서는 고착을 적기만 하고 셀 단위 성립·RAISE·심각도는 같은 kpm2의 on_cell_tick에서 본다(10/29 이슈 #29) — 그 칸의
 // UeCtxMax를 넣은 뒤 심각도를 정해야 RAISE와 심각도 UPDATE가 따로 나지 않는다
 void AuthStallRule::on_deadline(const Deadline& d, const UeRuleCtx& ctx, RuleOutput&) {
   const UeId id{d.key, d.uid};
@@ -111,16 +142,13 @@ void AuthStallRule::on_deadline(const Deadline& d, const UeRuleCtx& ctx, RuleOut
   const Mark m = std::move(it->second);
   marks_.erase(it);
   const int64_t cell = d.key.cell_id;
-  CellState& c = cells_[cell];
   const UeState* n = ctx.table.find(d.key);
   const bool open = n && n->uid == d.uid;
   if (!open) n = m.closed ? &*m.closed : nullptr;
   if (ctx.deadlines.held(cell, Dir::UL, m.t_from)) {
-    // 보류 (14_ §6.2): 공격 경보 중이면 values.held로만, 아니면 불확실 경보용으로 적어 둔다(판정은 held_tick) — 이슈 #48
-    ++held_n_;
-    c.held_times.push_back(ctx.deadlines.clock(cell).value_or(d.at));
-    if (book_.open(cell)) ++c.held_open;
-    else if (alert_.held_alert && n) c.fresh_held.push_back(held_ue(*n, d.at));
+    // 보류 (14_ §6.2): 공격 경보 중이면 values.held로만, 아니면 불확실 경보용으로 적어 둔다(판정은 held_.tick) — 이슈 #48
+    held_.hold(cell, ctx.deadlines.clock(cell).value_or(d.at), hits_.open(cell),
+               n ? std::optional<AlertUe>(held_ue(*n, d.at)) : std::nullopt);
     return;
   }
   if (!n || n->mid_join || n->late_blocks(d.at)) return;
@@ -136,24 +164,23 @@ void AuthStallRule::on_deadline(const Deadline& d, const UeRuleCtx& ctx, RuleOut
   u.values["closed_ms"] = m.closed_at ? ojson(*m.closed_at - m.t_from) : ojson(nullptr);
   u.values["auth_req_n"] = m.auth_req_n;
   u.values["other_ul"] = m.other_ul;
-  c.fresh.push_back(std::move(u));
+  hits_.hit(id, std::move(u));
 }
 
 // 셀 kpm2마다 (15_ §4.3 셀 단위·심각도, §4.5):
-//  1) input_lost면 진행 중 경보를 END (14_ §1.1·§8.2)
-//  2) 심각도 창: 최근 W 안 kpm2의 ext.UeCtxMax 최댓값 Cx를 룰이 들고 있는다(1단계 버퍼는 21칸이라 쓰지 않는다).
+//  1) 심각도 창: 최근 W 안 kpm2의 ext.UeCtxMax 최댓값 Cx를 룰이 들고 있는다(1단계 버퍼는 21칸이라 쓰지 않는다).
 //     Cx ≥ 0.9 × max_conn이면 high — 셀 연결 자원이 거의 찼다(1단계 C4와 같은 신호·문턱, 10/29 검수 B6)
-//  3) 이번 마감 처리에서 정해진 고착마다 (t_hit − W, t_hit] 안의 고착 수 S_W를 센다. S_W ≥ N이면 성립(t_sat).
-//     경보가 없을 때 성립하면 그 창의 고착 UE로 RAISE, 경보 중이면 새 고착 UE를 UPDATE로 모은다(14_ §8.2)
-//  4) 경보 중 high가 되면 바로 UPDATE, 모아 둔 UE는 UPDATE 간격에 맞춰 낸다
-//  5) t_end_ms − t_sat ≥ clear_quiet_ms면 CLEAR — 성립하지 않는 드문 고착(전파가 끊긴 정상 UE)은 해제를 늦추지 않는다.
-//     보류는 고착으로 세지 않으므로 해제를 막지 않는다 (15_ §1)
+//  2) 헬퍼(HitWindow): input_lost면 END(14_ §1.1·§8.2). 이번 마감 처리에서 정해진 고착마다 (t_hit − W, t_hit] 안의 고착 수 S_W를
+//     센다. S_W ≥ N이면 성립(t_sat). 경보가 없을 때 성립하면 그 창의 고착 UE로 RAISE(열린 불확실 경보는 먼저 CLEAR), 경보 중이면
+//     새 고착 UE를 UPDATE로 모은다(14_ §8.2). 경보 중 high가 되면 바로 UPDATE, 모아 둔 UE는 UPDATE 간격에 맞춰 낸다.
+//     t_end_ms − t_sat ≥ clear_quiet_ms면 CLEAR — 성립하지 않는 드문 고착(전파가 끊긴 정상 UE)은 해제를 늦추지 않는다.
+//     직전 clear_quiet_ms 동안 그 셀에 상태표 밀어내기가 있었으면 풀지 않는다(15_ §4.5, Q-56 해결 — 이슈 #44). CLEAR 뒤 걸림만
+//     싣는다(15_ §4.5 — 11/05 Q-73, 이슈 #94: 창 안 고착 목록을 비워 옛 경보에 실렸던 UE가 새 RAISE에 다시 실리지 않게)
+//  3) 보류는 고착으로 세지 않으므로 해제를 막지 않는다 (15_ §1). 불확실 경보는 공격 묶음 뒤에 held_가 본다
 void AuthStallRule::on_cell_tick(int64_t cell, const Kpm2& k, const CellLoss&, bool input_lost, const UeRuleCtx& ctx,
                                  RuleOutput& out) {
   const int64_t t = k.t_end_ms;
   CellState& c = cells_[cell];
-  note_evictions(c, cell, t, ctx);
-  if (input_lost) book_.end(cell, t, "input_lost", out.alerts);
 
   c.uectx.emplace_back(t, k.ue_ctx_max);
   while (c.uectx.front().first <= t - cfg_.window_ms) c.uectx.pop_front();
@@ -162,49 +189,15 @@ void AuthStallRule::on_cell_tick(int64_t cell, const Kpm2& k, const CellLoss&, b
     if (v && (!cx || *v > *cx)) cx = v;
   const std::optional<int64_t> max_conn = max_conn_for(ctx.hello, cell, cfg_);
   const bool high = max_conn && cx && static_cast<double>(*cx) >= 0.9 * static_cast<double>(*max_conn);
-  const Severity sev = high ? Severity::High : Severity::Medium;
+  hits_.set_severity(high ? Severity::High : Severity::Medium);
 
-  for (AlertUe& u : c.fresh) {
-    const int64_t t_hit = u.t_hit;
-    c.stalls.push_back(u);
-    while (c.stalls.front().t_hit <= t_hit - cfg_.window_ms) c.stalls.pop_front();
-    c.t_last_stall = t_hit;
-    const bool sat = static_cast<int64_t>(c.stalls.size()) >= cfg_.n_stall;
-    if (sat) c.t_sat = t_hit;
-    if (sat && !book_.open(cell)) close_held(cell, t, out);  // 공격 RAISE 전에 열린 불확실 경보를 먼저 CLEAR (14_ §8.2)
-    const std::size_t from = out.alerts.size();
-    if (book_.open(cell)) {
-      std::vector<AlertUe> one;
-      one.push_back(std::move(u));
-      book_.add(cell, std::move(one), sev, t, ctx.session, ctx.seq, out.alerts);
-    } else if (sat) {
-      c.held_open = 0;  // 새 경보 — 누적값을 처음부터 센다
-      c.evicted_open = 0;
-      book_.add(cell, std::vector<AlertUe>(c.stalls.begin(), c.stalls.end()), sev, t, ctx.session, ctx.seq,
-                out.alerts);
-    }
-    decorate(cell, from, cx, max_conn, out);
-  }
-  c.fresh.clear();
-
-  const std::size_t from = out.alerts.size();
-  if (high && book_.severity(cell) == Severity::Medium) book_.update(cell, Severity::High, t, out.alerts);
-  book_.flush(cell, t, out.alerts);
-  // 6) 직전 clear_quiet_ms 동안 그 셀에 상태표 밀어내기가 있었으면 풀지 않는다 (15_ §4.5, Q-56 해결 — 이슈 #44)
-  const bool cleared = book_.open(cell) && t - c.t_sat >= cfg_.clear_quiet_ms && evicted_window(c, t) == 0;
-  if (cleared) book_.clear(cell, t, out.alerts);
-  decorate(cell, from, cx, max_conn, out);
-  // CLEAR 뒤 걸림만 싣는다 (15_ §4.5 — 11/05 Q-73, 이슈 #94): 창 안 고착 목록을 비워 옛 경보에 실렸던 UE가 새 RAISE에 다시 실리지
-  // 않게(4단계 이슈 #84와 같음). 그전에는 CLEAR 뒤 고착 하나로 창 안 수가 N이 되면 옛 UE 4개가 증거 없이 재수록됐다(25_ §3.2-3)
-  if (cleared) c.stalls.clear();
+  hits_.tick(cell, t, input_lost, ctx, out.alerts,
+             [&](std::size_t from, const AlertUe* hit) { decorate(cell, from, hit, cx, max_conn, out); });
 
   // 창 밖 기록 정리. 경보 중에는 값의 기준이 마지막 고착 시각이고, 경보가 없으면 다음 기준은 앞으로의 고착(> t)이다
-  const int64_t bound = (book_.open(cell) && c.t_last_stall ? *c.t_last_stall : t) - cfg_.window_ms;
+  const int64_t bound = (hits_.open(cell) && c.t_last_stall ? *c.t_last_stall : t) - cfg_.window_ms;
   while (!c.auth_reqs.empty() && c.auth_reqs.front().first <= bound) c.auth_reqs.pop_front();
-  if (!book_.open(cell))
-    while (!c.stalls.empty() && c.stalls.front().t_hit <= bound) c.stalls.pop_front();
-  held_window(c, t);
-  held_tick(cell, c, t, input_lost, ctx, out);
+  held_.tick(cell, t, input_lost, hits_.open(cell), ctx, out.alerts);
 }
 
 // 보류된 UE 한 칸 (14_ §6.2 불확실 경보의 ues[]): cond held, t_hit = 마감, uncertain에 loss, 기다린 시간·방향
@@ -218,88 +211,23 @@ AlertUe AuthStallRule::held_ue(const UeState& n, int64_t t_hit) const {
   return u;
 }
 
-// 불확실 경보 (14_ §6.2 — Q-58 ② 해결, 이슈 #48): 이번 마감 처리에서 보류된 UE마다 (t_hit − W, t_hit] 안 보류 수 H_W를
-// 세고, 공격 경보가 없으면 H_W ≥ N에서 창 안 보류 UE로 RAISE(kind anomaly), 경보 중이면 UPDATE로 모은다. 공격 경보가 이 칸에서
-// 열렸으면 values.held로만 센다. 마지막 보류 뒤 clear_quiet_ms면 CLEAR, input_lost면 END
-void AuthStallRule::held_tick(int64_t cell, CellState& c, int64_t t, bool input_lost, const UeRuleCtx& ctx,
-                              RuleOutput& out) {
-  std::size_t from = out.alerts.size();
-  if (input_lost) held_book_.end(cell, t, "input_lost", out.alerts);
-  for (AlertUe& u : c.fresh_held) {
-    c.held_ues.push_back(u);
-    while (c.held_ues.front().t_hit <= u.t_hit - cfg_.window_ms) c.held_ues.pop_front();
-    c.t_last_held = u.t_hit;
-    if (book_.open(cell)) {
-      ++c.held_open;
-      continue;
-    }
-    const bool sat = static_cast<int64_t>(c.held_ues.size()) >= cfg_.n_stall;
-    if (held_book_.open(cell)) {
-      std::vector<AlertUe> one;
-      one.push_back(u);
-      held_book_.add(cell, std::move(one), Severity::Medium, t, ctx.session, ctx.seq, out.alerts);
-    } else if (sat) {
-      held_book_.add(cell, std::vector<AlertUe>(c.held_ues.begin(), c.held_ues.end()), Severity::Medium, t,
-                     ctx.session, ctx.seq, out.alerts);
-    }
-  }
-  c.fresh_held.clear();
-  held_book_.flush(cell, t, out.alerts);
-  if (held_book_.open(cell) && t - c.t_last_held >= cfg_.clear_quiet_ms) held_book_.clear(cell, t, out.alerts);
-  decorate_held(from, out);
-  if (!held_book_.open(cell))
-    while (!c.held_ues.empty() && c.held_ues.front().t_hit <= t - cfg_.window_ms) c.held_ues.pop_front();
-}
-
-// 공격 경보가 RAISE되기 직전 — 열린 불확실 경보를 같은 줄에서 먼저 CLEAR한다 (14_ §8.2)
-void AuthStallRule::close_held(int64_t cell, int64_t t, RuleOutput& out) {
-  if (!held_book_.open(cell)) return;
-  const std::size_t from = out.alerts.size();
-  held_book_.clear(cell, t, out.alerts);
-  decorate_held(from, out);
-}
-
-// 불확실 경보 값 채우기 (14_ §6.2): raise·update에 values.held_w(창 안 보류 수), raise에 cond held_count·candidates(이 룰)·
-// params·로그 필드(맨 앞 kind=anomaly). update 로그에는 kind=anomaly만
-void AuthStallRule::decorate_held(std::size_t from, RuleOutput& out) {
-  for (std::size_t i = from; i < out.alerts.size(); ++i) {
-    AlertEvent& e = out.alerts[i];
-    if (e.kind != AlertEventKind::Raise && e.kind != AlertEventKind::Update) continue;
-    const CellState& c = cells_[e.cell_id];
-    e.values["held_w"] = static_cast<int64_t>(c.held_ues.size());
-    if (e.kind != AlertEventKind::Raise) {
-      e.log_fields = {{"kind", "anomaly"}};
-      continue;
-    }
-    e.cond = {"held_count"};
-    e.candidates = {kId};
-    e.params["auth_wait_ms"] = cfg_.auth_wait_ms;
-    e.params["window_ms"] = cfg_.window_ms;
-    e.params["n_stall"] = cfg_.n_stall;
-    e.params["clear_quiet_ms"] = cfg_.clear_quiet_ms;
-    e.log_fields = {{"kind", "anomaly"},
-                    {"held_w", std::to_string(c.held_ues.size())},
-                    {"n_stall", std::to_string(cfg_.n_stall)},
-                    {"window_ms", std::to_string(cfg_.window_ms)},
-                    {"auth_wait_ms", std::to_string(cfg_.auth_wait_ms)}};
-  }
-}
-
 // L3-01-O 값 채우기 (15_ §4.6): raise·update에 values(stalls_w·auth_req_w는 마지막 고착 시각 기준 창, uectx는 심각도 창,
 // held는 L3-20과 같음, stalls_total = ues_total), raise에 cond·candidates·params·로그 필드. UPDATE 로그에는 uectx가 있을
-// 때만 붙인다. clear·end는 공통 골격 그대로(14_ §8.3)
-void AuthStallRule::decorate(int64_t cell, std::size_t from, std::optional<int64_t> cx,
+// 때만 붙인다. clear·end는 공통 골격 그대로(14_ §8.3). hit = 이번에 처리한 고착(헬퍼가 걸림마다 넘긴다) — 마지막 고착 시각의 기준
+void AuthStallRule::decorate(int64_t cell, std::size_t from, const AlertUe* hit, std::optional<int64_t> cx,
                              std::optional<int64_t> max_conn, RuleOutput& out) {
   CellState& c = cells_[cell];
+  if (hit) c.t_last_stall = hit->t_hit;
   for (std::size_t i = from; i < out.alerts.size(); ++i) {
     AlertEvent& e = out.alerts[i];
     if (e.kind != AlertEventKind::Raise && e.kind != AlertEventKind::Update) continue;
     const bool raise = e.kind == AlertEventKind::Raise;
-    e.values["stalls_w"] = static_cast<int64_t>(c.stalls.size());
+    const int64_t stalls_w = hits_.window(cell);
+    e.values["stalls_w"] = stalls_w;
     e.values["stalls_total"] = e.ues_total;
     e.values["auth_req_w"] = auth_req_w(c);
-    e.values["held"] = raise ? held_window(c, e.t) : c.held_open;
-    e.values["evicted"] = raise ? evicted_window(c, e.t) : c.evicted_open;  // 15_ §4.6 (이슈 #44)
+    e.values["held"] = held_.held(cell, raise, e.t);
+    e.values["evicted"] = hits_.evicted(cell, raise, e.t);  // 15_ §4.6 (이슈 #44)
     e.values["uectx"] = cx ? ojson(*cx) : ojson(nullptr);
     // 로그의 uectx (15_ §4.6): Cx/max_conn, max_conn이 null이면 Cx. RAISE는 늘 적고(없으면 null) UPDATE는 있을 때만
     const std::string uectx =
@@ -319,7 +247,7 @@ void AuthStallRule::decorate(int64_t cell, std::size_t from, std::optional<int64
     e.params["n_stall"] = cfg_.n_stall;
     e.params["clear_quiet_ms"] = cfg_.clear_quiet_ms;
     e.params["max_conn"] = max_conn ? ojson(*max_conn) : ojson(nullptr);
-    e.log_fields = {{"stalls_w", std::to_string(c.stalls.size())},
+    e.log_fields = {{"stalls_w", std::to_string(stalls_w)},
                     {"n_stall", std::to_string(cfg_.n_stall)},
                     {"window_ms", std::to_string(cfg_.window_ms)},
                     {"auth_wait_ms", std::to_string(cfg_.auth_wait_ms)},
@@ -337,45 +265,23 @@ int64_t AuthStallRule::auth_req_w(const CellState& c) const {
   return static_cast<int64_t>(ues.size());
 }
 
-// raise의 held — 직전 clear_quiet_ms 동안 보류된 판정 수. 경보가 없을 때도 셀별 이동 창으로 센다 (15_ §4.6, L3-20과 같음)
-int64_t AuthStallRule::held_window(CellState& c, int64_t now) const {
-  while (!c.held_times.empty() && c.held_times.front() <= now - cfg_.clear_quiet_ms) c.held_times.pop_front();
-  return static_cast<int64_t>(c.held_times.size());
-}
-
-// 상태표 셀별 누적 evicted(14_ §6.3)의 증가분을 이 칸 시각으로 적는다 — 경보가 열려 있으면 evicted_open도 (이슈 #44)
-void AuthStallRule::note_evictions(CellState& c, int64_t cell, int64_t t, const UeRuleCtx& ctx) {
-  // 창 밖 시각은 경보가 없을 때도 버린다 (11/05 W-32, 이슈 #92 — 25_ §3.1-4): 그전에는 evicted_window가 열린 경보의 해제 판단과
-  // RAISE에서만 불려, 경보가 없는 포화 홍수에서 밀어내기마다 시각이 무한히 쌓였다
-  evicted_window(c, t);
-  const int64_t total = ctx.table.counts(cell).evicted;
-  for (; c.evicted_seen < total; ++c.evicted_seen) {
-    c.evict_times.push_back(t);
-    if (book_.open(cell)) ++c.evicted_open;
-  }
-}
-
-// 직전 clear_quiet_ms 동안의 밀어내기 수 (이동 창) — raise의 values.evicted와 해제 보류 기준
-int64_t AuthStallRule::evicted_window(CellState& c, int64_t now) const {
-  while (!c.evict_times.empty() && c.evict_times.front() <= now - cfg_.clear_quiet_ms) c.evict_times.pop_front();
-  return static_cast<int64_t>(c.evict_times.size());
-}
-
 // 입력 침묵 (14_ §6.2 — 10/29 Q-45 해결, 이슈 #50): 진행 중 공격·불확실 경보를 END(input_silent)로 끝낸다 — END t는 각 경보가
-// 마지막으로 본 칸. 대기 표시·요청 기록·셀 기록은 그대로 — kpm2가 다시 오면 남은 마감이 평소처럼 판정된다(on_session_reset과 다르다)
+// 마지막으로 본 칸. 대기 표시·요청 기록·셀 기록·고착 창은 그대로 — kpm2가 다시 오면 남은 마감이 평소처럼 판정된다(on_session_reset과 다르다)
 void AuthStallRule::on_input_silent(const UeRuleCtx&, RuleOutput& out) {
-  book_.end_all("input_silent", out.alerts);
-  held_book_.end_all("input_silent", out.alerts);
+  hits_.end_all("input_silent", out.alerts);
+  held_.end_all("input_silent", out.alerts);
 }
 
 // 새 세션 (14_ §7 hello): 진행 중 경보를 END(session_reset)로 끝내고 대기 표시·셀 기록을 모두 버린다
 void AuthStallRule::on_session_reset(const UeRuleCtx&, RuleOutput& out) {
-  book_.end_all("session_reset", out.alerts);
-  held_book_.end_all("session_reset", out.alerts);
+  hits_.end_all("session_reset", out.alerts);
+  held_.end_all("session_reset", out.alerts);
   marks_.clear();
   requests_.clear();
   stalled_.clear();
   cells_.clear();
+  hits_.reset();
+  held_.reset();
 }
 
 }  // namespace detect

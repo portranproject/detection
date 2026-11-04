@@ -6,6 +6,7 @@
 
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace detect;
@@ -35,8 +36,9 @@ AlertUe ue(int64_t du, int64_t t_hit, int64_t u = 1) {
 
 // 엔진 없이 헬퍼만 — tick마다 낸 이벤트와 decorate 호출을 모은다
 struct H {
-  explicit H(int64_t n, int64_t window_ms = 1000, int64_t clear_quiet_ms = 60000, AlertConfig alert = {})
-      : w("AN-xx", alert, window_ms, n, clear_quiet_ms) {}
+  explicit H(int64_t n, int64_t window_ms = 1000, int64_t clear_quiet_ms = 60000, AlertConfig alert = {},
+             std::string kind = "anomaly", int stage = 4)
+      : w("AN-xx", alert, window_ms, n, clear_quiet_ms, std::move(kind), stage) {}
   void tick(int64_t t, bool input_lost = false) {
     w.tick(1, t, input_lost, c.ctx(), out, [&](std::size_t from, const AlertUe* hit) {
       froms.push_back(from);
@@ -466,4 +468,100 @@ TEST(HitWindow, WindowTrimIgnoresInsertionOrder) {
   h.tick(2100);
   EXPECT_EQ(h.w.window(1), 2);  // pop_front 반복이면 앞 칸 1,050이 창 안이라 멈춰 1,020이 남아 3 → 잘못된 RAISE
   EXPECT_TRUE(h.out.empty());
+}
+
+// ---- 2단계 모양 (11/05 26_ R2, 이슈 #96 — L3-01-O가 HitWindow 위에) ----
+
+// 연결당 한 번 끄기 (15_ §4.3-4·§5.5): 같은 (키, uid)의 걸림이 창에 여러 칸 들어가고 RAISE에 두 칸으로 실린다. 종류 attack·단계 2
+TEST(HitWindow, StageTwoRepeatedHitsPerConnection) {
+  H h(2, 1000, 60000, {}, "attack", 2);
+  h.w.set_once_per_conn(false);
+  EXPECT_TRUE(h.w.hit(uid(3), ue(3, 100)));
+  EXPECT_TRUE(h.w.hit(uid(3), ue(3, 150)));
+  h.tick(200);
+  ASSERT_EQ(h.out.size(), 1u);
+  EXPECT_EQ(h.out[0].kind, AlertEventKind::Raise);
+  EXPECT_EQ(h.out[0].alert_kind, "attack");
+  EXPECT_EQ(h.out[0].stage, 2);
+  ASSERT_EQ(h.out[0].ues.size(), 2u);
+  EXPECT_EQ(h.out[0].ues[0].t_hit, 100);
+  EXPECT_EQ(h.out[0].ues[1].t_hit, 150);
+  EXPECT_EQ(h.w.window(1), 2);
+}
+
+// 칸마다 정하는 심각도 (15_ §4.3): set_severity는 그 칸의 RAISE·UPDATE에 쓰고, 경보 중 medium에서 high가 되면 모아 둔 UE와 함께 바로
+// UPDATE한다(14_ §8.2). 기본은 medium
+TEST(HitWindow, SeverityPerTickAndRiseUpdate) {
+  H h(1);
+  h.w.hit(uid(1), ue(1, 100));
+  h.tick(200);
+  ASSERT_EQ(h.out.size(), 1u);
+  EXPECT_EQ(h.out[0].severity, Severity::Medium);
+  h.w.hit(uid(2), ue(2, 300));
+  h.tick(400);  // 1 s 안 — 모아 둔다
+  ASSERT_EQ(h.out.size(), 1u);
+  h.w.set_severity(Severity::High);
+  h.tick(500);  // 심각도가 올라 기다리지 않고 UPDATE — 모아 둔 UE 2도 함께
+  ASSERT_EQ(h.out.size(), 2u);
+  EXPECT_EQ(h.out[1].kind, AlertEventKind::Update);
+  EXPECT_EQ(h.out[1].severity, Severity::High);
+  ASSERT_EQ(h.out[1].ues.size(), 1u);
+  EXPECT_EQ(h.out[1].ues[0].du_ue_id, 2);
+  EXPECT_EQ(h.w.severity(1), Severity::High);
+  h.tick(600);  // 이미 high — 다시 내지 않는다
+  EXPECT_EQ(h.out.size(), 2u);
+}
+
+// END 뒤 창 유지 (15_ §4.5는 CLEAR 때만 비움 — Q-73): forget_on_end가 꺼져 있으면 input_lost END·end_all 뒤에도 창 안 걸림이 남아
+// 다음 걸림과 함께 센다. 기본(4단계)은 비운다(EndForgetsWindow)
+TEST(HitWindow, KeepWindowOnEndForStageTwo) {
+  H h(2, 1000);
+  h.w.set_forget_on_end(false);
+  h.w.hit(uid(1), ue(1, 100));
+  h.w.hit(uid(2), ue(2, 150));
+  h.tick(200);  // RAISE (창 안 2)
+  ASSERT_EQ(h.out.size(), 1u);
+  h.tick(300, true);  // input_lost END
+  ASSERT_EQ(h.out.size(), 2u);
+  EXPECT_EQ(h.out[1].kind, AlertEventKind::End);
+  EXPECT_EQ(h.w.window(1), 2);  // 창은 그대로
+  h.w.hit(uid(3), ue(3, 400));
+  h.tick(500);  // 창 안 3 ≥ 2 → 새 RAISE에 옛 걸림도 실린다 (CLEAR가 아니라 END였으므로 — 15_ §4.5 그대로)
+  ASSERT_EQ(h.out.size(), 3u);
+  EXPECT_EQ(h.out[2].kind, AlertEventKind::Raise);
+  EXPECT_EQ(h.out[2].ues.size(), 3u);
+  h.w.end_all("input_silent", h.out);
+  ASSERT_EQ(h.out.size(), 4u);
+  EXPECT_EQ(h.w.window(1), 3);
+}
+
+// 불확실 경보 고리 (14_ §8.2): set_held가 있으면 공격 RAISE 직전에 그 셀의 열린 불확실 경보를 먼저 CLEAR하고(그 CLEAR는 RAISE 구간 밖),
+// 새 경보의 보류 수를 0부터 센다
+TEST(HitWindow, HeldBookHookClearsBeforeRaise) {
+  HeldBook::Spec s;
+  s.rule = "AN-xx";
+  s.window_ms = 60000;
+  s.n = 1;
+  s.clear_quiet_ms = 60000;
+  HeldBook held(s, {});
+  H h(1);
+  h.w.set_held(&held);
+  AlertUe hu = ue(9, 100);
+  hu.cond = {"held"};
+  held.hold(1, 100, false, hu);
+  held.tick(1, 200, false, false, h.c.ctx(), h.out);  // 불확실 RAISE
+  ASSERT_EQ(h.out.size(), 1u);
+  EXPECT_EQ(h.out[0].alert_kind, "anomaly");
+  held.hold(1, 250, true, std::nullopt);  // 공격 경보가 열린 것처럼 — held_open 1
+  EXPECT_EQ(held.held(1, false, 250), 1);
+  h.w.hit(uid(1), ue(1, 300));
+  h.tick(400);
+  ASSERT_EQ(h.out.size(), 3u);
+  EXPECT_EQ(h.out[1].kind, AlertEventKind::Clear);  // 불확실 경보 CLEAR가 먼저
+  EXPECT_EQ(h.out[1].alert_kind, "anomaly");
+  EXPECT_EQ(h.out[2].kind, AlertEventKind::Raise);
+  EXPECT_EQ(h.out[2].alert_kind, "anomaly");  // H의 기본 종류
+  EXPECT_EQ(h.froms, (std::vector<std::size_t>{1, 2, 3}));  // RAISE 구간은 CLEAR 뒤부터
+  EXPECT_EQ(held.held(1, false, 400), 0);  // 새 공격 경보 — 보류 수 0부터
+  EXPECT_FALSE(held.open(1));
 }

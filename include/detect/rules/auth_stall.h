@@ -2,10 +2,14 @@
 // 룰 L3-01-O — 인증 단계 고착 공격 (Kim'19 원형) 탐지 (15_ §4). 연결과 등록 요청까지 보낸 뒤 AMF의 AuthenticationRequest에
 // 응답하지 않아 연결을 인증 단계에 묶어 두고, 이를 반복해 셀 연결 자원을 채우는 공격이다. 응답 대기 시간 안에 응답이 없는
 // UE(고착)가 셀에서 창 W 안에 N건 이상이면 성립한다 — 정상 UE는 수십~수백 ms 안에 응답하고, 전파가 끊긴 UE 하나로는
-// 문턱에 닿지 않는다(15_ §4.1·§4.9). 비율은 보지 않는다(10/29 사용자 결정, 15_ §4.3)
+// 문턱에 닿지 않는다(15_ §4.1·§4.9). 비율은 보지 않는다(10/29 사용자 결정, 15_ §4.3).
+// (11/05 26_ R2, 이슈 #96) 고착의 셀 창 집계·RAISE·UPDATE·CLEAR·밀어내기 보류는 4단계와 같은 HitWindow 위에 둔다 — '대기 뒤 고착'
+// 판정과 심각도·auth_req_w·UeCtxMax 창은 룰에 남는다
 
 #include "detect/config.h"
 #include "detect/ue_alert.h"
+#include "detect/ue_held.h"
+#include "detect/ue_hits.h"
 #include "detect/ue_rule.h"
 
 #include <cstddef>
@@ -40,7 +44,7 @@ class AuthStallRule : public UeRule {
   // 테스트용
   std::size_t waiting() const { return marks_.size(); }  // 기다리는 대기 표시 수
   int64_t stalls() const { return stalls_n_; }           // 지금까지 고착으로 센 수
-  int64_t held() const { return held_n_; }               // 지금까지 보류한 판정 수
+  int64_t held() const { return held_.total(); }         // 지금까지 보류한 판정 수
 
  private:
   using UeId = std::pair<UeKey, int64_t>;  // (키, uid)
@@ -61,48 +65,28 @@ class AuthStallRule : public UeRule {
     std::optional<UeState> closed;   // 마감 전에 닫혔으면 닫힐 때의 상태 (15_ §1)
     std::optional<int64_t> closed_at;
   };
-  // 셀별 — 고착 창·심각도 창·경보 누적값 (15_ §4.3·§4.5·§4.6)
+  // 셀별 — 심각도 창·auth_req_w (15_ §4.3·§4.6). 고착 창·경보·밀어내기는 hits_, 보류·불확실 경보는 held_
   struct CellState {
-    std::vector<AlertUe> fresh;                 // 이번 kpm2의 마감 처리에서 정해진 고착 — on_cell_tick에서 성립을 본다
-    std::deque<AlertUe> stalls;                 // 마지막 고착 시각 t 기준 (t − W, t] 안의 고착 — S_W와 RAISE의 ues
-    std::optional<int64_t> t_last_stall;        // 마지막 고착 시각 — stalls_w·auth_req_w의 기준
-    int64_t t_sat = 0;                          // 마지막으로 성립한 시각 — CLEAR 기준
+    std::optional<int64_t> t_last_stall;        // 마지막 고착 시각 — auth_req_w의 기준 (걸림을 처리하는 decorate에서 갱신)
     std::deque<std::pair<int64_t, std::optional<int64_t>>> uectx;  // (kpm2 t_end_ms, ext.UeCtxMax) — 최근 W
     std::deque<std::pair<int64_t, UeId>> auth_reqs;                // AuthenticationRequest (t_ms, UE) — auth_req_w
-    int64_t held_open = 0;                      // 경보가 열린 뒤 보류된 판정 수
-    std::deque<int64_t> held_times;             // 보류 시각 — raise의 held는 직전 clear_quiet_ms 동안 (이동 창)
-    // 상태표 밀어내기 (15_ §4.5·§4.6, 14_ §6.3 — Q-56 해결, 이슈 #44): 직전 clear_quiet_ms 동안 밀어내기가 있으면 풀지 않는다
-    int64_t evicted_seen = 0;
-    int64_t evicted_open = 0;
-    std::deque<int64_t> evict_times;
-    // 불확실 경보 (14_ §6.2 — Q-58 해결, 이슈 #48): 창 W 안 보류 수가 N이면 kind anomaly
-    std::vector<AlertUe> fresh_held;            // 이번 kpm2의 마감 처리에서 보류된 UE
-    std::deque<AlertUe> held_ues;               // 마지막 보류 시각 기준 (t − W, t] 안의 보류 UE
-    int64_t t_last_held = 0;
   };
 
   void start(const UeId& id, const UeEvt& evt, const UeRuleCtx& ctx);
-  void decorate(int64_t cell, std::size_t from, std::optional<int64_t> cx, std::optional<int64_t> max_conn,
-                RuleOutput& out);
+  void decorate(int64_t cell, std::size_t from, const AlertUe* hit, std::optional<int64_t> cx,
+                std::optional<int64_t> max_conn, RuleOutput& out);
   int64_t auth_req_w(const CellState& c) const;
-  int64_t held_window(CellState& c, int64_t now) const;
   AlertUe held_ue(const UeState& n, int64_t t_hit) const;
-  void held_tick(int64_t cell, CellState& c, int64_t t, bool input_lost, const UeRuleCtx& ctx, RuleOutput& out);
-  void close_held(int64_t cell, int64_t t, RuleOutput& out);
-  void decorate_held(std::size_t from, RuleOutput& out);
-  int64_t evicted_window(CellState& c, int64_t now) const;
-  void note_evictions(CellState& c, int64_t cell, int64_t t, const UeRuleCtx& ctx);
 
   AuthStallConfig cfg_;
   AlertConfig alert_;
-  UeAlertBook book_;       // 공격 경보 (kind attack)
-  UeAlertBook held_book_;  // 불확실 경보 (kind anomaly, 14_ §6.2 — 이슈 #48)
+  HitWindow hits_;  // 공격 경보 (kind attack, stage 2) — 고착 창 S_W·RAISE·UPDATE·CLEAR·밀어내기 보류 (R2, 이슈 #96)
+  HeldBook held_;   // 불확실 경보 (kind anomaly, 14_ §6.2 — 이슈 #48; 공통 헬퍼 R1)
   std::map<UeId, Mark> marks_;
   std::map<UeId, Request> requests_;  // UE별 마지막 요청 — 닫히면 지운다
   std::set<UeId> stalled_;            // 고착으로 세고 아직 응답이 없는 열린 UE — 응답 전까지 다시 세지 않는다
   std::map<int64_t, CellState> cells_;
   int64_t stalls_n_ = 0;
-  int64_t held_n_ = 0;
 };
 
 }  // namespace detect
