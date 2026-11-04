@@ -226,6 +226,9 @@ def load_config(path):
     if not _is_int(v) or not cfg["retry_initial_ms"] <= v <= 600000:
         raise ConfigError(f"retry_max_ms: must be an integer in retry_initial_ms({cfg['retry_initial_ms']})..600000")
     cfg["retry_max_ms"] = v
+    # 설정 교차 제약 (19_ §3 — 11/05 25_ W-31, 이슈 #92): 한 줄짜리 묶음이 본문 상한을 넘기지 않게
+    if cfg["batch_max_bytes"] < cfg["line_max_bytes"] + 1:
+        raise ConfigError(f"batch_max_bytes: must be >= line_max_bytes + 1 ({cfg['line_max_bytes'] + 1})")
 
     # 상시 KPM (24_ §4.1): 묶음 주기는 0(kpm2 안 보냄) 또는 1,000의 배수 — 0.1초 원본 그대로 보내는 값은 없다(11/04).
     # 1,000의 배수면 분석 엔진이 쓸 수 있는 주기(1000을 나누는 값, 22_ §2)가 모두 N을 나눈다. 값은 input 항목이 없어도 검사한다
@@ -657,7 +660,8 @@ def _kpm2_values_ok(obj):
         if not isinstance(cc, dict):
             return False
         for v in cc.values():
-            if v is None or _nonneg_int(v) or (isinstance(v, dict) and all(_nonneg_int(x) for x in v.values())):
+            # 원인별 객체의 하위 값 null은 그 원인만 '모름' — 엔진 파서(message.cpp cause_counter)와 같게 (24_ §5.1, 11/05 W-40)
+            if v is None or _nonneg_int(v) or (isinstance(v, dict) and all(x is None or _nonneg_int(x) for x in v.values())):
                 continue
             return False
     si = obj.get("si")
@@ -813,12 +817,15 @@ class KpmAggregator:
                     continue
                 if cname == "cc":
                     if isinstance(v, dict):
-                        # 원인별 객체 — 하위 키마다 합, 줄에 없는 원인은 0. total이 없으면 이 줄에서 모름(22_ §6)
-                        if (name != FAILCAUSE and "total" not in v) or not isinstance(acc["v"], (dict, type(None))):
+                        # 원인별 객체 — 하위 키마다 합, 줄에 없는 원인은 0. total이 없거나 null이면 이 줄에서 모름(22_ §6).
+                        # 하위 값 null은 그 원인만 이 줄에서 모름 — 줄은 받는다 (24_ §5.1, 11/05 W-40)
+                        if (name != FAILCAUSE and not _nonneg_int(v.get("total"))) or not isinstance(acc["v"], (dict, type(None))):
                             continue
                         if acc["v"] is None:
                             acc["v"] = {}
                         for sk, x in v.items():
+                            if x is None:
+                                continue
                             acc["v"][sk] = acc["v"].get(sk, 0) + x
                     else:
                         if not isinstance(acc["v"], (int, type(None))):
