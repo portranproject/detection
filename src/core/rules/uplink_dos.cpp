@@ -230,7 +230,8 @@ void UplinkDosRule::on_deadline(const Deadline& d, const UeRuleCtx& ctx, RuleOut
 }
 
 // 셀 kpm2마다 (15_ §5.3 갈래 ①·§5.5):
-//  1) input_lost면 진행 중 경보를 END (14_ §1.1·§8.2)
+//  1) input_lost면 진행 중 경보를 END (14_ §1.1·§8.2) — END 뒤에는 CLEAR와 같이 창 안 실패 UE 목록을 비운다(15_ §5.5 — 11/05 Q-77,
+//     W-41: 4단계 21_ §1.1과 같음. 입력이 돌아온 뒤 새 실패 하나로 옛 경보의 UE가 새 RAISE에 다시 실리지 않게)
 //  2) 이번 마감 처리에서 정해진 실패 UE마다 (t_hit − W, t_hit] 안의 수 F_W를 센다. F_W ≥ N이면 갈래 ① 성립.
 //     경보가 없을 때 성립하면 창 안의 실패 UE로 RAISE. 경보 중이면 새 실패 UE를 UPDATE로 모으고, 갈래 ②로 열린 경보에서
 //     갈래 ①이 처음 성립하면 창 안 실패 UE 가운데 이 경보에 아직 실리지 않은 것을 함께 싣고 바로 UPDATE한다 —
@@ -243,8 +244,10 @@ void UplinkDosRule::on_cell_tick(int64_t cell, const Kpm2& k, const CellLoss&, b
   CellState& cs = cells_[cell];
   evict_.note(cell, t, book_.open(cell), ctx);
   std::size_t from = out.alerts.size();
-  if (input_lost) book_.end(cell, t, "input_lost", out.alerts);
+  const bool ended = input_lost && book_.open(cell);
+  if (ended) book_.end(cell, t, "input_lost", out.alerts);
   decorate(from, out);
+  if (ended) cs.failed.clear();
 
   for (AlertUe& u : cs.fresh) {
     const int64_t t_hit = u.t_hit;
@@ -285,8 +288,8 @@ void UplinkDosRule::on_cell_tick(int64_t cell, const Kpm2& k, const CellLoss&, b
   const bool cleared = book_.open(cell) && t - cs.t_active >= cfg_.clear_quiet_ms && evict_.window(cell, t) == 0;
   if (cleared) book_.clear(cell, t, out.alerts);
   decorate(from, out);
-  // CLEAR 뒤 걸림만 싣는다 (15_ §5.5 — 11/05 Q-73, 이슈 #94): 창 안 실패 UE 목록을 비워 옛 경보에 실렸던 UE가 새 RAISE에 다시 실리지
-  // 않게(4단계 이슈 #84와 같음, 25_ §3.2-3). fail_msgs는 창 안 실패 메시지 수(측정값 fail_msgs_w)라 그대로 둔다
+  // CLEAR 뒤 걸림만 싣는다 (15_ §5.5 — 11/05 Q-73, 이슈 #94; END도 같음 — Q-77): 창 안 실패 UE 목록을 비워 옛 경보에 실렸던 UE가 새 RAISE에
+  // 다시 실리지 않게(4단계 이슈 #84와 같음, 25_ §3.2-3). fail_msgs는 창 안 실패 메시지 수(측정값 fail_msgs_w)라 그대로 둔다
   if (cleared) cs.failed.clear();
 
   // 창 밖 기록 정리. 경보 중에는 값의 기준이 가장 최근 걸림이고, 경보가 없으면 다음 기준은 앞으로의 걸림(≥ t)이다
@@ -381,9 +384,12 @@ void UplinkDosRule::on_session_reset(const UeRuleCtx&, RuleOutput& out) {
 }
 
 // 입력 침묵 (14_ §6.2 — 10/29 Q-45 해결, 이슈 #50): 진행 중 공격 경보(갈래 표시 포함)·불확실 경보를 END(input_silent)로 끝낸다 —
-// END t는 각 경보가 마지막으로 본 칸. 대기 표시·연결 기록·셀 기록은 그대로 — kpm2가 다시 오면 마감이 평소처럼 판정된다
+// END t는 각 경보가 마지막으로 본 칸. 대기 표시·연결 기록·셀 기록은 그대로 — kpm2가 다시 오면 마감이 평소처럼 판정된다. 다만 경보가
+// 열려 있던 셀의 창 안 실패 UE 목록은 비운다(15_ §5.5 — 11/05 Q-77, W-41: input_lost END·CLEAR와 같음)
 void UplinkDosRule::on_input_silent(const UeRuleCtx&, RuleOutput& out) {
   const std::size_t from = out.alerts.size();
+  for (auto& [cell, cs] : cells_)
+    if (book_.open(cell)) cs.failed.clear();
   book_.end_all("input_silent", out.alerts);
   decorate(from, out);
   held_.end_all("input_silent", out.alerts);  // 불확실 경보는 갈래가 없어 decorate 밖에서

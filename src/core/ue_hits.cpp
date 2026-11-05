@@ -110,7 +110,7 @@ void HitWindow::tick(int64_t cell, int64_t t, bool input_lost, const UeRuleCtx& 
   const bool ended = input_lost && book_.open(cell);
   if (ended) book_.end(cell, t, "input_lost", out);
   fn(from, nullptr);  // END에도 누적값 (14_ §8.3 — 11/04 Q-69 W-28)
-  if (ended && forget_on_end_) forget_window(c);
+  if (ended) forget_window(c);
 
   for (Hit& h : c.fresh) {
     if (const UeState* s = ctx.table.find(h.ref.first); s && s->uid == h.ref.second) refresh(h.u, *s);
@@ -164,12 +164,11 @@ void HitWindow::forget_window(Cell& c) {
   c.t_sat = 0;
 }
 
-// 모든 셀 END (session_reset·input_silent): 경보가 열려 있던 셀의 창을 비운다 — 경보가 없던 셀의 성립 전 걸림은 그대로 둔다.
-// 2단계(forget_on_end false)는 END 뒤에도 창을 둔다
+// 모든 셀 END (session_reset·input_silent): 경보가 열려 있던 셀의 창을 비운다 — 경보가 없던 셀의 성립 전 걸림은 그대로 둔다
+// (2단계도 같다 — 15_ §4.5, 11/05 Q-77)
 void HitWindow::end_all(const std::string& reason, std::vector<AlertEvent>& out) {
-  if (forget_on_end_)
-    for (auto& [cell, c] : cells_)
-      if (book_.open(cell)) forget_window(c);
+  for (auto& [cell, c] : cells_)
+    if (book_.open(cell)) forget_window(c);
   book_.end_all(reason, out);
 }
 
