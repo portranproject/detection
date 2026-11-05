@@ -8,7 +8,7 @@
 // 누적 수로 낸다 — update에는 새로 걸린 UE만 실리기 때문이다(§1.1, 14_ §8.3, 1_ §6 11/04). clear·end에도 누적값을 실어(룰 decorate,
 // 14_ §8.3 — 11/04 Q-69 W-28) UE 하나의 지속 공격에서 쌓인 수가 레코드에 남게 한다 — CLEAR·END 뒤에도 다음 RAISE까지 count·evicted가 남는다.
 // (11/05 26_ R2, 이슈 #96) 2단계 L3-01-O의 셀 창 집계(고착 수 S_W ≥ N, 15_ §4.3·§4.5)도 이 위에 둔다 — 종류 attack·단계 2, 연결당 한 번은
-// 룰 몫, 심각도는 칸마다 룰이 정함, CLEAR 기준은 마지막 성립(t_sat), END 뒤 창은 그대로(15_ §4.5는 CLEAR 때만 비움), 공격 RAISE 직전
+// 룰 몫, 심각도는 칸마다 룰이 정함, CLEAR 기준은 마지막 성립(t_sat), END 뒤 창 비움은 4단계와 같음(15_ §4.5 — 11/05 Q-77), 공격 RAISE 직전
 // 불확실 경보 CLEAR는 HeldBook 고리로. 기본값은 모두 4단계 동작이라 4단계 룰은 바뀌지 않는다
 
 #include "detect/alert.h"
@@ -57,8 +57,6 @@ class HitWindow {
   // 연결당 한 번 (§1.1) — 기본 true. 2단계 L3-01-O는 false: 응답 뒤 새 기다림은 같은 연결이 다시 고착할 수 있고 '연결당 한 번'은
   // 룰이 stalled_로 한다(15_ §4.3-4). false면 같은 (키, uid)의 걸림이 창에 여러 칸 들어간다(한 UE가 두 번 고착하면 두 칸, 15_ §5.5)
   void set_once_per_conn(bool v) { once_per_conn_ = v; }
-  // END(input_lost·input_silent) 뒤 창을 비우는가 — 기본 true(21_ §1.1, 이슈 #84). 2단계는 false: 15_ §4.5는 CLEAR 때만 비운다(Q-73)
-  void set_forget_on_end(bool v) { forget_on_end_ = v; }
   // 이번 칸의 심각도 (15_ §4.3 — L3-01-O는 창 안 UeCtxMax로 칸마다 정한다). tick의 RAISE·UPDATE에 쓰고, 경보 중 medium에서 high가 되면
   // 모아 둔 UE와 함께 바로 UPDATE한다(14_ §8.2). 기본 medium(4단계 21_ §1)
   void set_severity(Severity sev) { severity_ = sev; }
@@ -133,7 +131,6 @@ class HitWindow {
   int64_t clear_quiet_ms_;
   bool clear_on_satisfied_ = false;
   bool once_per_conn_ = true;
-  bool forget_on_end_ = true;
   Severity severity_ = Severity::Medium;
   HeldBook* held_ = nullptr;
   UeAlertBook book_;

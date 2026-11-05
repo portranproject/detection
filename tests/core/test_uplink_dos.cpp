@@ -627,6 +627,7 @@ TEST(UplinkDos, EndOnInputLostAndSessionReset) {
     o.scfg.h_hold_ms = 3000;  // 기동 직후 1단계 보류(2 s)보다 길게
     Harness h(o);
     flood(h, 5);
+    h.fail_conn(9000, 20);  // 여섯째 — 실패 UE 14000, END 뒤에 판정된다
     h.tick_to(10000);
     ASSERT_EQ(h.alerts.size(), 1u);
     h.cc.clear();  // 1단계 필수 키가 빠진 칸 — 보류(10000부터)가 H_hold를 넘으면 input_lost
@@ -637,6 +638,20 @@ TEST(UplinkDos, EndOnInputLostAndSessionReset) {
     EXPECT_EQ(h.alerts[1].kind, AlertEventKind::End);
     EXPECT_EQ(h.alerts[1].reason, "input_lost");
     EXPECT_EQ(h.alerts[1].branch, "1");
+    // END 때 창을 비운다 (15_ §5.5 — 11/05 Q-77, W-41): 입력이 돌아온 뒤 실패 UE 14000 하나로는 창 안 1 < 5 → 경보 없음
+    // (11/04까지는 옛 5건과 합쳐 6으로 새 RAISE). 그 뒤 4건 더(실패 UE 20000~23000)로 RAISE — END 뒤 실패 UE 5건만 싣는다
+    h.cc = kCc;
+    h.tick_to(14100);
+    EXPECT_EQ(h.alerts.size(), 2u);
+    EXPECT_EQ(h.rule->failed_ues(), 6);
+    for (int i = 0; i < 4; ++i) h.fail_conn(15000 + 1000 * i, 21 + i);
+    h.tick_to(23100);
+    ASSERT_EQ(h.alerts.size(), 3u);
+    EXPECT_EQ(h.alerts[2].kind, AlertEventKind::Raise);
+    EXPECT_EQ(h.alerts[2].branch, "1");
+    EXPECT_NE(h.alerts[2].alert_id, h.alerts[0].alert_id);
+    EXPECT_EQ(dus(h.alerts[2]), (std::vector<int64_t>{20, 21, 22, 23, 24}));
+    EXPECT_EQ(h.alerts[2].values["fails_w"], 5);
   }
   {
     Harness h;
@@ -651,7 +666,8 @@ TEST(UplinkDos, EndOnInputLostAndSessionReset) {
 }
 
 // 입력 침묵 (14_ §6.2 — 10/29 Q-45 해결, 이슈 #50): 갈래 ① 경보 중 실행 파일이 침묵을 알리면 END(reason=input_silent, branch 1,
-// t = 경보가 마지막으로 본 칸). 대기 표시는 그대로라 kpm2가 다시 오면 기다리던 실패 UE가 평소처럼 판정돼 창 안 실패 UE ≥ N이면 새 RAISE
+// t = 경보가 마지막으로 본 칸). 대기 표시는 그대로라 kpm2가 다시 오면 기다리던 실패 UE가 평소처럼 판정된다 — 다만 END 때 창을 비우므로
+// (15_ §5.5 — 11/05 Q-77, W-41) END 뒤 실패 UE가 N건 모여야 새 RAISE
 TEST(UplinkDos, EndOnInputSilent) {
   Harness h;
   flood(h, 5);  // 실패 UE 6000·…·10000 → 10000에서 갈래 ① RAISE
@@ -670,12 +686,20 @@ TEST(UplinkDos, EndOnInputSilent) {
   ASSERT_EQ(o.diags.size(), 1u);
   EXPECT_EQ(o.diags[0].kind, DiagKind::InputSilent);
   EXPECT_EQ(h.rule->waiting(), 1u);
-  h.tick_to(15600);  // 재개 — 실패 UE 15500 판정, 창 10 s 안 실패 UE 6 ≥ 5 → 새 RAISE
+  // 재개 — 실패 UE 15500 판정. END 때 창을 비워(15_ §5.5 — 11/05 Q-77, W-41) 창 안 1 < 5 → 경보 없음(11/04까지는 옛 5건과 합쳐 6으로
+  // 새 RAISE). 그 뒤 4건 더(실패 UE 21000~24000)로 새 경보 RAISE — END 뒤 실패 UE 5건만 싣는다
+  h.tick_to(15600);
+  EXPECT_EQ(h.alerts.size(), 1u);
+  EXPECT_EQ(h.rule->waiting(), 0u);
+  EXPECT_EQ(h.rule->failed_ues(), 6);
+  for (int i = 0; i < 4; ++i) h.fail_conn(16000 + 1000 * i, 21 + i);
+  h.tick_to(24100);
   ASSERT_EQ(h.alerts.size(), 2u);
   EXPECT_EQ(h.alerts[1].kind, AlertEventKind::Raise);
   EXPECT_EQ(h.alerts[1].branch, "1");
   EXPECT_NE(h.alerts[1].alert_id, h.alerts[0].alert_id);
-  EXPECT_EQ(h.rule->waiting(), 0u);
+  EXPECT_EQ(dus(h.alerts[1]), (std::vector<int64_t>{20, 21, 22, 23, 24}));
+  EXPECT_EQ(h.alerts[1].values["fails_w"], 5);
 }
 
 // L21-T22 (14_ §6.2 불확실 경보 — Q-58 해결, 이슈 #48): 갈래 ① 대기 5건이 DL 로스로 모두 보류, 공격 경보 없음 → 5번째 보류 칸에서

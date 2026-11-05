@@ -609,6 +609,23 @@ TEST(AuthStall, EndOnInputLostAndSessionReset) {
     EXPECT_EQ(h.alerts[1].kind, AlertEventKind::End);
     EXPECT_EQ(h.alerts[1].reason, "input_lost");
     EXPECT_EQ(h.logs[1], "ALERT END rule=L3-01-O cell=1 t=" + t_str(7600) + " duration_ms=3200 reason=input_lost");
+    // END 때 창을 비운다 (15_ §4.5 — 11/05 Q-77, W-41): 입력이 돌아온 뒤 고착 하나(마감 10000)로는 창 안 1 < 5 → 경보 없음
+    // (11/04까지는 옛 고착 5건과 합쳐 6으로 새 RAISE). 그 뒤 4건 더(마감 11500~12499)로 RAISE — END 뒤 고착 5건만 싣는다
+    h.cc = kCc;
+    h.stall_ue(8000, 20);
+    for (int i = 0; i < 4; ++i) h.stall_ue(9500 + 333 * i, 21 + i);
+    h.tick_to(10000);
+    EXPECT_EQ(h.alerts.size(), 2u);
+    EXPECT_EQ(h.rule->stalls(), 6);
+    h.tick_to(12500);
+    ASSERT_EQ(h.alerts.size(), 3u);
+    EXPECT_EQ(h.alerts[2].kind, AlertEventKind::Raise);
+    EXPECT_EQ(h.alerts[2].t, kT0 + 12500);
+    EXPECT_NE(h.alerts[2].alert_id, h.alerts[0].alert_id);
+    ASSERT_EQ(h.alerts[2].ues.size(), 5u);
+    EXPECT_EQ(h.alerts[2].ues[0].du_ue_id, 20);
+    EXPECT_EQ(h.alerts[2].ues[4].du_ue_id, 24);
+    EXPECT_EQ(h.alerts[2].ues_total, 5);
   }
   {
     Harness h;
@@ -625,7 +642,7 @@ TEST(AuthStall, EndOnInputLostAndSessionReset) {
 
 // 입력 침묵 (14_ §6.2 — 10/29 Q-45 해결, 이슈 #50): 공격 경보 중 실행 파일이 침묵을 알리면 END(reason=input_silent, t = 경보가
 // 마지막으로 본 칸)와 진단 1회. 대기 표시·셀 기록은 그대로라(on_session_reset과 다름) kpm2가 다시 오면 남은 마감이 평소처럼 판정된다 —
-// 창 안 고착 수가 N 이상이면 새 RAISE. 열린 불확실 경보도 같은 이유로 END
+// 다만 END 때 창을 비우므로(15_ §4.5 — 11/05 Q-77, W-41) END 뒤 고착이 N건 모여야 새 RAISE. 열린 불확실 경보도 같은 이유로 END
 TEST(AuthStall, EndOnInputSilent) {
   {
     Harness h;
@@ -648,14 +665,23 @@ TEST(AuthStall, EndOnInputSilent) {
     EXPECT_EQ(h.rule->waiting(), 1u);  // 대기 표시·상태표·셀 시계 유지
     EXPECT_EQ(h.engine.ue_table().size(), ues);
     EXPECT_EQ(h.engine.deadlines().clock(1), kT0 + 4400);
-    // 재개: 여섯째 마감(4665)이 4700에서 고착으로 — 창 안 고착 6 ≥ 5 → 새 경보로 RAISE
+    // 재개: 여섯째 마감(4665)이 4700에서 고착으로 — END 때 창을 비워(15_ §4.5 — 11/05 Q-77, W-41) 창 안 1 < 5, 경보 없음
+    // (11/04까지는 옛 고착 5건과 합쳐 6으로 새 RAISE). 그 뒤 4건 더(마감 7000~7999)로 새 경보 RAISE — END 뒤 고착 5건만 싣는다
     h.tick_to(4700);
-    ASSERT_EQ(h.alerts.size(), 2u);
-    EXPECT_EQ(h.alerts[1].kind, AlertEventKind::Raise);
-    EXPECT_EQ(h.alerts[1].t, kT0 + 4700);
-    EXPECT_NE(h.alerts[1].alert_id, h.alerts[0].alert_id);
+    EXPECT_EQ(h.alerts.size(), 1u);
     EXPECT_EQ(h.rule->stalls(), 6);
     EXPECT_EQ(h.rule->waiting(), 0u);
+    for (int i = 0; i < 4; ++i) h.stall_ue(5000 + 333 * i, 20 + i);
+    h.tick_to(8000);
+    ASSERT_EQ(h.alerts.size(), 2u);
+    EXPECT_EQ(h.alerts[1].kind, AlertEventKind::Raise);
+    EXPECT_EQ(h.alerts[1].t, kT0 + 8000);
+    EXPECT_NE(h.alerts[1].alert_id, h.alerts[0].alert_id);
+    ASSERT_EQ(h.alerts[1].ues.size(), 5u);
+    EXPECT_EQ(h.alerts[1].ues[0].du_ue_id, 15);
+    EXPECT_EQ(h.alerts[1].ues[4].du_ue_id, 23);
+    EXPECT_EQ(h.alerts[1].ues_total, 5);
+    EXPECT_EQ(h.rule->stalls(), 10);
   }
   {
     Harness h;  // 불확실 경보 중 — 같이 END

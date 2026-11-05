@@ -50,7 +50,7 @@ HeldBook::Spec held_spec(const AuthStallConfig& cfg) {
 
 // 공격 묶음 (15_ §4.3·§4.5 — R2, 이슈 #96): HitWindow를 2단계 모양으로 — 종류 attack·단계 2, 연결당 한 번은 룰 몫(stalled_ —
 // 응답 뒤 새 기다림은 같은 연결이 다시 고착할 수 있다, §4.3-4), CLEAR 기준은 마지막 성립 t_sat(§4.5 — 성립하지 않는 드문 고착은
-// 해제를 늦추지 않는다), END 뒤 창은 그대로(§4.5는 CLEAR 때만 비운다 — 11/05 Q-73), 공격 RAISE 직전 불확실 경보 CLEAR는 held_ 고리로
+// 해제를 늦추지 않는다), END 뒤 창 비움은 4단계와 같다(§4.5 — 11/05 Q-77, W-41), 공격 RAISE 직전 불확실 경보 CLEAR는 held_ 고리로
 AuthStallRule::AuthStallRule(AuthStallConfig cfg, AlertConfig alert)
     : cfg_(cfg),
       alert_(alert),
@@ -58,7 +58,6 @@ AuthStallRule::AuthStallRule(AuthStallConfig cfg, AlertConfig alert)
       held_(held_spec(cfg), alert) {
   hits_.set_once_per_conn(false);
   hits_.set_clear_on_satisfied(true);
-  hits_.set_forget_on_end(false);
   hits_.set_held(&held_);
 }
 

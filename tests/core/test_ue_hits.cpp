@@ -512,29 +512,6 @@ TEST(HitWindow, SeverityPerTickAndRiseUpdate) {
   EXPECT_EQ(h.out.size(), 2u);
 }
 
-// END 뒤 창 유지 (15_ §4.5는 CLEAR 때만 비움 — Q-73): forget_on_end가 꺼져 있으면 input_lost END·end_all 뒤에도 창 안 걸림이 남아
-// 다음 걸림과 함께 센다. 기본(4단계)은 비운다(EndForgetsWindow)
-TEST(HitWindow, KeepWindowOnEndForStageTwo) {
-  H h(2, 1000);
-  h.w.set_forget_on_end(false);
-  h.w.hit(uid(1), ue(1, 100));
-  h.w.hit(uid(2), ue(2, 150));
-  h.tick(200);  // RAISE (창 안 2)
-  ASSERT_EQ(h.out.size(), 1u);
-  h.tick(300, true);  // input_lost END
-  ASSERT_EQ(h.out.size(), 2u);
-  EXPECT_EQ(h.out[1].kind, AlertEventKind::End);
-  EXPECT_EQ(h.w.window(1), 2);  // 창은 그대로
-  h.w.hit(uid(3), ue(3, 400));
-  h.tick(500);  // 창 안 3 ≥ 2 → 새 RAISE에 옛 걸림도 실린다 (CLEAR가 아니라 END였으므로 — 15_ §4.5 그대로)
-  ASSERT_EQ(h.out.size(), 3u);
-  EXPECT_EQ(h.out[2].kind, AlertEventKind::Raise);
-  EXPECT_EQ(h.out[2].ues.size(), 3u);
-  h.w.end_all("input_silent", h.out);
-  ASSERT_EQ(h.out.size(), 4u);
-  EXPECT_EQ(h.w.window(1), 3);
-}
-
 // 불확실 경보 고리 (14_ §8.2): set_held가 있으면 공격 RAISE 직전에 그 셀의 열린 불확실 경보를 먼저 CLEAR하고(그 CLEAR는 RAISE 구간 밖),
 // 새 경보의 보류 수를 0부터 센다
 TEST(HitWindow, HeldBookHookClearsBeforeRaise) {
