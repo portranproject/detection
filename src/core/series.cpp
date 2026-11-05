@@ -347,7 +347,8 @@ Count get_noreply(const Kpm2& k) { return k.fail_no_reply; }
 //  1) 구간 끊김이 있으면 보류가 그 끊김의 시작부터 시작된 것으로 본다 (결정 E9)
 //  2) 필수 키 A·S 누락 streak — 연속 missing_key_slots칸을 넘으면 비활성 진단, 다시 들어오면 재개 진단
 //  3) 표준 윈도우 합계 — A는 T_nr(= D칸)만큼 과거, F·A′·S′는 시차 없음 (3_ §3)
-//  4) 보류 판단 (3_ §4.1 결정 E1과 같은 조건): A′·S′ 불완전, 또는 F 완전인데 A 불완전이면 보류.
+//  4) 보류·모드 판단 (3_ §4.1 결정 E1 — 11/05 R4로 룰의 decide_mode를 여기로): A′·S′ 불완전, 또는 F 완전인데 A 불완전이면 보류.
+//     판정하면 F 윈도우가 다 있을 때 normal, F가 불완전(null)하면 dl_missing(3_ §4.1).
 //     보류가 H_hold보다 길면 input_lost — 이 칸 이전 버퍼를 비우고 보류 시작을 다시 잰다. 기준선은 룰이 유지
 void Series::assess(const Kpm2& k, CellSeries& cs, InputHealth& h, FeedResult& out) {
   const int64_t t = k.t_end_ms;
@@ -375,13 +376,18 @@ void Series::assess(const Kpm2& k, CellSeries& cs, InputHealth& h, FeedResult& o
     h.missing_streak = 0;
   }
 
-  out.sums.a_w = cs.window_sum(t - W - D * P, t - D * P, get_att);
-  out.sums.f_w = cs.window_sum(t - W, t, get_noreply);
-  out.sums.a2_w = cs.window_sum(t - W, t, get_att);
-  out.sums.s2_w = cs.window_sum(t - W, t, get_succ);
+  out.sums.a_from = t - W - D * P;
+  out.sums.a_to = t - D * P;
+  out.sums.f_from = t - W;
+  out.sums.f_to = t;
+  out.sums.a_w = cs.window_sum(out.sums.a_from, out.sums.a_to, get_att);
+  out.sums.f_w = cs.window_sum(out.sums.f_from, out.sums.f_to, get_noreply);
+  out.sums.a2_w = cs.window_sum(out.sums.f_from, out.sums.f_to, get_att);
+  out.sums.s2_w = cs.window_sum(out.sums.f_from, out.sums.f_to, get_succ);
 
   const bool judgeable = out.sums.a2_w && out.sums.s2_w && (!out.sums.f_w || out.sums.a_w);
   if (judgeable) {
+    out.mode = out.sums.f_w ? AlertMode::Normal : AlertMode::DlMissing;
     h.hold_start.reset();
     return;
   }

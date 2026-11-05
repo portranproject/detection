@@ -27,6 +27,7 @@
 #include "detect/rules/sync_failure.h"
 #include "detect/rules/uplink_dos.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <csignal>
@@ -35,6 +36,7 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <optional>
@@ -189,25 +191,57 @@ int main(int argc, char** argv) {
   ShortRepeatConfig short_repeat;
   SetupRepeatConfig setup_repeat;
   KnownRegBurstConfig known_reg_burst;
-  if (!read_rule(cfg, BtsVariantRule::kId, parse_bts_variant_config, bts) ||
-      !read_rule(cfg, BlindDosRule::kId, parse_blind_dos_config, blind_dos) ||
-      !read_rule(cfg, AuthStallRule::kId, parse_auth_stall_config, auth_stall) ||
-      !read_rule(cfg, UplinkDosRule::kId, parse_uplink_dos_config, uplink_dos) ||
-      !read_rule(cfg, ImsiExtractorRule::kId, parse_imsi_extractor_config, imsi_extractor) ||
-      !read_rule(cfg, CapHijackRule::kId, parse_cap_hijack_config, cap_hijack) ||
-      !read_rule(cfg, NasDesyncRule::kId, parse_nas_desync_config, nas_desync) ||
-      !read_rule(cfg, SyncFailureRule::kId, parse_sync_failure_config, sync_failure) ||
-      !read_rule(cfg, SecReauthRule::kId, parse_sec_reauth_config, sec_reauth) ||
-      !read_rule(cfg, IdentityRequestRule::kId, parse_identity_request_config, identity_request) ||
-      !read_rule(cfg, ShortRepeatRule::kId, parse_short_repeat_config, short_repeat) ||
-      !read_rule(cfg, SetupRepeatRule::kId, parse_setup_repeat_config, setup_repeat) ||
-      !read_rule(cfg, KnownRegBurstRule::kId, parse_known_reg_burst_config, known_reg_burst))
-    return 1;
+  // 룰 등록 표 (4_ §2 — 11/05 26_ R3, 이슈 #98): 룰 ID·설정 파서·설정 자리·엔진에 꽂는 법을 한 표로. 설정 읽기와 모르는 룰 ID
+  // 경고가 이 표를 돌고, 엔진 등록도 이 표 순서다 — 1단계 L3-01-V, 2단계 L3-20·L3-01-O·L3-21(15_), 3단계 L3-24·L3-14(20_ §0,
+  // 4_ §6.2 #3)와 3단계로 올린 L3-06(20_ §5), 4단계 AN-01·AN-06a·AN-02·AN-04·AN-07·AN-08(21_). 등록은 구현 순서대로 뒤에 붙인다 —
+  // 같은 kpm2에서 여러 룰이 낼 때 출력 순서가 그대로이게(1_ §6 11/03 M9 착수 결정 ③). 2단계 이상은 hello에 ue_evt 표시가 있을
+  // 때만 돌고(2_ §6.5) 경보 묶음·UE 증거는 alert.*를 함께 쓴다(14_ §9)
+  struct RuleEntry {
+    const char* id;
+    std::function<bool()> read;          // rules.<id>를 그 룰의 파서로 — 오류면 false (4_ §1.2 설정 오류 처리)
+    std::function<void(Engine&)> add;    // 엔진에 꽂는다
+  };
+  auto ue_rule = [&cfg](auto make) {
+    return [&cfg, make](Engine& e) { e.add_ue_rule(make(cfg.alert)); };
+  };
+  const std::vector<RuleEntry> rule_entries = {
+      {BtsVariantRule::kId, [&] { return read_rule(cfg, BtsVariantRule::kId, parse_bts_variant_config, bts); },
+       [&](Engine& e) { e.add_rule(std::make_unique<BtsVariantRule>(bts)); }},
+      {BlindDosRule::kId, [&] { return read_rule(cfg, BlindDosRule::kId, parse_blind_dos_config, blind_dos); },
+       ue_rule([&](const AlertConfig& a) { return std::make_unique<BlindDosRule>(blind_dos, a); })},
+      {AuthStallRule::kId, [&] { return read_rule(cfg, AuthStallRule::kId, parse_auth_stall_config, auth_stall); },
+       ue_rule([&](const AlertConfig& a) { return std::make_unique<AuthStallRule>(auth_stall, a); })},
+      {UplinkDosRule::kId, [&] { return read_rule(cfg, UplinkDosRule::kId, parse_uplink_dos_config, uplink_dos); },
+       ue_rule([&](const AlertConfig& a) { return std::make_unique<UplinkDosRule>(uplink_dos, a); })},
+      {ImsiExtractorRule::kId,
+       [&] { return read_rule(cfg, ImsiExtractorRule::kId, parse_imsi_extractor_config, imsi_extractor); },
+       ue_rule([&](const AlertConfig& a) { return std::make_unique<ImsiExtractorRule>(imsi_extractor, a); })},
+      {CapHijackRule::kId, [&] { return read_rule(cfg, CapHijackRule::kId, parse_cap_hijack_config, cap_hijack); },
+       ue_rule([&](const AlertConfig& a) { return std::make_unique<CapHijackRule>(cap_hijack, a); })},
+      {NasDesyncRule::kId, [&] { return read_rule(cfg, NasDesyncRule::kId, parse_nas_desync_config, nas_desync); },
+       ue_rule([&](const AlertConfig& a) { return std::make_unique<NasDesyncRule>(nas_desync, a); })},
+      {SyncFailureRule::kId,
+       [&] { return read_rule(cfg, SyncFailureRule::kId, parse_sync_failure_config, sync_failure); },
+       ue_rule([&](const AlertConfig& a) { return std::make_unique<SyncFailureRule>(sync_failure, a); })},
+      {SecReauthRule::kId, [&] { return read_rule(cfg, SecReauthRule::kId, parse_sec_reauth_config, sec_reauth); },
+       ue_rule([&](const AlertConfig& a) { return std::make_unique<SecReauthRule>(sec_reauth, a); })},
+      {IdentityRequestRule::kId,
+       [&] { return read_rule(cfg, IdentityRequestRule::kId, parse_identity_request_config, identity_request); },
+       ue_rule([&](const AlertConfig& a) { return std::make_unique<IdentityRequestRule>(identity_request, a); })},
+      {ShortRepeatRule::kId,
+       [&] { return read_rule(cfg, ShortRepeatRule::kId, parse_short_repeat_config, short_repeat); },
+       ue_rule([&](const AlertConfig& a) { return std::make_unique<ShortRepeatRule>(short_repeat, a); })},
+      {SetupRepeatRule::kId,
+       [&] { return read_rule(cfg, SetupRepeatRule::kId, parse_setup_repeat_config, setup_repeat); },
+       ue_rule([&](const AlertConfig& a) { return std::make_unique<SetupRepeatRule>(setup_repeat, a); })},
+      {KnownRegBurstRule::kId,
+       [&] { return read_rule(cfg, KnownRegBurstRule::kId, parse_known_reg_burst_config, known_reg_burst); },
+       ue_rule([&](const AlertConfig& a) { return std::make_unique<KnownRegBurstRule>(known_reg_burst, a); })},
+  };
+  for (const RuleEntry& e : rule_entries)
+    if (!e.read()) return 1;
   for (const auto& [id, _] : cfg.rules)
-    if (id != BtsVariantRule::kId && id != BlindDosRule::kId && id != AuthStallRule::kId && id != UplinkDosRule::kId &&
-        id != ImsiExtractorRule::kId && id != CapHijackRule::kId && id != NasDesyncRule::kId &&
-        id != SyncFailureRule::kId && id != SecReauthRule::kId && id != IdentityRequestRule::kId &&
-        id != ShortRepeatRule::kId && id != SetupRepeatRule::kId && id != KnownRegBurstRule::kId)
+    if (std::none_of(rule_entries.begin(), rule_entries.end(), [&](const RuleEntry& e) { return id == e.id; }))
       log_err("WARN", "unknown rule id rules." + id + " (ignored)");
 
   // 설정 교차 제약 (4_ §1.2 — 11/05 W-31, 이슈 #92): 이력 표 보관이 4단계 창보다 짧으면 이력이 창보다 먼저 지워져 감도만 조용히
@@ -241,24 +275,7 @@ int main(int argc, char** argv) {
   scfg.max_cells = cfg.max_cells;              // 결정 D7 — 설정 키 max_cells (16_ W-24)
   scfg.max_slots = cfg.max_slots;              // 셀 버퍼 칸 수 상한 (2_ §3 — 11/05 W-31, 이슈 #92)
   Engine engine(scfg, cfg.max_line_bytes, cfg.ue_table);
-  engine.add_rule(std::make_unique<BtsVariantRule>(bts));
-  // 2단계 룰 (15_). hello에 ue_evt 표시가 있을 때만 돈다(2_ §6.5). 경보 묶음·UE 증거는 alert.*를 함께 쓴다 (14_ §9)
-  engine.add_ue_rule(std::make_unique<BlindDosRule>(blind_dos, cfg.alert));
-  engine.add_ue_rule(std::make_unique<AuthStallRule>(auth_stall, cfg.alert));
-  engine.add_ue_rule(std::make_unique<UplinkDosRule>(uplink_dos, cfg.alert));
-  // 3단계 룰 (20_). 2단계 다음, L3-24 → L3-14 순서 (20_ §0, 4_ §6.2 #3). 2단계와 같이 hello.ue_evt가 있을 때만 돈다
-  engine.add_ue_rule(std::make_unique<ImsiExtractorRule>(imsi_extractor, cfg.alert));
-  engine.add_ue_rule(std::make_unique<CapHijackRule>(cap_hijack, cfg.alert));
-  // 3단계로 올린 L3-06 (20_ §5). 등록은 구현 순서대로 뒤에 붙인다 — 같은 kpm2에서 여러 룰이 낼 때 기존 출력 순서가 그대로이게
-  // (1_ §6 11/03 M9 착수 결정 ③)
-  engine.add_ue_rule(std::make_unique<NasDesyncRule>(nas_desync, cfg.alert));
-  // 4단계 룰 (21_). 이상 유형 + 후보(kind anomaly, stage 4). L3-06 다음 — 등록 순서는 위와 같은 원칙
-  engine.add_ue_rule(std::make_unique<SyncFailureRule>(sync_failure, cfg.alert));
-  engine.add_ue_rule(std::make_unique<SecReauthRule>(sec_reauth, cfg.alert));
-  engine.add_ue_rule(std::make_unique<IdentityRequestRule>(identity_request, cfg.alert));
-  engine.add_ue_rule(std::make_unique<ShortRepeatRule>(short_repeat, cfg.alert));
-  engine.add_ue_rule(std::make_unique<SetupRepeatRule>(setup_repeat, cfg.alert));
-  engine.add_ue_rule(std::make_unique<KnownRegBurstRule>(known_reg_burst, cfg.alert));
+  for (const RuleEntry& e : rule_entries) e.add(engine);  // 등록 표 순서대로 (위 — 1 → 2 → 3 → 4단계)
 
   EvidenceQueue queue(cfg.evidence.queue_max);
   EvidenceRecorder recorder(cfg.evidence, queue, cfg.alert);

@@ -452,6 +452,31 @@ TEST(Series, HoldUntilStandardWindowsFull) {
   EXPECT_EQ(r.sums.s2_w, 10);
 }
 
+// 판정 모드·창 구간 (3_ §4.1 결정 E1 — 11/05 26_ R4, 이슈 #98: 룰의 decide_mode를 series로): 보류면 nullopt, 창이 다 차면 F 윈도우가
+// 있을 때 normal, F가 null(DL 미관측)이면 dl_missing. 창 구간은 A [t−W−D·P, t−D·P)·F [t−W, t)
+TEST(Series, ModeAndWindowRanges) {
+  Series s;
+  feed(s, hello_line("s1", 1));
+  int64_t seq = 2;
+  for (int64_t i = 0; i < 19; ++i) EXPECT_FALSE(feed(s, kpm_line("s1", seq++, 1, i, 2, 1, 1)).mode);
+  auto r = feed(s, kpm_line("s1", seq++, 1, 19, 2, 1, 1));
+  ASSERT_TRUE(r.mode);
+  EXPECT_EQ(*r.mode, AlertMode::Normal);
+  const int64_t t = kT0 + 20 * kP;
+  EXPECT_EQ(r.sums.a_from, t - 1000 - 10 * kP);
+  EXPECT_EQ(r.sums.a_to, t - 10 * kP);
+  EXPECT_EQ(r.sums.f_from, t - 1000);
+  EXPECT_EQ(r.sums.f_to, t);
+  // F가 없는 칸(DL 미관측) — F 윈도우가 불완전해지면 dl_missing, A′·S′는 그대로
+  r = feed(s, R"({"type":"kpm2","ver":1,"session":"s1","seq":)" + std::to_string(seq++) +
+                 R"(,"cell_id":1,"t_start_ms":)" + std::to_string(kT0 + 20 * kP) + R"(,"t_end_ms":)" +
+                 std::to_string(kT0 + 21 * kP) +
+                 R"(,"cc":{"RRC.ConnEstabAtt":{"total":2},"RRC.ConnEstabSucc":{"total":1},"RRC.ConnEstabFailCause":null}})");
+  EXPECT_FALSE(r.hold);
+  ASSERT_TRUE(r.mode);
+  EXPECT_EQ(*r.mode, AlertMode::DlMissing);
+}
+
 // 필수 키 A·S 누락 (3_ §8): 연속 10칸을 넘으면 비활성 진단, 다시 들어오면 재개 진단. 누락 칸은 보류
 TEST(Series, MissingRequiredKeysStreakDiag) {
   Series s;

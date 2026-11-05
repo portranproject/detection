@@ -3,6 +3,7 @@
 // 셀별 입력 건전성 — 표준 윈도우 합계, 보류 판단, H_hold(input_lost)와 버퍼 비움, 필수 키 누락 streak — 도
 // 여기서 계산해 FeedResult로 넘긴다(Q-46, 4_ §2). 룰은 이 결과를 읽기만 하고 판정·경보만 한다.
 
+#include "detect/alert.h"
 #include "detect/diag.h"
 #include "detect/message.h"
 
@@ -81,12 +82,17 @@ struct GapEvent {
   int64_t seq_after = 0;
 };
 
-// 표준 윈도우 합계 (3_ §3): A 윈도우는 T_nr(= D칸)만큼 과거, F·A′·S′는 시차 없음. nullopt = 불완전
+// 표준 윈도우 합계 (3_ §3): A 윈도우는 T_nr(= D칸)만큼 과거, F·A′·S′는 시차 없음. nullopt = 불완전.
+// 창 구간도 함께 준다 (11/05 26_ R4, 이슈 #98) — 룰이 D·P·W를 다시 계산하지 않고 증거 seq 범위(3_ §7.1)에 쓴다
 struct WindowSums {
   std::optional<int64_t> a_w;   // [t−W−T_nr, t−T_nr)의 A 합 — ratio의 분모
   std::optional<int64_t> f_w;   // [t−W, t)의 F 합
   std::optional<int64_t> a2_w;  // [t−W, t)의 A 합 (A′_w)
   std::optional<int64_t> s2_w;  // [t−W, t)의 S 합 (S′_w)
+  int64_t a_from = 0;           // A 윈도우 [a_from, a_to) = [t−W−D·P, t−D·P)
+  int64_t a_to = 0;
+  int64_t f_from = 0;           // F·A′·S′ 윈도우 [f_from, f_to) = [t−W, t)
+  int64_t f_to = 0;
 };
 
 enum class FeedOutcome {
@@ -108,6 +114,9 @@ struct FeedResult {
   WindowSums sums;
   bool hold = false;        // 이 칸은 판정하지 않는다 — 윈도우 불완전 (3_ §8). 룰은 M·K·t_last를 그대로 둔다
   bool input_lost = false;  // 보류가 H_hold를 넘어 이 칸 이전 버퍼를 비웠다 — 룰은 진행 중 경보를 END(input_lost)로 (3_ §8)
+  // 판정 모드 (3_ §4.1 결정 E1 — 11/05 26_ R4, 이슈 #98: 룰의 decide_mode를 여기로): 보류가 아니면 F 윈도우가 다 있으면 normal,
+  // F가 불완전(null)한데 같은 구간 A′·S′는 다 있으면 dl_missing. 보류면 nullopt
+  std::optional<AlertMode> mode;
 };
 
 class Series {
@@ -137,7 +146,7 @@ class Series {
   // hello·설정 경계 (2_ §3, 3_ §3 — 11/05 W-31): 버퍼 칸 수가 상한 안이면 true, 아니면 진단을 넣고 Dropped (세션 유지)
   bool accept_hello(const Common& c, const Hello& h, FeedResult& out) const;
   FeedResult on_kpm2(const Common& c, const Kpm2& k);
-  // 저장된 칸의 입력 건전성 평가: 누락 streak → 표준 윈도우 합계 → 보류·H_hold (3_ §3·§8)
+  // 저장된 칸의 입력 건전성 평가: 누락 streak → 표준 윈도우 합계 → 보류·모드·H_hold (3_ §3·§4.1·§8)
   void assess(const Kpm2& k, CellSeries& cs, InputHealth& h, FeedResult& out);
   // 세션 시작 — 버퍼 크기, W % P 정렬(3_ §3), h_hold 하한(3_ §8)을 정하고 진단을 out에 넣는다 (11/05 W-31)
   void start_session(const Common& c, const Hello& h, FeedResult& out);

@@ -37,10 +37,7 @@ struct BtsVariantRule::Ctx {
   const Slot& slot;      // 이번 칸
   const Kpm2& k;         // = slot.kpm
   int64_t t;             // 이번 칸의 t_end_ms — 룰의 시간 기준 (3_ §3)
-  int64_t P;             // hello.period_ms
-  int64_t D;             // 시차 D = ⌈T_nr / P⌉칸 (3_ §3)
-  int64_t W;             // window_ms
-  const CellSeries& cs;  // 읽기만 — seq 범위용 (3_ §7.1)
+  const CellSeries& cs;  // 읽기만 — seq 범위용 (3_ §7.1). 창 구간(시차 D 포함)은 series가 WindowSums로 준다 (R4)
   const Hello& hello;
   const std::string& session;
 };
@@ -107,17 +104,6 @@ void BtsVariantRule::end_alert(CellState& st, int64_t cell_id, int64_t t, const 
     out.alerts.push_back(std::move(e));
   }
   st.machine.reset();
-}
-
-// 모드 결정 (결정 E1): F만 본다. 합계는 series가 낸 표준 윈도우 합계(3_ §3)다.
-//  - [t−W, t)의 A′·S′가 불완전하면(끊김·A/S 누락) 보류(nullopt) — series가 이미 hold로 표시한 경우
-//  - F 윈도우가 다 있으면 normal — 단 A 윈도우가 불완전하면 보류
-//  - F 윈도우가 불완전한데 같은 구간 A′는 다 있으면 F가 null인 것 → dl_missing (3_ §4.1)
-std::optional<AlertMode> BtsVariantRule::decide_mode(const WindowSums& w) {
-  if (!w.a2_w || !w.s2_w) return std::nullopt;
-  if (!w.f_w) return AlertMode::DlMissing;
-  if (!w.a_w) return std::nullopt;
-  return AlertMode::Normal;
 }
 
 // 판정 (3_ §4·§4.1). 비율은 분모가 0보다 클 때만, 분모 0이면 그 조건은 거짓
@@ -231,13 +217,13 @@ void BtsVariantRule::emit(CellState& st, const Ctx& c, AlertMode mode, const Win
       e.log_fields = {{"A_w", std::to_string(*w.a_w)},
                       {"F_w", std::to_string(w.f_w.value_or(0))},
                       {"ratio", fmt("%.2f", v.ratio.value_or(0))}};
-      a_seq = c.cs.seq_range(c.t - c.W - c.D * c.P, c.t - c.D * c.P);
-      f_seq = c.cs.seq_range(c.t - c.W, c.t);
+      a_seq = c.cs.seq_range(w.a_from, w.a_to);
+      f_seq = c.cs.seq_range(w.f_from, w.f_to);
     } else {
       e.values["a_w"] = *w.a2_w;
       if (v.u) e.values["u"] = *v.u;
       e.log_fields = {{"A_w", std::to_string(*w.a2_w)}, {"U", fmt("%.2f", v.u.value_or(0))}};
-      a_seq = c.cs.seq_range(c.t - c.W, c.t);
+      a_seq = c.cs.seq_range(w.f_from, w.f_to);  // A′ 윈도우 = F와 같은 구간
     }
     e.values["base"] = v.base_used;
     e.params["k"] = cfg_.k;
@@ -293,8 +279,7 @@ void BtsVariantRule::on_feed(const Series& series, const FeedResult& fed, RuleOu
 
   const Slot& slot = cs->back();
   const int64_t P = hello->period_ms;
-  const Ctx c{cell_id, slot, slot.kpm, slot.kpm.t_end_ms, P, (hello->noreply_timeout_ms + P - 1) / P,
-              cfg_.window_ms, *cs, *hello, series.session()};
+  const Ctx c{cell_id, slot, slot.kpm, slot.kpm.t_end_ms, *cs, *hello, series.session()};
 
   auto it = cells_.find(cell_id);
   if (it == cells_.end()) it = cells_.emplace(cell_id, CellState(cfg_, P)).first;
@@ -302,11 +287,12 @@ void BtsVariantRule::on_feed(const Series& series, const FeedResult& fed, RuleOu
   st.last_t = c.t;
 
   // 보류 (3_ §8) — series가 판단한다. 보류가 H_hold를 넘었으면(input_lost) 진행 중 경보를 끝낸다.
-  // 보류 칸은 성립·불성립 어느 쪽으로도 세지 않는다 — M·K·t_last 유지, 기준선도 그대로
+  // 보류 칸은 성립·불성립 어느 쪽으로도 세지 않는다 — M·K·t_last 유지, 기준선도 그대로.
+  // 모드(normal·dl_missing)도 series가 정한다 (3_ §4.1 결정 E1 — R4): 보류가 아니면 늘 있다
   if (fed.input_lost) end_alert(st, cell_id, c.t, "input_lost", out, &c);
   if (fed.hold) return;
   const WindowSums& w = fed.sums;
-  const std::optional<AlertMode> mode = decide_mode(w);
+  const std::optional<AlertMode> mode = fed.mode;
   if (!mode) return;
 
   if (st.mode && *st.mode != *mode)
