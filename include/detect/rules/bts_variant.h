@@ -49,8 +49,8 @@ class BtsVariantRule : public Rule {
   // 한 칸의 판정 결과 (3_ §4·§4.1·§5)
   struct Verdict;
 
-  // on_feed의 단계 — 순서대로 부른다 (3_ §4 처리 순서, 해설 §3)
-  static std::optional<AlertMode> decide_mode(const WindowSums& w);      // 3_ §4.1 결정 E1
+  // on_feed의 단계 — 순서대로 부른다 (3_ §4 처리 순서, 해설 §3). 모드(normal·dl_missing·보류)는 series가 FeedResult로 준다
+  // (3_ §4.1 결정 E1 — 11/05 26_ R4, 이슈 #98)
   Verdict evaluate(const CellState& st, AlertMode mode, const WindowSums& w, bool was_active, bool warming) const;  // 3_ §4·§4.1
   void update_baseline(CellState& st, const Ctx& c, AlertMode mode, const WindowSums& w, const Verdict& v,
                        bool alert_slot, RuleOutput& out);                // 3_ §5
