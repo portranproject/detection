@@ -1,7 +1,8 @@
 #pragma once
 // UE 상태표 (14_ §2~§5) — ue_evt 한 줄을 받아 UE 항목의 현재 상태·횟수·최근 메시지를 이 한 곳에서 갱신한다(14_ §1).
 // 룰은 읽기만 한다. 판정에는 메시지 이력이 아니라 현재 상태·횟수를 쓰고, 최근 메시지(recent)는 증거용이다(14_ §0 결정 1·2).
-// S-TMSI 이력 표(14_ §3.2 — 연결 레코드·할당 기억, 11/04 M9 이슈 #74)는 이 표의 공통 표다. 4단계 룰은 history()·allocated()로 읽기만 한다.
+// S-TMSI 이력 표(14_ §3.2 — 연결 레코드·할당 기억, 11/04 M9 이슈 #74)는 이 표의 공통 표다 — 구현은 stmsi_history.*(11/05 26_ R5,
+// 이슈 #98)이고 4단계 룰은 여기의 history()·allocated()로 읽기만 한다.
 
 #include "detect/config.h"
 #include "detect/diag.h"
@@ -11,6 +12,7 @@
 #include <cstdint>
 #include <deque>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
@@ -22,6 +24,7 @@ namespace detect {
 
 class DeadlineQueue;
 struct Deadline;
+class StmsiHistory;
 
 // UE 키 (14_ §2.1, 2_ §6.2) — 셀이 다른 DU에 속해도 겹치지 않게 셀을 붙인다
 struct UeKey {
@@ -158,6 +161,9 @@ struct RecentLine {
 class UeTable {
  public:
   explicit UeTable(UeTableConfig cfg = {});
+  ~UeTable();
+  UeTable(UeTable&&) noexcept;
+  UeTable& operator=(UeTable&&) noexcept;
 
   // 닫힌 항목 하나 — 닫히기 직전의 상태와 이유. 최근 메시지는 상태표가 보관한다(recent(key, uid), 14_ §2.3)
   struct Closed {
@@ -216,14 +222,14 @@ class UeTable {
 
   // S-TMSI 이력 표 읽기 (14_ §3.2) — 룰은 읽기만 한다. history·history_part1: t_end ≥ since인 연결 레코드를 t_end 순으로
   // (같으면 넣은 순서). Part1 색인에는 48비트를 아는 레코드(그 하위 39비트)와 Part1만 아는 레코드가 함께 있다(§3.1과 같음).
-  // allocated: 이 망이 RegistrationAccept로 그 S-TMSI를 준 마지막 시각 — 없으면 nullopt
+  // allocated: 이 망이 RegistrationAccept로 그 S-TMSI를 준 마지막 시각 — 없으면 nullopt. 구현은 StmsiHistory(stmsi_history.*, R5)
   std::vector<const ConnRecord*> history(uint64_t s_tmsi, int64_t since) const;
   std::vector<const ConnRecord*> history_part1(uint64_t part1, int64_t since) const;
   std::optional<int64_t> allocated(uint64_t s_tmsi) const;
   // Part1(하위 39비트)만 아는 연결용 — 하위 39비트가 같은 할당 가운데 가장 최근 시각. 식별 요청 줄에서만 불려 선형으로 찾는다
   std::optional<int64_t> allocated_part1(uint64_t part1) const;
-  std::size_t history_size() const { return records_.size(); }
-  std::size_t alloc_size() const { return allocs_.size(); }
+  std::size_t history_size() const;
+  std::size_t alloc_size() const;
 
   // 닫힌 항목 recent 보관 시간 (14_ §1.1·§2.3) — Engine이 등록된 2단계 룰의 증거 지평 최댓값 + 여유로 정한다. 0이면 보관하지 않는다
   void set_recent_keep_ms(int64_t ms) { keep_ms_ = ms; }
@@ -245,8 +251,7 @@ class UeTable {
 
   static constexpr const char* kStaleTag = "stale_setup";
   static constexpr const char* kKeptTag = "closed_recent";
-  static constexpr const char* kTombTag = "tomb";    // 연결 레코드 만료 (14_ §3.2·§6.1 표)
-  static constexpr const char* kAllocTag = "alloc";  // 할당 기억 만료 (14_ §3.2)
+  // 이력 표 몫 마감 tomb·alloc은 StmsiHistory::kTombTag·kAllocTag (14_ §3.2·§6.1 표)
 
  private:
   struct Entry {
@@ -264,12 +269,6 @@ class UeTable {
 
   // 닫기. t = 닫힌 데이터 시각. S-TMSI 이력 표에 연결 레코드를 넣고(만료 마감 포함), 보관 대상 이유면 recent를 보관한다
   Closed close(Iter it, CloseReason reason, int64_t t, DeadlineQueue& dq);
-  // S-TMSI 이력 표 (14_ §3.2)
-  void add_record(const UeState& last, CloseReason reason, int64_t t, DeadlineQueue& dq);
-  void erase_record(uint64_t order);
-  void add_alloc(uint64_t s_tmsi, const UeState& s, int64_t t, DeadlineQueue& dq);
-  std::vector<const ConnRecord*> select(const std::map<uint64_t, std::vector<uint64_t>>& index, uint64_t v,
-                                        int64_t since) const;
   void keep_recent(const UeState& last, std::deque<RecentLine> recent, int64_t t, DeadlineQueue& dq);
   // 밀어내기 후보 색인 (14_ §4.4, 이슈 #44): 무리 ①(CONNECTED 아님)·②(CONNECTED·불확실)·③(나머지)마다 (t_last, uid, 키) 순.
   // 보호 무리(룰 몫 마감·최근 줄)는 시각·마감에 따라 바뀌므로 색인에 넣지 않고 고를 때 건너뛴다
@@ -295,23 +294,7 @@ class UeTable {
   int64_t late_horizon_ms_ = 0;
   std::set<RankKey> ranks_[3];                  // 밀어내기 후보 색인 (14_ §4.4)
   std::map<int64_t, int64_t> ghost_over_since_;  // 셀 → CONNECTED 수가 문턱을 처음 넘은 kpm2의 t_start_ms (§4.2)
-
-  // S-TMSI 이력 표 (14_ §3.2). 연결 레코드는 넣은 순서 번호로 두고, 48비트·Part1 색인은 (t_end, 순서)로 정렬한 번호 목록이다.
-  // 할당 기억은 S-TMSI → 마지막 할당 시각·셀, 만료 마감에 S-TMSI를 실을 수 없어 (키, uid, 시각) → S-TMSI로 찾는다
-  struct Alloc {
-    int64_t t = 0;
-    int64_t cell = 0;
-    uint64_t order = 0;
-  };
-  std::map<uint64_t, ConnRecord> records_;                     // 순서 번호 → 레코드 (상한을 넘으면 앞에서부터 버린다)
-  std::map<UeId, uint64_t> record_of_;                         // (키, uid) → 순서 번호 — 만료 마감과 대조
-  std::map<uint64_t, std::vector<uint64_t>> hist_s_tmsi_;      // 48비트 → 레코드 번호 (t_end 순)
-  std::map<uint64_t, std::vector<uint64_t>> hist_part1_;       // Part1 → 레코드 번호 (t_end 순)
-  uint64_t next_record_ = 0;
-  std::map<uint64_t, Alloc> allocs_;                           // S-TMSI → 마지막 할당
-  std::map<uint64_t, uint64_t> alloc_order_;                   // 할당 순서 → S-TMSI (상한)
-  std::map<std::tuple<UeKey, int64_t, int64_t>, uint64_t> alloc_due_;  // (키, uid, 할당 시각) → S-TMSI (만료 마감과 대조)
-  uint64_t next_alloc_ = 0;
+  std::unique_ptr<StmsiHistory> history_;       // S-TMSI 이력 표 (14_ §3.2) — stmsi_history.* (R5)
 };
 
 }  // namespace detect
