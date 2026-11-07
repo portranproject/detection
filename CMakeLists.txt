@@ -66,6 +66,7 @@ add_library(detect_io
   src/io/uds_server.cpp
   src/io/file_replay.cpp
   src/io/input_recorder.cpp   # 입력 원본 기록 — 스레드 C (24_ §3.3)
+  src/io/rotating_file.cpp    # 출력 파일 회전 — 스레드 B·C가 함께 씀 (29_ §2, 이슈 #102)
 )
 target_link_libraries(detect_io PUBLIC detect)
 target_compile_options(detect_io PRIVATE -Wall -Wextra -Wpedantic)

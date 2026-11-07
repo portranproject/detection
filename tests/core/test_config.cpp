@@ -6,6 +6,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace detect;
@@ -20,7 +21,8 @@ BtsVariantConfigResult bts_of(const std::string& whole_config) {
 
 }  // namespace
 
-// 저장소의 config/detector.json이 해석되고, max_conn(설정 파일만 96)을 빼면 값이 구조체 기본값과 같다
+// 저장소의 config/detector.json이 해석되고, max_conn(설정 파일만 96)과 출력 파일 회전·보관 키(설정 파일에서 켬 — 29_ §6)를
+// 빼면 값이 구조체 기본값과 같다
 TEST(Config, RepoConfigFileParses) {
   std::ifstream in(std::string(DETECT_SOURCE_DIR) + "/config/detector.json");
   ASSERT_TRUE(in);
@@ -59,6 +61,21 @@ TEST(Config, RepoConfigFileParses) {
   // 입력 원본 기록은 저장소 설정에서 끔 — 현장 설정에서 켠다 (24_ §3.1)
   EXPECT_FALSE(r.config.input_record.path);
   EXPECT_EQ(r.config.input_record.queue_max_bytes, d.input_record.queue_max_bytes);
+  // 출력 파일 회전·보관 (29_ §6, 11/08 이슈 #102): 코드 기본값은 모두 끔(0), 저장소 설정에서 켠다 — max_conn처럼 예외
+  EXPECT_EQ(d.evidence.rotate_s, 0);
+  EXPECT_EQ(d.evidence.rotate_max_bytes, 0u);
+  EXPECT_EQ(d.evidence.keep_s, 0);
+  EXPECT_EQ(d.input_record.rotate_s, 0);
+  EXPECT_EQ(d.input_record.rotate_max_bytes, 0u);
+  EXPECT_EQ(d.input_record.keep_s, 0);
+  EXPECT_EQ(d.input_record.min_free_bytes, 0u);
+  EXPECT_EQ(r.config.evidence.rotate_s, 3600);                       // 1시간
+  EXPECT_EQ(r.config.evidence.rotate_max_bytes, 268435456u);         // 256 MiB
+  EXPECT_EQ(r.config.evidence.keep_s, 604800);                       // 7일
+  EXPECT_EQ(r.config.input_record.rotate_s, 3600);
+  EXPECT_EQ(r.config.input_record.rotate_max_bytes, 268435456u);
+  EXPECT_EQ(r.config.input_record.keep_s, 259200);                   // 3일
+  EXPECT_EQ(r.config.input_record.min_free_bytes, 2147483648u);      // 2 GiB
 
   // 2단계 키는 모두 구조체 기본값과 같다 — 설정 파일을 더해도 판정은 그대로 (4_ §1.2, 10/29 이슈 #33)
   const UeTableConfig ud;
@@ -634,4 +651,58 @@ TEST(Config, InputRecord) {
   EXPECT_FALSE(parse_config(R"({"input_record":"input.jsonl"})").ok);
   auto e = parse_config(R"({"input_record":{"queue_max_bytes":1}})");
   EXPECT_NE(e.error.find("input_record.queue_max_bytes"), std::string::npos) << e.error;
+}
+
+// RT-T11 (29_ §6·§8.1, 11/08 이슈 #102): 출력 파일 회전·보관 키 — 0(끔) 또는 범위 안. 범위 밖·타입 틀림은 오류, keep_s·min_free_bytes도
+// 받아들이고(탐지 엔진은 검사만) 모르는 키 경고가 나지 않는다
+TEST(Config, RotationKeys) {
+  auto r = parse_config(R"({"evidence":{"rotate_s":60,"rotate_max_bytes":1048576,"keep_s":3600},
+                            "input_record":{"path":"input.jsonl","rotate_s":86400,"rotate_max_bytes":4294967296,
+                                            "keep_s":31536000,"min_free_bytes":1099511627776}})");
+  ASSERT_TRUE(r.ok) << r.error;
+  EXPECT_TRUE(r.warnings.empty());
+  EXPECT_EQ(r.config.evidence.rotate_s, 60);
+  EXPECT_EQ(r.config.evidence.rotate_max_bytes, 1048576u);
+  EXPECT_EQ(r.config.evidence.keep_s, 3600);
+  EXPECT_EQ(r.config.input_record.rotate_s, 86400);
+  EXPECT_EQ(r.config.input_record.rotate_max_bytes, 4294967296u);
+  EXPECT_EQ(r.config.input_record.keep_s, 31536000);
+  EXPECT_EQ(r.config.input_record.min_free_bytes, 1099511627776u);
+
+  r = parse_config(R"({"evidence":{"rotate_s":0,"rotate_max_bytes":0,"keep_s":0},
+                       "input_record":{"rotate_s":0,"rotate_max_bytes":0,"keep_s":0,"min_free_bytes":104857600}})");
+  ASSERT_TRUE(r.ok) << r.error;
+  EXPECT_TRUE(r.warnings.empty());
+  EXPECT_EQ(r.config.evidence.rotate_s, 0);
+  EXPECT_EQ(r.config.input_record.min_free_bytes, 104857600u);
+
+  for (const char* sec : {"evidence", "input_record"}) {
+    const std::string s = sec;
+    for (const auto& [kv, key] : std::vector<std::pair<std::string, std::string>>{
+             {R"("rotate_s":59)", "rotate_s"},
+             {R"("rotate_s":86401)", "rotate_s"},
+             {R"("rotate_s":-1)", "rotate_s"},
+             {R"("rotate_s":"3600")", "rotate_s"},
+             {R"("rotate_s":3600.5)", "rotate_s"},
+             {R"("rotate_max_bytes":1048575)", "rotate_max_bytes"},
+             {R"("rotate_max_bytes":4294967297)", "rotate_max_bytes"},
+             {R"("rotate_max_bytes":null)", "rotate_max_bytes"},
+             {R"("keep_s":3599)", "keep_s"},
+             {R"("keep_s":31536001)", "keep_s"},
+             {R"("keep_s":true)", "keep_s"},
+         }) {
+      auto e = parse_config("{\"" + s + "\":{" + kv + "}}");
+      EXPECT_FALSE(e.ok) << s << " " << kv;
+      EXPECT_NE(e.error.find(s + "." + key), std::string::npos) << e.error;
+    }
+  }
+  for (const char* kv : {R"("min_free_bytes":104857599)", R"("min_free_bytes":1099511627777)", R"("min_free_bytes":"2G")"}) {
+    auto e = parse_config(std::string(R"({"input_record":{)") + kv + "}}");
+    EXPECT_FALSE(e.ok) << kv;
+    EXPECT_NE(e.error.find("input_record.min_free_bytes"), std::string::npos) << e.error;
+  }
+  // min_free_bytes는 입력 기록에만 — 증거에 두면 모르는 키 경고
+  r = parse_config(R"({"evidence":{"min_free_bytes":2147483648}})");
+  ASSERT_TRUE(r.ok) << r.error;
+  EXPECT_EQ(r.warnings, (std::vector<std::string>{"unknown key evidence.min_free_bytes (ignored)"}));
 }
