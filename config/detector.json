@@ -36,7 +36,9 @@
   "alert": { "ues_max": 50, "update_min_ms": 1000, "ue_evidence_max": 50, "held_alert": true },
   "evidence": {
     "mode": "full", "pre_slots": null, "post_slots": 10,
-    "queue_max": 4096, "out_path": "evidence.jsonl"
+    "queue_max": 4096, "out_path": "evidence.jsonl",
+    "rotate_s": 3600, "rotate_max_bytes": 268435456, "keep_s": 604800
   },
-  "input_record": { "path": null, "queue_max_bytes": 8388608 }
+  "input_record": { "path": null, "queue_max_bytes": 8388608,
+                    "rotate_s": 3600, "rotate_max_bytes": 268435456, "keep_s": 259200, "min_free_bytes": 2147483648 }
 }

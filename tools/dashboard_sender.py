@@ -12,6 +12,8 @@
 - 줄의 내용을 바꾸지 않는다. 환경 이름은 헤더 X-Env로 붙이고 토큰은 쓰지 않는다 (19_ §1, 17_ §1.3).
 - 보낸 위치는 200·400을 받은 뒤에만 상태 파일에 저장한다 — '최소 한 번' (19_ §4.3, 17_ §1.5).
 - 종료 코드: 0 정상, 1 설정 오류, 2 약속에 없는 응답, 3 TLS 검증 실패, 4 상태 파일 저장 실패, 5 잠금 실패 (19_ §7).
+- 탐지 엔진이 파일을 회전하면(29_ §2) 회전 파일(<파일>.<YYYYMMDD-HHMMSS>[.N])을 이름 시각 순으로 빠짐없이 따라간다 —
+  다시 떴을 때(19_ §4.5)도, 떠 있는 동안 밀렸을 때(19_ §4.4)도 (11/08 이슈 #102).
 - Python 3.10 이상, 표준 라이브러리만 쓴다.
 """
 
@@ -27,6 +29,7 @@ import os
 import re
 import signal
 import ssl
+import stat
 import sys
 import time
 import urllib.parse
@@ -376,6 +379,56 @@ class Batch:
         raise AssertionError("split of a batch with fewer than 2 lines")
 
 
+# ---------------------------------------------------------------- 회전 파일 (19_ §4.5, 29_ §2.3 — 11/08 이슈 #102)
+# 탐지 엔진이 회전한 파일 이름은 <기준 파일 이름>.<YYYYMMDD-HHMMSS>[.N]이다. 시각은 회전한 때(UTC)이고, 같은 시각이면 N 순(없는
+# 것이 먼저) — 이 순서가 쓰인 순서다. 규칙 밖 이름(evidence.jsonl.old 등)은 회전 파일로 보지 않는다. 손으로 옮긴 파일을
+# 다시 보내지 않게 하려는 것이다 (19_ §4.5 ①). 정리 도구(tools/prune_outputs.py)도 같은 규칙을 쓴다
+
+class RotFile:
+    """같은 폴더의 회전 파일 하나 — key는 정렬 키 (시각 문자열, N), ms는 이름 시각(UTC, ms)."""
+    __slots__ = ("key", "path", "dev", "ino", "ms")
+
+    def __init__(self, key, path, dev, ino, ms):
+        self.key, self.path, self.dev, self.ino, self.ms = key, path, dev, ino, ms
+
+
+def rotated_files(abspath):
+    """기준 경로의 회전 파일을 이름 시각 순으로. 폴더를 읽지 못하면 빈 목록."""
+    d, base = os.path.split(abspath)
+    rx = re.compile(re.escape(base) + r"\.(\d{8}-\d{6})(?:\.(\d{1,2}))?")
+    try:
+        names = os.listdir(d or ".")
+    except OSError:
+        return []
+    out = []
+    for n in names:
+        m = rx.fullmatch(n)
+        if m is None:
+            continue
+        try:
+            t = datetime.datetime.strptime(m.group(1), "%Y%m%d-%H%M%S").replace(tzinfo=datetime.timezone.utc)
+        except ValueError:
+            continue
+        path = os.path.join(d, n)
+        try:
+            st = os.stat(path)
+        except OSError:
+            continue  # 그사이 지워짐
+        if not stat.S_ISREG(st.st_mode):
+            continue
+        out.append(RotFile((m.group(1), int(m.group(2) or 0)), path, st.st_dev, st.st_ino, int(t.timestamp() * 1000)))
+    out.sort(key=lambda r: r.key)
+    return out
+
+
+def _rot_index(rot, dev, ino):
+    """회전 파일 목록에서 (dev, ino)가 같은 파일의 자리. 없으면 None."""
+    for i, r in enumerate(rot):
+        if (r.dev, r.ino) == (dev, ino):
+            return i
+    return None
+
+
 class Tracker:
     """따라 읽는 파일 하나 — 보낸 위치(acked)·읽은 위치(read_off)와 아직 안 보낸 완성된 줄(pending).
     kind evidence는 줄을 바꾸지 않고 그대로 보낸다. kind input은 InputTracker가 줄마다 고르고 kpm2를 묶는다(24_ §4)."""
@@ -434,19 +487,76 @@ class Tracker:
             return None, None
         return fh, os.fstat(fh.fileno())
 
+    def _open_file(self, path):
+        """회전 파일 하나를 연다 — 목록을 만든 뒤 정리 도구가 지웠을 수 있다 (19_ §4.5 ⑧)."""
+        try:
+            fh = open(path, "rb")
+        except OSError as e:
+            log("WARN", "open_failed", file=self.path, path=os.path.basename(path), detail=e.strerror)
+            return None, None
+        return fh, os.fstat(fh.fileno())
+
+    def _open_rotated(self, files, first_off):
+        """회전 파일 목록의 앞에서부터 열리는 첫 파일을 연다 — 첫 파일은 first_off부터, 그 뒤 파일은 처음부터.
+        다 쓴 파일이므로 rotating으로 둔다 — 끝까지 보내면 finish_rotate()가 다음 파일로 넘어간다 (19_ §4.5 ②·⑤).
+        (연 파일, 위치, 남은 회전 파일 수) 또는 None."""
+        for i, r in enumerate(files):
+            fh, st = self._open_file(r.path)
+            if fh is None:
+                continue
+            off = first_off if i == 0 else 0
+            if off > st.st_size:
+                log("WARN", "truncate", file=self.path, path=os.path.basename(r.path), old_off=off, size=st.st_size)
+                off = 0
+            self._attach(fh, st, off)
+            self.rotating = True
+            self.rotate_new_ino = None
+            return r, off, len(files) - i
+        return None
+
+    def _catchup(self, entry):
+        """멈춘 동안 회전됨 — 상태 파일의 파일을 회전 파일에서 찾으면 그 저장 위치부터, 못 찾으면(손으로 지우거나 옮김)
+        saved_ms와 같거나 뒤 시각에 회전된 파일부터 처음부터 보낸다. 지금 파일은 그 뒤에 (19_ §4.5 ②·③, I-01 Q7).
+        보낼 회전 파일이 없으면 False — 지금처럼 지금 파일을 처음부터."""
+        rot = rotated_files(self.abspath)
+        i = _rot_index(rot, entry["dev"], entry["ino"])
+        if i is not None:
+            got = self._open_rotated(rot[i:], entry["offset"])
+        else:
+            sm = entry.get("saved_ms")
+            files = [r for r in rot if _is_int(sm) and r.ms >= sm]
+            got = self._open_rotated(files, 0) if files else None
+        if got is None:
+            return False
+        r, off, n = got
+        src = {"from": os.path.basename(r.path)}
+        if i is not None:
+            log("INFO", "catchup", file=self.path, **src, off=off, files=n)
+        else:
+            log("WARN", "catchup", file=self.path, found="no", saved_ms=entry.get("saved_ms"), **src, files=n)
+        return True
+
     def start(self, entry):
-        """처음 시작할 때 — 상태 파일에 같은 파일(dev, ino)의 위치가 있으면 그 자리, 없으면 start_at (19_ §4.2·§4.4)."""
+        """처음 시작할 때 — 상태 파일에 같은 파일(dev, ino)의 위치가 있으면 그 자리, 없으면 start_at (19_ §4.2·§4.4).
+        항목은 있는데 지금 파일과 다르면 멈춘 동안 회전된 것 — 회전 파일의 남은 줄부터 이어 보낸다 (19_ §4.5, 11/08 이슈 #102).
+        그전에는 지금 파일을 처음부터 읽어 옛 파일의 꼬리와 가운데 파일을 잃었다(I-01 P5)."""
         fh, st = self._open()
-        if fh is None:
-            return
-        if entry and (entry["dev"], entry["ino"]) == (st.st_dev, st.st_ino):
+        if entry and fh is not None and (entry["dev"], entry["ino"]) == (st.st_dev, st.st_ino):
             off = entry["offset"]
             if off > st.st_size:
                 log("WARN", "truncate", file=self.path, old_off=off, size=st.st_size)
                 off = 0
         elif entry:
+            if self._catchup(entry):
+                if fh is not None:
+                    fh.close()
+                return
+            if fh is None:
+                return
             log("WARN", "rotate", file=self.path, old_ino=entry["ino"], new_ino=st.st_ino)
             off = 0
+        elif fh is None:
+            return
         elif self.cfg["start_at"] == "end":
             off = _last_newline_end(fh, st.st_size)
         else:
@@ -482,14 +592,38 @@ class Tracker:
     def drained(self):
         return self.rotating and self.eof and not self.pending
 
+    def at_rotated_eof(self):
+        """다 쓴 파일의 끝 — 다음 파일로 넘어가기 전. evidence는 할 일 없음 (InputTracker가 바꾼다, 24_ §4.3)."""
+        self.flush_open()
+
+    def _before_switch(self, found):
+        """다음 파일로 넘어가기 직전 — found는 옛 파일을 회전 파일에서 찾았는지 (InputTracker가 바꾼다, 24_ §4.3)."""
+
     def finish_rotate(self):
+        """옛 파일을 끝까지 보냄 — 다음 파일로 (19_ §4.4·§4.5, 11/08 이슈 #102). 다음 파일은 옛 파일보다 이름 시각이 뒤인
+        회전 파일 가운데 가장 이른 것이고, 없으면 지금 경로의 파일이다(다음 check()가 연다). 넘어갈 때마다 다시 찾으므로
+        옛 파일을 보내는 사이 회전이 또 일어나도 가운데 파일을 건너뛰지 않는다 — 그전에는 지금 경로의 파일로 바로 넘어가
+        건너뛰었다(I-01 P8). 옛 파일을 회전 파일에서 찾지 못하면(규칙 밖 이름으로 옮김) 지금처럼 지금 경로의 파일로."""
         dropped = len(self.buf)
-        log("WARN", "rotate", file=self.path, old_ino=self.ino, new_ino=self.rotate_new_ino,
-            dropped_partial_bytes=dropped)
+        old_ino = self.ino
+        rot = rotated_files(self.abspath)
+        i = _rot_index(rot, self.dev, self.ino)
+        self._before_switch(i is not None)
         self.close()
         self.rotating = False
         self.dev = self.ino = None
         self._reset(0)
+        got = self._open_rotated(rot[i + 1:], 0) if i is not None else None
+        if got is not None:
+            nxt, new_ino = os.path.basename(got[0].path), got[0].ino
+        else:
+            nxt, new_ino = os.path.basename(self.abspath), self.rotate_new_ino
+        log("WARN", "rotate", file=self.path, old_ino=old_ino, new_ino=new_ino, next=nxt,
+            dropped_partial_bytes=dropped)
+
+    def save_pos(self, safe):
+        """받은 묶음 뒤 상태 파일에 남길 (dev, ino, 위치) — 지금 읽는 파일의 safe (19_ §4.3). InputTracker가 바꾼다."""
+        return self.dev, self.ino, safe
 
     def close(self):
         if self.fh is not None:
@@ -686,10 +820,11 @@ def _kpm2_values_ok(obj):
 class _Bucket:
     """열린 칸 하나 — (세션, 셀)의 [t0, t0 + N). first_off는 든 첫 원본 줄의 파일 위치(보낸 위치의 상한, 24_ §4.3).
     cont는 cc·si·ext마다 이름 → {"known": 값을 안 줄 수, "v": 누적} — 이름 순서는 처음 나온 순서."""
-    __slots__ = ("session", "cell", "t0", "first_off", "n", "seq_from", "seq_to", "cont")
+    __slots__ = ("session", "cell", "t0", "first_off", "gen", "n", "seq_from", "seq_to", "cont")
 
-    def __init__(self, session, cell, t0, first_off):
+    def __init__(self, session, cell, t0, first_off, gen=0):
         self.session, self.cell, self.t0, self.first_off = session, cell, t0, first_off
+        self.gen = gen  # 칸이 열린 파일의 차례 — first_off는 그 파일의 위치다 (24_ §4.3, 11/08 P9)
         self.n = 0
         self.seq_from = self.seq_to = None
         self.cont = {"cc": {}, "si": {}, "ext": {}}
@@ -710,6 +845,7 @@ class KpmAggregator:
         self.restored = {}          # 상태 파일에서 읽은 sent_to — 다시 읽은 그 칸의 줄은 조용히 건너뛴다(resent)
         self.last_end = {}          # (session, cell) → 받아들인 마지막 줄 t_end_ms — 겹침·역행 확인
         self.late = self.resent = 0
+        self.gen = 0                # 지금 읽는 파일의 차례 — 회전 파일로 넘어가며 칸을 이어 갈 때마다 1 늘린다 (24_ §4.3, 11/08 P9)
 
     # --- 상태 파일 (24_ §4.3): 재시작 뒤 다시 읽는 줄 가운데 이미 보낸 칸의 줄은 칸을 다시 만들지 않는다 — 여러 셀이 섞이면
     #     보낸 위치가 다른 셀의 열린 칸 앞에 머물러, 이미 보낸 칸의 뒤쪽 줄만으로 같은 키의 반쪽 줄이 다시 갈 수 있어서다
@@ -734,7 +870,8 @@ class KpmAggregator:
     # --- 칸
 
     def min_open_off(self):
-        return min((b.first_off for b in self.open.values()), default=None)
+        # 지금 파일에서 열린 칸만 — 앞 파일에서 이어 온 칸의 first_off는 다른 파일의 위치다(그동안은 보낸 위치를 옛 파일에 둠)
+        return min((b.first_off for b in self.open.values() if b.gen == self.gen), default=None)
 
     def drop_open(self):
         self.open.clear()
@@ -786,7 +923,7 @@ class KpmAggregator:
         for k in [k for k, x in self.open.items() if k[1] != c and x.t0 + self.n_ms + self.lag <= t0]:
             out.append(self._close(k))
         if b is None:
-            b = self.open[key] = _Bucket(s, c, k0, off)
+            b = self.open[key] = _Bucket(s, c, k0, off, self.gen)
         self._accumulate(b, obj, seq)
         self.last_end[key] = t1
         return out, None
@@ -883,6 +1020,13 @@ class InputTracker(Tracker):
             if cfg["kpm2_interval_ms"] else None
         self.skipped = 0
         self.agg_lines = 0
+        # 회전 경계에 걸친 칸 (24_ §4.3, 11/08 이슈 #102 — I-01 P9·Q12): 옛 파일이 회전 파일로 찾아지면 열린 칸을 닫지 않고
+        # 다음 파일로 이어 간다. 그 칸들이 모두 보내질 때까지 상태 파일의 보낸 위치는 옛 파일 쪽(pin)에 둔다 — 그사이 멈추면
+        # 다음 시작 때 옛 파일을 찾아(19_ §4.5 ②) 그 자리부터 칸을 다시 만든다
+        self.carry = None          # 이번 파일 끝에서 칸을 이어 갈지 — at_rotated_eof()가 정하고 _before_switch()가 지운다
+        self.keep_open = False     # 다음 파일을 열 때 열린 칸을 버리지 않는다
+        self.pin = None            # (dev, ino, offset) — 옛 파일에서 이어 온 칸의 첫 줄 앞
+        self.pin_keys = set()      # 이어 온 칸 (session, cell, t0) — 모두 받으면(200·400) pin을 푼다
 
     def _warn_once(self, key, event, **kv):
         if key not in self.warned:
@@ -896,10 +1040,49 @@ class InputTracker(Tracker):
         super().start(entry)
 
     def _reset(self, off):
-        # 처음 열 때·파일 교체 뒤(이미 닫아 보냄)·잘림 — 잘림이면 읽어 둔 줄(pending)과 함께 열린 칸도 버린다(19_ §4.4와 같게)
+        # 처음 열 때·파일 교체 뒤(이미 닫아 보냄)·잘림 — 잘림이면 읽어 둔 줄(pending)과 함께 열린 칸도 버린다(19_ §4.4와 같게).
+        # 회전 파일로 넘어가며 칸을 이어 갈 때(keep_open)는 버리지 않는다 (24_ §4.3, 11/08 P9)
         super()._reset(off)
+        if self.keep_open:
+            return
         if self.agg is not None:
             self.agg.drop_open()
+        self.pin = None
+        self.pin_keys.clear()
+
+    def _attach(self, fh, st, off):
+        super()._attach(fh, st, off)
+        self.keep_open = False
+
+    def at_rotated_eof(self):
+        """다 쓴 파일의 끝 (24_ §4.3, 11/08 P9): 옛 파일이 회전 파일로 찾아지면 칸을 다음 파일로 이어 간다. 못 찾으면(손으로
+        옮김) 지금처럼 열린 칸을 닫아 보낸다 — 다음 시작 때 찾을 수 없는 파일에 보낸 위치를 둘 수 없어서다."""
+        if self.agg is None:
+            return
+        if self.carry is None:
+            self.carry = _rot_index(rotated_files(self.abspath), self.dev, self.ino) is not None
+        if not self.carry:
+            self.flush_open()
+
+    def _before_switch(self, found):
+        # 이어 갈 칸이 있으면 보낸 위치를 옛 파일의 칸 첫 줄 앞에 묶어 두고(이미 묶여 있으면 더 앞인 그 자리 그대로),
+        # 이 칸들을 '앞 파일의 칸'으로 돌린다 — 다음 파일 줄의 safe를 다른 파일 위치로 자르지 않게
+        carry = found if self.carry is None else self.carry  # 보통은 at_rotated_eof()가 이미 정했다
+        if carry and self.agg is not None and self.agg.open:
+            if self.pin is None:
+                self.pin = (self.dev, self.ino, min(b.first_off for b in self.agg.open.values()))
+            self.pin_keys.update((b.session, b.cell, b.t0) for b in self.agg.open.values())
+            self.agg.gen += 1
+            self.keep_open = True
+        self.carry = None
+
+    def save_pos(self, safe):
+        # 이어 온 칸이 아직 다 보내지지 않았으면 옛 파일 쪽 (24_ §4.3, 11/08 P9)
+        if self.pin is not None:
+            if self.pin_keys:
+                return self.pin
+            self.pin = None
+        return super().save_pos(safe)
 
     def _add(self, e):
         m = self.agg.min_open_off() if self.agg is not None else None
@@ -957,6 +1140,7 @@ class InputTracker(Tracker):
             if e.key is not None:
                 self.agg.note_sent(e.key)
                 self.agg_lines += 1
+                self.pin_keys.discard(e.key)
 
 
 # ---------------------------------------------------------------- 전송기 본체 (19_ §4.3·§5·§6)
@@ -1067,7 +1251,8 @@ class Sender:
         with self._critical():
             if tr.is_input:
                 tr.note_sent(b)
-            entry = {"dev": tr.dev, "ino": tr.ino, "offset": b.safe, "saved_ms": int(time.time() * 1000)}
+            dev, ino, off = tr.save_pos(b.safe)  # input은 이어 온 칸이 남았으면 옛 파일 쪽 (24_ §4.3, 11/08 P9)
+            entry = {"dev": dev, "ino": ino, "offset": off, "saved_ms": int(time.time() * 1000)}
             if tr.agg is not None:
                 entry["agg"] = tr.agg.state()
             prev = self.state_files.get(tr.abspath)
@@ -1249,7 +1434,7 @@ class Sender:
                 t.check()
                 t.fill(we, wb)
                 if t.rotating and t.eof:
-                    t.flush_open()  # 옛 파일 끝 — 열린 칸을 닫아 보낸 뒤 새 파일로 (24_ §4.3·§5.3 ④)
+                    t.at_rotated_eof()  # 옛 파일 끝 — 회전 파일이면 칸을 이어 가고, 아니면 닫아 보낸 뒤 새 파일로 (24_ §4.3·§5.3 ④)
                 b, wait = t.take_batch(time.monotonic(), force=t.rotating)
                 if b is not None:
                     self.send_batch(t, b)
@@ -1267,18 +1452,28 @@ class Sender:
     def _run_once(self):
         # 지금 있는 완성된 줄을 다 보내고 끝낸다. 시간 제한은 다시 보내기까지 포함 (19_ §2.2)
         we, wb = self._want()
+        # 회전 파일을 읽는 중이면(19_ §4.5 ⑦) 끝까지 보내고 다음 파일로 — 지금 경로의 파일 끝에서 끝낸다 (11/08 이슈 #102)
         for t in self.trackers:
             while True:
                 self._check_deadline()
                 t.fill(we, wb)
                 if t.eof:
-                    t.flush_open()  # --once는 파일 끝에서 열린 칸을 모두 닫아 보낸다 (24_ §4.3·§5.3 ④)
+                    if t.rotating:
+                        t.at_rotated_eof()  # 다 쓴 파일 끝 — 회전 파일이면 칸을 이어 간다 (24_ §4.3)
+                    else:
+                        t.flush_open()  # --once는 마지막 파일 끝에서 열린 칸을 모두 닫아 보낸다 (24_ §4.3·§5.3 ④)
                 b, _ = t.take_batch(time.monotonic(), force=True)
-                if b is None:
-                    if t.eof:
-                        break
+                if b is not None:
+                    self.send_batch(t, b)
                     continue
-                self.send_batch(t, b)
+                if not t.eof:
+                    continue
+                if t.drained():
+                    t.finish_rotate()
+                    if t.fh is None:
+                        t.check()  # 다음은 지금 경로의 파일 — 없으면 fill이 끝으로 본다
+                    continue
+                break
 
     def run(self):
         try:

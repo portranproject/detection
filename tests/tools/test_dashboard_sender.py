@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""전송기 시험 S1~S21 (19_ §9)·상시 KPM S22~S39 (24_ §8.2) — ctest가 부른다. 인자: <저장소 경로> <detector 경로> <임시 폴더>
+"""전송기 시험 S1~S21 (19_ §9)·상시 KPM S22~S39 (24_ §8.2)·회전 파일 S41~S48 (19_ §9, 11/08 이슈 #102) — ctest가 부른다. 인자: <저장소 경로> <detector 경로> <임시 폴더>
 
 - 시험마다 가짜 수집 서버(http.server + ssl)를 로컬 포트에 띄운다. 받은 요청(헤더·본문)을 기록하고, 시험이 정한 응답을 돌려준다.
 - 서버 인증서는 시험 시작 때 openssl 명령으로 만든다(SAN IP:127.0.0.1) — 키·인증서를 저장소에 넣지 않는다.
@@ -7,6 +7,7 @@
 - S1 입력은 시험 때 detector --replay로 tests/data/의 시나리오 13개를 재생해 만든다(19_ §10 #6 — ~/evidence_sample/과 같은 시나리오).
 """
 
+import datetime
 import http.server
 import json
 import math
@@ -753,7 +754,8 @@ def first_of(got):
     return {k: v[0] for k, v in got.items()}
 
 
-class InputSending(Base):
+class InputBase(Base):
+    """input 파일 시험의 공통 — 기록 파일 경로·설정·쓰기 (InputSending·RotationInput)."""
     def setUp(self):
         super().setUp()
         self.inp = os.path.join(self.dir, "input.jsonl")
@@ -767,6 +769,8 @@ class InputSending(Base):
     def write_in(self, lines, mode="ab"):
         self.write(lines_bytes(lines), mode, self.inp)
 
+
+class InputSending(InputBase):
     def test_S22_kpm2_aggregated_only(self):
         # S22: 1000·send_ue_evt false — hello·f1_evt는 바이트 그대로, kpm2는 묶은 줄만(원본 0줄), ue_evt는 가지 않음
         lines, kpms = gen_stream(3)
@@ -1288,6 +1292,230 @@ class RunScript(Base):
         self.assertFalse(os.path.exists(self.ev))
         self.assertFalse(os.path.exists(os.path.join(self.dir, "sender_state.json.lock")))
 
+
+
+# ---------------------------------------------------------------- S41~S48 회전 파일 이어 보내기 (S40은 W-40 시험이 씀) (19_ §4.4·§4.5, 24_ §4.3 — 11/08 이슈 #102)
+
+def rot(path, ts, n=None):
+    """탐지 엔진의 회전 파일 이름 (29_ §2.3) — <path>.<YYYYMMDD-HHMMSS>[.N]."""
+    return f"{path}.{ts}" + (f".{n}" if n else "")
+
+
+def ts_of(sec):
+    return datetime.datetime.fromtimestamp(sec, datetime.timezone.utc).strftime("%Y%m%d-%H%M%S")
+
+
+class Rotation(Base):
+    def test_S41_restart_after_one_rotation_once(self):
+        # S41: 보내다 멈춤 → 회전 이름으로 옮기고 새 파일에 씀 → 다시 띄움(--once). 옛 파일 남은 줄 → 새 파일, 빠짐·중복 없음
+        self.write(lines_bytes([L(1), L(2)]))
+        cfg = self.cfg()
+        self.assertEqual(self.once(cfg).returncode, 0)
+        self.write(lines_bytes([L(3), L(4)]))
+        os.rename(self.ev, rot(self.ev, "20261108-010000"))
+        self.write(lines_bytes([L(5)]))
+        r = self.once(cfg)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.srv.accepted_lines(), [L(1), L(2), L(3), L(4), L(5)])
+        self.assertIn("INFO catchup", r.stderr)
+        self.assertIn("from=evidence.jsonl.20261108-010000", r.stderr)
+        self.assertEqual(self.state_offset(), os.path.getsize(self.ev))
+
+    def test_S41_restart_after_one_rotation_resident(self):
+        # S41: 같은 경우를 상주 전송기로 — 다시 띄운 뒤 회전 파일 → 지금 파일 순, 이어서 새 줄도 따라감
+        self.write(lines_bytes([L(1)]))
+        cfg = self.cfg()
+        p = self.start(cfg)
+        self.assertTrue(wait_until(lambda: self.state_offset() == os.path.getsize(self.ev)), self.log_of(p))
+        self.assertEqual(self.term(p), 0)
+        self.write(lines_bytes([L(2)]))
+        os.rename(self.ev, rot(self.ev, "20261108-010000"))
+        self.write(lines_bytes([L(3)]))
+        p = self.start(cfg)
+        self.assertTrue(wait_until(lambda: self.srv.accepted_lines() == [L(1), L(2), L(3)]), self.log_of(p))
+        self.write(lines_bytes([L(4)]))
+        self.assertTrue(wait_until(lambda: self.srv.accepted_lines() == [L(1), L(2), L(3), L(4)]), self.log_of(p))
+        self.assertEqual(self.term(p), 0)
+        self.assertIn("next=evidence.jsonl", self.log_of(p))
+
+    def test_S42_three_rotations_while_stopped(self):
+        # S42: 멈춘 동안 회전 3번 — 가운데 파일까지 이름 시각 순으로 모두 (같은 시각의 .1은 그 뒤)
+        self.write(lines_bytes([L(1)]))
+        cfg = self.cfg()
+        self.assertEqual(self.once(cfg).returncode, 0)
+        self.write(lines_bytes([L(2)]))
+        os.rename(self.ev, rot(self.ev, "20261108-010000"))
+        self.write(lines_bytes([L(3)]))
+        os.rename(self.ev, rot(self.ev, "20261108-020000"))
+        self.write(lines_bytes([L(4)]))
+        os.rename(self.ev, rot(self.ev, "20261108-020000", 1))
+        self.write(lines_bytes([L(5)]))
+        r = self.once(cfg)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.srv.accepted_lines(), [L(i) for i in range(1, 6)])
+        self.assertIn("files=3", r.stderr)
+
+    def test_S43_state_file_deleted(self):
+        # S43: 상태 파일의 파일을 지움 — saved_ms 앞에 회전된 파일은 보내지 않고, 뒤에 회전된 파일부터. 경고 catchup found=no
+        self.write(lines_bytes([L(1)]))
+        cfg = self.cfg()
+        self.assertEqual(self.once(cfg).returncode, 0)
+        with open(self.state) as f:
+            saved_s = json.load(f)["files"][os.path.abspath(self.ev)]["saved_ms"] / 1000.0
+        self.write(lines_bytes([L(2)]))
+        a = rot(self.ev, ts_of(saved_s + 60))
+        os.rename(self.ev, a)
+        self.write(lines_bytes([L(9)]), path=rot(self.ev, ts_of(saved_s - 3600)))  # saved_ms 앞 — 이미 보낸 옛 파일
+        self.write(lines_bytes([L(3)]), path=rot(self.ev, ts_of(saved_s + 120)))
+        self.write(lines_bytes([L(4)]))
+        # 상태 파일의 파일이 없어짐(손으로 지움). 다른 파일을 다 만든 뒤에 지운다 — 먼저 지우면 새 파일이 그 inode 번호를 다시
+        # 받아 '찾은' 것이 된다(19_ §4.5 ⑨ 한계)
+        os.remove(a)
+        r = self.once(cfg)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.srv.accepted_lines(), [L(1), L(3), L(4)])
+        self.assertIn("WARN catchup", r.stderr)
+        self.assertIn("found=no", r.stderr)
+
+    def test_S44_names_outside_rule(self):
+        # S44: 규칙 밖 이름(.old·.bak)은 회전 파일이 아님 — 읽지 않고 지금처럼 지금 파일 처음부터, 경고 rotate
+        self.write(lines_bytes([L(1)]))
+        cfg = self.cfg()
+        self.assertEqual(self.once(cfg).returncode, 0)
+        self.write(lines_bytes([L(2)]))
+        os.rename(self.ev, self.ev + ".old")
+        self.write(lines_bytes([L(8)]), path=self.ev + ".bak")
+        self.write(lines_bytes([L(3)]), path=self.ev + ".20261108-01")  # 시각 모양이 아님
+        self.write(lines_bytes([L(4)]))
+        r = self.once(cfg)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.srv.accepted_lines(), [L(1), L(4)])
+        self.assertIn("WARN rotate", r.stderr)
+        self.assertNotIn("catchup", r.stderr)
+
+    def test_S45_no_state_ignores_rotated(self):
+        # S45: 상태 파일 없음 + 회전 파일 있음 — 회전 파일은 보지 않고 start_at대로 지금 파일만
+        self.write(lines_bytes([L(1)]), path=rot(self.ev, "20261108-010000"))
+        self.write(lines_bytes([L(2)]))
+        r = self.once(self.cfg())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.srv.accepted_lines(), [L(2)])
+
+    def test_S46_rotations_while_lagging(self):
+        # S46: 상주 전송기가 서버를 못 닿는 동안 회전 2번 → 서버 회복. 가운데 파일까지 순서대로 모두 (I-01 P8 — 그전에는 건너뜀)
+        self.write(lines_bytes([L(1)]))
+        port = free_port()
+        later = self.server(port=port, start=False)
+        p = self.start(self.cfg(url=f"https://127.0.0.1:{port}/ingest"))
+        self.assertTrue(wait_until(lambda: "reason=conn_refused" in self.log_of(p)), self.log_of(p))
+        self.write(lines_bytes([L(2)]))
+        os.rename(self.ev, rot(self.ev, "20261108-010000"))
+        self.write(lines_bytes([L(3)]))
+        os.rename(self.ev, rot(self.ev, "20261108-020000"))
+        self.write(lines_bytes([L(4)]))
+        later.start()
+        self.assertTrue(wait_until(lambda: later.accepted_lines() == [L(1), L(2), L(3), L(4)]), self.log_of(p))
+        self.write(lines_bytes([L(5)]))
+        self.assertTrue(wait_until(lambda: later.accepted_lines() == [L(i) for i in range(1, 6)]), self.log_of(p))
+        self.assertEqual(self.term(p), 0)
+        self.assertIn("next=evidence.jsonl.20261108-020000", self.log_of(p))
+
+
+class RotationInput(InputBase):
+    def _sent_to(self):
+        """상태 파일에 남은 '보낸 칸' — (session, cell) → 마지막으로 받은 칸 t0 (24_ §4.3)."""
+        try:
+            with open(self.state) as f:
+                e = json.load(f)["files"][os.path.abspath(self.inp)]
+        except (FileNotFoundError, KeyError, ValueError):
+            return {}
+        return {(x[0], x[1]): x[2] for x in e.get("agg", {}).get("closed", [])}
+
+    def _wait_saved(self, t0, p, cells=(1, 2)):
+        # 서버가 받은 것만 보면 전송기가 200을 처리하기 전에 멈출 수 있다 — 상태 파일에 저장된 뒤 멈춘다
+        self.assertTrue(wait_until(lambda: all(self._sent_to().get((SESSION, c), -1) >= t0 for c in cells)),
+                        self.log_of(p))
+
+    def _cut_index(self, lines, slot, cell=1):
+        return next(i for i, x in enumerate(lines)
+                    if json.loads(x).get("cell_id") == cell and json.loads(x).get("t_start_ms") == T0 + slot * 100)
+
+    def _assert_complete_once(self, srv, kpms, p=None):
+        got = agg_lines(srv)
+        want = expect_agg(kpms, 1000)
+        self.assertEqual(sorted(got), sorted(want), self.log_of(p) if p else "")
+        for k, v in got.items():
+            self.assertEqual(v, [want[k]], k)  # 칸마다 온전한 줄 하나 — 잘린 반쪽 줄이나 다시 간 줄 없음
+
+    def test_S47_input_restart_across_rotations(self):
+        # S47: input 파일 — 열린 칸이 있을 때 멈추고, 멈춘 동안 칸 중간에서 회전 2번, 다시 띄움(--once).
+        #      원본이 빠지지 않고, 칸마다 온전한 묶은 줄이 한 번만 감
+        lines, kpms = gen_stream(6, cells=(1, 2))
+        c1, c2, c3 = (self._cut_index(lines, s) for s in (15, 33, 47))
+        self.write_in(lines[:c1], "wb")
+        cfg = self.icfg()
+        p = self.start(cfg)
+        self._wait_saved(T0, p)
+        self.assertEqual(self.term(p), 0)
+        self.write_in(lines[c1:c2])
+        os.rename(self.inp, rot(self.inp, "20261108-010000"))
+        self.write_in(lines[c2:c3])
+        os.rename(self.inp, rot(self.inp, "20261108-020000"))
+        self.write_in(lines[c3:])
+        r = self.once(cfg)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self._assert_complete_once(self.srv, kpms)
+        self.assertNotIn("agg_late", r.stderr)
+
+    def test_S48_bucket_across_rotation_live(self):
+        # S48: 상주 전송기 — 3초(여기서는 1초) 칸 하나가 회전 경계에 걸침. 칸이 두 파일의 줄을 모두 넣은 줄 하나로 한 번만 감,
+        #      agg_late 없음 (I-01 P9 — 그전에는 옛 파일 쪽 줄만으로 가고 새 파일 쪽 줄은 버려짐)
+        lines, kpms = gen_stream(4, cells=(1, 2))
+        c = self._cut_index(lines, 15)
+        self.write_in(lines[:c], "wb")
+        cfg = self.icfg()
+        p = self.start(cfg)
+        self._wait_saved(T0, p)
+        os.rename(self.inp, rot(self.inp, "20261108-010000"))
+        self.write_in(lines[c:])
+        self._wait_saved(T0 + 2000, p)  # 경계에 걸친 칸(T0 + 1000)과 그다음 칸까지 받음 — 이어 온 칸이 다 가 옛 파일 묶임이 풀림
+        self.assertEqual(self.term(p), 0)
+        r = self.once(cfg)  # 마지막 열린 칸을 닫아 보낸다
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self._assert_complete_once(self.srv, kpms, p)
+        self.assertNotIn("agg_late", self.log_of(p) + r.stderr)
+
+    def test_S48_restart_while_carrying(self):
+        # S48: 칸을 다음 파일로 이어 가는 동안 멈춤 — 저장 위치는 옛 파일(회전 파일) 쪽, 열린 칸의 첫 줄 앞.
+        #      다시 띄우면 옛 파일을 찾아 그 칸을 다시 만들고, 칸마다 온전한 줄이 한 번만 감
+        lines, kpms = gen_stream(4, cells=(1, 2))
+        offs, pos = [], 0
+        for x in lines:
+            offs.append(pos)
+            pos += len(x) + 1
+        c = self._cut_index(lines, 15)
+        c2 = self._cut_index(lines, 18)
+        self.write_in(lines[:c], "wb")
+        cfg = self.icfg()
+        p = self.start(cfg)
+        self._wait_saved(T0, p)
+        a = rot(self.inp, "20261108-010000")
+        os.rename(self.inp, a)
+        self.write_in(lines[c:c2])
+        self.assertTrue(wait_until(lambda: "WARN rotate" in self.log_of(p)), self.log_of(p))
+        time.sleep(0.5)
+        self.assertEqual(self.term(p), 0)
+        with open(self.state) as f:
+            e = json.load(f)["files"][os.path.abspath(self.inp)]
+        st = os.stat(a)
+        self.assertEqual((e["dev"], e["ino"]), (st.st_dev, st.st_ino))
+        first_open = min(offs[i] for i, x in enumerate(lines[:c]) if json.loads(x).get("t_start_ms", 0) >= T0 + 1000)
+        self.assertLessEqual(e["offset"], first_open)
+        self.write_in(lines[c2:])
+        r = self.once(cfg)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self._assert_complete_once(self.srv, kpms)
+        self.assertIn("INFO catchup", r.stderr)
 
 if __name__ == "__main__":
     unittest.main(argv=[sys.argv[0]], verbosity=2)

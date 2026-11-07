@@ -7,7 +7,8 @@
 3) 소켓: detector --socket ← mock_producer.py, 결과가 재생과 같고 SIGTERM 뒤 소켓 파일이 지워진다
 4) 사용법 오류 → 2, 설정 오류 → 1, 이미 떠 있는 엔진이 있으면 → 1
 5) 2단계 설정 (10/29 이슈 #33): 저장소 설정 파일(2단계 키는 기본값)이면 WARN 없이 기본값과 같은 결과, 2단계 키가
-   허용 범위를 벗어나면 → 1
+   허용 범위를 벗어나면 → 1. RT-T12 (29_ §2.6, 이슈 #102): 저장소 설정은 회전을 켜지만 재생 모드는 회전하지 않는다 — 회전 파일
+   없음, 증거가 기본값 실행과 바이트 동일, 'rotation off in replay' 한 번
 6) 입력 침묵 T25·U-T31 (3_ §8·§9, 14_ §6.2·§10 — 10/29 Q-45 해결, 이슈 #50): input_silent_ms 1,000(하한)으로 띄운 소켓 모드에
    mock_producer가 RAISE 칸까지 보낸 뒤 2 s 멈추면 진단 input_silent 1회와 END reason=input_silent(t = 마지막 칸), 재개 뒤 세션 유지
    (session_reset·foreign_session 없음)와 이어지는 판정. 같은 파일을 --replay로 돌리면 END 없음. 1단계(T05)·2단계(L3-01-O) 각 1회
@@ -116,11 +117,20 @@ repo_cfg["evidence"]["out_path"] = os.path.join(TMP, "repo_cfg_evidence.jsonl")
 repo_cfg_path = os.path.join(TMP, "repo_cfg.json")
 with open(repo_cfg_path, "w") as f:
     json.dump(repo_cfg, f)
+if os.path.exists(repo_cfg["evidence"]["out_path"]):
+    os.remove(repo_cfg["evidence"]["out_path"])
 r = replay("T05_공격종료", cfg=repo_cfg_path)
-default_cfg, _ = config("stage2_defaults")
+default_cfg, default_ev = config("stage2_defaults")
 check(r.returncode == 0, f"repo config exit {r.returncode}: {r.stderr}")
 check(" WARN " not in r.stderr, f"repo config warnings: {r.stderr}")
-check(alerts(r.stdout) == alerts(replay("T05_공격종료", cfg=default_cfg).stdout), "repo config alerts differ from defaults")
+dflt = replay("T05_공격종료", cfg=default_cfg)
+check(alerts(r.stdout) == alerts(dflt.stdout), "repo config alerts differ from defaults")
+# RT-T12 (29_ §2.6): 재생 모드는 설정의 회전을 끈다 — 알림 한 번, 회전 파일 없음, 증거 바이트 동일
+check(r.stderr.count("rotation off in replay") == 1 and "rotation off in replay" not in dflt.stderr,
+      f"RT-T12 replay notice: {r.stderr[-400:]}")
+with open(repo_cfg["evidence"]["out_path"], "rb") as f1, open(default_ev, "rb") as f2:
+    check(f1.read() == f2.read(), "RT-T12: repo config evidence differs from defaults")
+check(not [n for n in os.listdir(TMP) if n.startswith("repo_cfg_evidence.jsonl.")], "RT-T12: no rotated evidence in replay")
 for name, text, key in [("bad_l3_21", '{"rules":{"L3-21":{"reg_repeat":1}}}', "rules.L3-21.reg_repeat"),
                         ("bad_ue_table", '{"ue_table":{"max_ues":50}}', "ue_table.max_ues")]:
     p = os.path.join(TMP, name + ".json")

@@ -5,6 +5,7 @@
 // 소켓 모드는 벽시계로 입력 침묵도 감시한다 — 마지막 kpm2 뒤 input_silent_ms 동안 kpm2가 없으면 진행 중 경보 END (3_ §8, 이슈 #50)
 // 스레드 B(EvidenceSink): 큐에서 꺼내 증거 파일에 쓰기 (3_ §7.1 동시성 모델)
 // 스레드 C(InputRecorder, input_record.path를 줄 때만): 받은 입력 줄을 그대로 기록 파일에 쓰기 — 상시 KPM 전송용 (24_ §3)
+// B·C는 쓰기 직전에 파일을 스스로 회전한다(설정 rotate_s·rotate_max_bytes, 소켓 모드만). 그 사건의 로그는 A가 낸다 (29_ §2)
 #include "detect/config.h"
 #include "detect/engine.h"
 #include "detect/evidence.h"
@@ -42,6 +43,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <vector>
 
 using namespace detect;
 
@@ -162,6 +164,7 @@ int main(int argc, char** argv) {
     cfg = cr.config;
   }
   if (args.socket_given) cfg.socket_path = args.socket_path;  // --socket이 설정보다 우선 (결정 G3)
+  const bool replay_mode = !args.replay_path.empty();
 
   // 입력 기록 파일이 증거 파일과 같으면 설정 오류 (24_ §3.1) — 두 스레드가 한 파일에 쓰지 않게. 탐지 엔진을 띄운 폴더 기준
   // 절대 경로로 바꿔 비교한다(파일이 아직 없어도 되게 — 심볼릭 링크는 풀지 않음). evidence.mode가 off여도 오류로 본다
@@ -277,49 +280,91 @@ int main(int argc, char** argv) {
   Engine engine(scfg, cfg.max_line_bytes, cfg.ue_table);
   for (const RuleEntry& e : rule_entries) e.add(engine);  // 등록 표 순서대로 (위 — 1 → 2 → 3 → 4단계)
 
+  // 출력 파일 회전 (29_ §2 — 11/08 이슈 #102): 설정의 rotate_s·rotate_max_bytes를 쓰기 스레드 B·C에 넘긴다. 재생 모드는 주기·크기
+  // 회전과 쓰기 오류 뒤 재개를 끈다 — 재생은 결정적이어야 하고 시험이 출력을 바이트로 비교한다 (29_ §2.6). 기동 때 반쪽 줄
+  // 처리(§2.4)는 회전 키와 관계없이 회전 파일이 늘 한다
+  RotateOptions ev_rot, ir_rot;
+  if (!replay_mode) {
+    ev_rot.rotate_s = cfg.evidence.rotate_s;
+    ev_rot.rotate_max_bytes = cfg.evidence.rotate_max_bytes;
+    ir_rot.rotate_s = cfg.input_record.rotate_s;
+    ir_rot.rotate_max_bytes = cfg.input_record.rotate_max_bytes;
+  }
+
+  // 회전·쓰기 오류 사건 로그 (29_ §2.7·§7): 쓰기 스레드(B·C)는 사건을 남기기만 하고 스레드 A가 여기서 낸다 — 두 스레드가 표준
+  // 오류에 함께 쓰면 줄이 섞인다. name은 로그 머리(evidence·input_record), what은 오류 로그 괄호 안의 대상(evidence·recording).
+  // 회전 끔이면 쓰기 오류는 그 실행 동안 멈춤이라 로그가 지금 그대로다('… stopped' — 3_ §7.1·24_ §3.4). 재개 시도(쓰기 오류 뒤)의
+  // 회전 실패는 지금 파일에 쓰지 않으므로 괄호를 '… paused'로 낸다. 쓰기 오류는 멈출 때 한 번, 재개는 실제로 다시 써졌을 때 한 번
+  // (11/08 이슈 #102). 회전하려는데 지금 파일이 없어 새로 열었으면 경고 '…_rotate_missing'(회전 수에 세지 않음, 29_ §2.2)
+  auto log_rotate_events = [](const std::string& name, const std::string& what, const std::vector<RotateEvent>& evs) {
+    for (const RotateEvent& e : evs) {
+      switch (e.kind) {
+        case RotateEvent::Kind::Rotate:
+          log_err("INFO", name + "_rotate to=" + e.to + " reason=" + e.reason + " bytes=" + std::to_string(e.bytes));
+          break;
+        case RotateEvent::Kind::RotateFailed:
+          log_err("WARN", name + "_rotate_failed step=" + e.step + " detail=\"" + e.detail + "\"" +
+                              (e.paused ? " (" + what + " paused, retry in 60 s)"
+                                        : std::string(" (keep writing current file, retry in 60 s)")));
+          break;
+        case RotateEvent::Kind::WriteError:
+          log_err("ERROR", name + "_error detail=\"" + e.detail + "\" (" + what +
+                               (e.retry ? " paused, retry every 60 s)" : " stopped)"));
+          break;
+        case RotateEvent::Kind::Reopen:
+          log_err("INFO", name + "_reopen to=" + e.to + " dropped=" + std::to_string(e.dropped));
+          break;
+        case RotateEvent::Kind::NotRegular:
+          log_err("WARN", name + "_rotate_off path=" + e.path + " reason=not_regular_file");
+          break;
+        case RotateEvent::Kind::Missing:
+          log_err("WARN", name + "_rotate_missing path=" + e.path + " (current file was removed - opened a new one)");
+          break;
+      }
+    }
+  };
+
   EvidenceQueue queue(cfg.evidence.queue_max);
   EvidenceRecorder recorder(cfg.evidence, queue, cfg.alert);
-  EvidenceSink sink(queue, cfg.evidence.out_path);
+  EvidenceSink sink(queue, cfg.evidence.out_path, ev_rot);
+  // 증거 쓰기 오류 (3_ §7.1 — 11/05 W-33, 이슈 #92)와 회전 (29_ §7 — 11/08 이슈 #102): 스레드 B가 남긴 사건을 스레드 A가 읽어
+  // 로그로 낸다. 쓰기 오류는 오류가 날 때마다 한 번(회전 끔이면 그 실행에 한 번). 판정은 계속된다
+  auto check_sink_error = [&]() {
+    if (sink.has_events()) log_rotate_events("evidence", "evidence", sink.take_events());
+  };
   // 전달 스레드는 입력을 연 뒤에 띄운다 — 기동에 실패한 실행이 증거 파일을 건드리지 않게
   auto start_sink = [&]() {
     if (cfg.evidence.mode == EvidenceMode::Off) return true;
-    if (sink.start()) return true;
+    if (sink.start()) {
+      check_sink_error();  // 일반 파일이 아니라 회전을 끈 경고는 시작할 때 (29_ §2.1)
+      return true;
+    }
     log_err("ERROR", "cannot open evidence file " + cfg.evidence.out_path + ": " + sink.error());
     return false;
-  };
-  // 증거 쓰기 오류 (3_ §7.1 — 11/05 W-33, 이슈 #92): 스레드 B가 남긴 표시를 스레드 A가 읽어 한 번만 로그. 판정은 계속된다
-  bool sink_error_logged = false;
-  auto check_sink_error = [&]() {
-    if (!sink_error_logged && sink.failed()) {
-      sink_error_logged = true;
-      log_err("ERROR", "evidence_error detail=\"" + sink.error() + "\" (evidence stopped)");
-    }
   };
   // 입력 원본 기록 (24_ §3): input_record.path를 줄 때만 만든다 — 꺼져 있으면 큐·스레드가 없어 지금 동작과 같다.
   // 증거 기록기 다음에 연다 — 기동에 실패한 실행이 기록 파일을 건드리지 않게. 열지 못하면 종료 코드 1 (24_ §3.3)
   std::unique_ptr<InputRecorder> input_rec;
   if (cfg.input_record.path)
-    input_rec = std::make_unique<InputRecorder>(*cfg.input_record.path, cfg.input_record.queue_max_bytes);
+    input_rec = std::make_unique<InputRecorder>(*cfg.input_record.path, cfg.input_record.queue_max_bytes, ir_rot);
+  // 입력 기록 로그 (24_ §3.4): 스레드 A만 낸다(스레드 C와 줄이 섞이지 않게). 큐 넘침은 버리기 시작할 때 한 번·다시 넣을 때
+  // 한 번(그사이 버린 수), 쓰기 오류는 오류마다 한 번(회전 끔이면 그 실행에 한 번)·회전·재개(29_ §7) — 스레드 C가 남긴 사건을
+  // 다음 줄·소켓 대기마다·끝낼 때 읽는다
+  bool rec_dropping = false;
+  std::size_t rec_streak = 0;
+  auto check_input_rec_error = [&]() {
+    if (input_rec && input_rec->has_events()) log_rotate_events("input_record", "recording", input_rec->take_events());
+  };
   auto start_input_rec = [&]() {
     if (!input_rec) return true;
     if (input_rec->start()) {
       log_err("INFO", "input_record path=" + input_rec->path() +
                           " queue_max_bytes=" + std::to_string(cfg.input_record.queue_max_bytes));
+      check_input_rec_error();  // 일반 파일이 아니라 회전을 끈 경고는 시작할 때 (29_ §2.1)
       return true;
     }
     log_err("ERROR", "cannot open input record file " + input_rec->path() + ": " + input_rec->error());
     return false;
-  };
-  // 입력 기록 로그 (24_ §3.4): 스레드 A만 낸다(스레드 C와 줄이 섞이지 않게). 큐 넘침은 버리기 시작할 때 한 번·다시 넣을 때
-  // 한 번(그사이 버린 수), 쓰기 오류는 한 번 — 스레드 C가 남긴 표시를 다음 줄·소켓 대기마다·끝낼 때 읽는다
-  bool rec_dropping = false;
-  std::size_t rec_streak = 0;
-  bool rec_error_logged = false;
-  auto check_input_rec_error = [&]() {
-    if (input_rec && !rec_error_logged && input_rec->failed()) {
-      rec_error_logged = true;
-      log_err("ERROR", "input_record_error detail=\"" + input_rec->error() + "\" (recording stopped)");
-    }
   };
   // 받은 줄을 엔진에 넣기 직전에 기록한다 — 엔진이 받아들이는지(저장·버림)와 관계없이 모두. 그래야 기록 파일을 재생하면
   // 같은 판정·진단이 나온다 (24_ §3.2)
@@ -371,9 +416,15 @@ int main(int argc, char** argv) {
   };
 
   int rc = 0;
-  if (!args.replay_path.empty()) {
+  if (replay_mode) {
     log_err("INFO", "replay " + args.replay_path +
                         (args.speed > 0 ? " speed=" + std::to_string(args.speed) : std::string(" speed=max")));
+    // 재생 모드에서는 주기·크기 회전을 하지 않는다 — 설정에 켜져 있으면 시작할 때 한 번 알린다 (29_ §2.6·§7)
+    const bool ev_rot_cfg =
+        cfg.evidence.mode != EvidenceMode::Off && (cfg.evidence.rotate_s > 0 || cfg.evidence.rotate_max_bytes > 0);
+    const bool ir_rot_cfg =
+        cfg.input_record.path && (cfg.input_record.rotate_s > 0 || cfg.input_record.rotate_max_bytes > 0);
+    if (ev_rot_cfg || ir_rot_cfg) log_err("INFO", "rotation off in replay");
     ReplayOptions ro;
     ro.speed = args.speed;
     ro.max_line_bytes = cfg.max_line_bytes;
@@ -439,15 +490,17 @@ int main(int argc, char** argv) {
   // 종료 (결정 G7): 전달 스레드가 큐에 남은 레코드를 다 쓴 뒤 끝낸다
   sink.stop();
   check_sink_error();
+  // 끝 로그의 rotated = 이 실행의 회전 수(모든 이유 — 29_ §7)
   if (cfg.evidence.mode != EvidenceMode::Off && rc == 0)
     log_err("INFO", "evidence written=" + std::to_string(sink.written()) + " dropped=" + std::to_string(sink.dropped()) +
-                        " to " + cfg.evidence.out_path);
+                        " rotated=" + std::to_string(sink.rotated()) + " to " + cfg.evidence.out_path);
   // 입력 기록 (24_ §3.3·§3.4): 입력을 닫은 뒤 큐에 남은 줄을 다 쓰고 끝낸다. 끝 로그는 오류 종료(rc 1)에도 낸다
   if (input_rec) {
     input_rec->stop();
     check_input_rec_error();
     log_err("INFO", "input_record written=" + std::to_string(input_rec->written()) +
-                        " dropped=" + std::to_string(input_rec->dropped()) + " to " + input_rec->path());
+                        " dropped=" + std::to_string(input_rec->dropped()) +
+                        " rotated=" + std::to_string(input_rec->rotated()) + " to " + input_rec->path());
   }
   return rc;
 }

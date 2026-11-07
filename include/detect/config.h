@@ -41,6 +41,10 @@ struct EvidenceConfig {
   std::size_t post_slots = 10;             // post_slots — CLEAR 뒤 더 낼 칸 수
   std::size_t queue_max = 4096;            // queue_max — 큐 안 evidence 수 상한
   std::string out_path = "evidence.jsonl"; // out_path — 대시보드 전달 방식이 정해지기 전까지 쓰는 파일 (Q-19)
+  // 출력 파일 회전·보관 (29_ §6 — 11/08 이슈 #102). 코드 기본값은 모두 0(끔) — 설정 없이 띄우면 지금과 같다. 저장소 설정에서 켠다
+  int64_t rotate_s = 0;            // rotate_s — 회전 주기(초), 0 또는 60~86,400
+  uint64_t rotate_max_bytes = 0;   // rotate_max_bytes — 이 크기를 넘으면 주기 전이라도 회전, 0 또는 1,048,576~4,294,967,296
+  int64_t keep_s = 0;              // keep_s — 회전 파일 보관 기간(초), 0 또는 3,600~31,536,000. 정리 도구가 읽음 — 탐지 엔진은 검사만
 };
 
 // UE 상태표 (14_ §9 ue_table.*). 설정 파일에 키가 없으면 이 기본값을 쓴다 (4_ §1.2)
@@ -163,6 +167,12 @@ struct KnownRegBurstConfig {
 struct InputRecordConfig {
   std::optional<std::string> path;              // path — 기록 파일. null이면 끔. 상대 경로는 탐지 엔진을 띄운 폴더 기준
   std::size_t queue_max_bytes = 8388608;        // queue_max_bytes — 쓰기를 기다리는 줄의 바이트 합 상한(줄 + \n), 65,536~67,108,864
+  // 출력 파일 회전·보관 (29_ §6 — 11/08 이슈 #102). 범위는 evidence와 같다. 코드 기본값은 모두 0(끔)
+  int64_t rotate_s = 0;            // rotate_s — 회전 주기(초)
+  uint64_t rotate_max_bytes = 0;   // rotate_max_bytes — 크기 상한(바이트)
+  int64_t keep_s = 0;              // keep_s — 회전 파일 보관 기간(초). 정리 도구가 읽음
+  // min_free_bytes — 디스크 여유 하한, 0 또는 104,857,600~1,099,511,627,776. 정리 도구가 읽음(29_ §3.2) — 탐지 엔진은 검사만
+  uint64_t min_free_bytes = 0;
 };
 
 // 설정 파일 전체 (4_ §1.2). rules는 룰 ID → 그 룰의 설정 객체(JSON 문자열)다 — 공통 파서는 넘기기만 하고

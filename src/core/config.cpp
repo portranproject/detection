@@ -50,6 +50,26 @@ void read_int_in(const json& obj, const char* key, T& out, int64_t min, int64_t 
   out = static_cast<T>(x);
 }
 
+// 0(끔) 또는 허용 범위 [min, max]인 정수 — 출력 파일 회전·보관 키 (29_ §6 — 11/08 이슈 #102)
+template <typename T>
+void read_off_or_in(const json& obj, const char* key, T& out, int64_t min, int64_t max, const std::string& where) {
+  const json* v = find(obj, key);
+  if (!v) return;
+  if (!v->is_number_integer()) throw ConfigErr(where + key + ": not an integer");
+  const int64_t x = v->get<int64_t>();
+  if (x != 0 && (x < min || x > max))
+    throw ConfigErr(where + key + ": out of range (0 or [" + std::to_string(min) + ", " + std::to_string(max) + "])");
+  out = static_cast<T>(x);
+}
+
+// 회전·보관 키 공통 (29_ §6): evidence·input_record 둘 다 같은 범위. keep_s는 정리 도구가 쓰고 탐지 엔진은 타입·범위만 본다
+template <typename C>
+void read_rotate_keys(const json& e, C& c, const std::string& w) {
+  read_off_or_in(e, "rotate_s", c.rotate_s, 60, 86400, w);
+  read_off_or_in(e, "rotate_max_bytes", c.rotate_max_bytes, 1048576, 4294967296LL, w);
+  read_off_or_in(e, "keep_s", c.keep_s, 3600, 31536000, w);
+}
+
 // 허용 범위 [min, max]가 있는 실수 (ue_table.ghost_k — 14_ §9)
 void read_real_in(const json& obj, const char* key, double& out, double min, double max, const std::string& where) {
   const json* v = find(obj, key);
@@ -296,7 +316,8 @@ void parse_alert(const json& e, AlertConfig& c, std::vector<std::string>& warnin
 void parse_evidence(const json& e, EvidenceConfig& c, std::vector<std::string>& warnings) {
   const std::string w = "evidence.";
   if (!e.is_object()) throw ConfigErr("evidence: not an object");
-  warn_unknown(e, {"mode", "pre_slots", "post_slots", "queue_max", "out_path"}, w, warnings);
+  warn_unknown(e, {"mode", "pre_slots", "post_slots", "queue_max", "out_path", "rotate_s", "rotate_max_bytes", "keep_s"}, w,
+               warnings);
   if (const json* m = find(e, "mode")) {
     if (!m->is_string()) throw ConfigErr("evidence.mode: not a string");
     const std::string s = m->get<std::string>();
@@ -309,6 +330,7 @@ void parse_evidence(const json& e, EvidenceConfig& c, std::vector<std::string>& 
   read_int(e, "post_slots", c.post_slots, 0, w);
   read_int(e, "queue_max", c.queue_max, 0, w);
   read_string(e, "out_path", c.out_path, w);
+  read_rotate_keys(e, c, w);  // 출력 파일 회전·보관 (29_ §6 — 11/08 이슈 #102)
 }
 
 // input_record (24_ §3.1): 받은 입력 줄을 남길 파일. path는 null(끔) 또는 빈 문자열이 아닌 경로, 큐 상한은 범위 검사.
@@ -316,7 +338,7 @@ void parse_evidence(const json& e, EvidenceConfig& c, std::vector<std::string>& 
 void parse_input_record(const json& e, InputRecordConfig& c, std::vector<std::string>& warnings) {
   const std::string w = "input_record.";
   if (!e.is_object()) throw ConfigErr("input_record: not an object");
-  warn_unknown(e, {"path", "queue_max_bytes"}, w, warnings);
+  warn_unknown(e, {"path", "queue_max_bytes", "rotate_s", "rotate_max_bytes", "keep_s", "min_free_bytes"}, w, warnings);
   if (const json* p = find(e, "path")) {
     if (p->is_null()) {
       c.path.reset();
@@ -327,6 +349,9 @@ void parse_input_record(const json& e, InputRecordConfig& c, std::vector<std::st
     }
   }
   read_int_in(e, "queue_max_bytes", c.queue_max_bytes, 65536, 67108864, w);
+  // 출력 파일 회전·보관 (29_ §6 — 11/08 이슈 #102). min_free_bytes는 정리 도구의 디스크 여유 하한 — 탐지 엔진은 타입·범위만 본다
+  read_rotate_keys(e, c, w);
+  read_off_or_in(e, "min_free_bytes", c.min_free_bytes, 104857600, 1099511627776LL, w);
 }
 
 }  // namespace

@@ -9,6 +9,8 @@
 - IR-T6: 형식 오류·hello 전 kpm2·seq 역행·빈 줄도 기록됨
 - IR-T7: 이어 쓰기 / IR-T8: 열기 실패 → 1 / IR-T9: 설정 오류 → 1, 모르는 키 → 경고 / IR-T10: /dev/full / IR-T11: 끔(기본)
 - IR-T13: 소켓 모드에서 보낸 직후 SIGTERM — 받은 줄이 모두 기록된 뒤 끝남(written = 파일 줄 수, dropped 0)
+- RT-T12 (29_ §2.6·§8.1, 이슈 #102): 재생 모드 + 회전 켠 설정 — 회전 파일 없음, 출력·기록이 회전 끈 실행과 바이트 동일
+- RT-T13 (29_ §8.1, 이슈 #102): 소켓 모드 + 크기 상한 1 MiB — 회전 파일 여러 개, 회전 파일(이름 시각 순) + 지금 파일 = 받은 줄(바이트)
 표준 라이브러리만 쓴다.
 """
 
@@ -77,8 +79,34 @@ def rec_logs(stderr):
 
 
 def end_log(stderr):
-    m = re.search(r"input_record written=(\d+) dropped=(\d+) to ", stderr)
+    m = re.search(r"input_record written=(\d+) dropped=(\d+) rotated=\d+ to ", stderr)
     return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def end_rotated(stderr, name):
+    """끝 로그의 rotated=N (29_ §7) — name은 evidence 또는 input_record."""
+    m = re.search(r"INFO " + name + r" written=\d+ dropped=\d+ rotated=(\d+) to ", stderr)
+    return int(m.group(1)) if m else None
+
+
+def rotated_files(path):
+    """회전 파일을 이름 시각 → 번호 순(없는 것이 먼저)으로 (29_ §2.3 이름 규칙)."""
+    d, base = os.path.split(path)
+    rx = re.compile(re.escape(base) + r"\.(\d{8}-\d{6})(?:\.(\d{1,2}))?")
+    found = []
+    for n in os.listdir(d):
+        m = rx.fullmatch(n)
+        if m:
+            found.append((m.group(1), int(m.group(2) or 0), os.path.join(d, n)))
+    return [f[2] for f in sorted(found)]
+
+
+def fresh_dir(name):
+    d = os.path.join(TMP, name)
+    os.makedirs(d, exist_ok=True)
+    for n in os.listdir(d):
+        os.remove(os.path.join(d, n))
+    return d
 
 
 EV_ON, EV_OFF, REC = (os.path.join(TMP, n) for n in ("ev_on.jsonl", "ev_off.jsonl", "rec.jsonl"))
@@ -268,6 +296,96 @@ n13 = rec.count(b"\n")
 check(rc == 0, f"IR-T13: exit {rc}")
 check(rec.endswith(b"\n") and read(src).startswith(rec), "IR-T13: record must be a line prefix of the sent file")
 check(end_log(err) == (n13, 0), f"IR-T13: end log {end_log(err)} vs {n13} lines")
+
+# RT-T12 (29_ §2.6·§8.1) — 재생 모드 + 회전 켠 설정(주기 60 s·크기 1 MiB): 재생 입력이 1 MiB를 넘어도 회전하지 않는다. 기록·stdout·
+# 증거가 회전 끈 실행과 바이트 동일, 'rotation off in replay' 한 번, 끝 로그 rotated=0
+big_srcs = [os.path.join(DATA, "stage4_yellow", n) for n in ("SAN04_AN-04_지속공격_CLEAR.jsonl", "SAN08_AN-08_지속공격_CLEAR.jsonl")]
+big = os.path.join(TMP, "rt12_big.jsonl")
+with open(big, "wb") as f:
+    for p in big_srcs:
+        f.write(read(p))
+check(len(read(big)) > 2 * 1048576, "RT-T12: replay input must exceed the size cap")
+d12 = fresh_dir("rt12")
+ev12, rec12 = os.path.join(d12, "evidence.jsonl"), os.path.join(d12, "input.jsonl")
+rot_cfg = {"rotate_s": 60, "rotate_max_bytes": 1048576}
+cfg12 = write_cfg("rt12", {"evidence": dict({"out_path": ev12}, **rot_cfg), "input_record": dict({"path": rec12}, **rot_cfg)})
+rm(EV_ON, REC)
+on = run(["--replay", big, "--config", cfg12])
+off = run(["--replay", big, "--config", CFG_ON])
+check(on.returncode == 0 and off.returncode == 0, f"RT-T12: exit {on.returncode}/{off.returncode} {on.stderr[-300:]}")
+check(sorted(os.listdir(d12)) == ["evidence.jsonl", "input.jsonl"], f"RT-T12: files {sorted(os.listdir(d12))}")
+check(read(rec12) == read(REC) == expected_record(read(big)), "RT-T12: record differs")
+check(read(ev12) == read(EV_ON), "RT-T12: evidence differs from rotation-off run")
+check(on.stdout == off.stdout, "RT-T12: stdout differs from rotation-off run")
+check(on.stderr.count("rotation off in replay") == 1 and "rotation off in replay" not in off.stderr,
+      f"RT-T12: replay notice {on.stderr.count('rotation off in replay')}")
+check(end_rotated(on.stderr, "evidence") == 0 and end_rotated(on.stderr, "input_record") == 0,
+      f"RT-T12: end logs {end_rotated(on.stderr, 'evidence')} {end_rotated(on.stderr, 'input_record')}")
+check("_rotate" not in on.stderr, "RT-T12: no rotation logs in replay")
+
+# RT-T13 (29_ §8.1) — 소켓 모드 + 작은 크기 상한(1 MiB): 회전 파일이 여러 개 생기고, 회전 파일(이름 시각 순) + 지금 파일을 이으면
+# 받은 줄과 바이트 동일. 회전 로그 수 = 회전 파일 수 = 끝 로그 rotated. 증거도 이으면 같은 입력의 재생(회전 끔)과 바이트 동일
+srcs13 = [os.path.join(DATA, "stage4_yellow", n) for n in ("SAN04_AN-04_지속공격_CLEAR.jsonl", "SAN08_AN-08_지속공격_CLEAR.jsonl",
+                                                          "SAN07_AN-07_지속공격_CLEAR.jsonl",
+                                                          "SAN04_AN-04_CLEAR뒤다른STMSI_RAISE.jsonl")]
+want13 = b"".join(read(p) for p in srcs13)
+d13 = fresh_dir("rt13")
+ev13, rec13 = os.path.join(d13, "evidence.jsonl"), os.path.join(d13, "input.jsonl")
+cfg13 = write_cfg("rt13", {"evidence": {"out_path": ev13, "rotate_max_bytes": 1048576},
+                           "input_record": {"path": rec13, "rotate_max_bytes": 1048576}})
+# 같은 세션 이름이 다시 오면 줄마다 진단(seq_regress)이 표준 오류로 나온다 — 파이프가 차서 탐지 엔진이 막히지 않게 파일로 받는다
+sock = os.path.join(TMP, "rt13.sock")
+rm(sock)
+out13_path, err13_path = os.path.join(TMP, "rt13.out"), os.path.join(TMP, "rt13.err")
+with open(out13_path, "wb") as fo, open(err13_path, "wb") as fe:
+    det = subprocess.Popen([DET, "--socket", sock, "--config", cfg13], stdout=fo, stderr=fe)
+for _ in range(100):
+    if os.path.exists(sock):
+        break
+    time.sleep(0.05)
+check(os.path.exists(sock), "RT-T13: socket file created")
+for p in srcs13:
+    m = subprocess.run([sys.executable, MOCK, "--socket", sock, "--file", p], capture_output=True, text=True, timeout=120)
+    check(m.returncode == 0, f"RT-T13: mock_producer {p} {m.stderr}")
+
+
+def total13():
+    return sum(os.path.getsize(f) for f in rotated_files(rec13) + [rec13] if os.path.exists(f))
+
+
+end13 = time.monotonic() + 30
+while time.monotonic() < end13 and total13() < len(want13):
+    time.sleep(0.05)
+det.send_signal(signal.SIGTERM)
+rc = det.wait(timeout=30)
+with open(out13_path, encoding="utf-8") as f:
+    out = f.read()
+with open(err13_path, encoding="utf-8") as f:
+    err = f.read()
+check(rc == 0, f"RT-T13: exit {rc} {err[-300:]}")
+rot13 = rotated_files(rec13)
+check(len(rot13) >= 2, f"RT-T13: rotated files {rot13}")
+got13 = b"".join(read(f) for f in rot13) + read(rec13)
+check(got13 == want13, f"RT-T13: concatenated record {len(got13)} != sent {len(want13)} bytes")
+check(all(read(f).endswith(b"\n") for f in rot13), "RT-T13: rotated files must end with a newline")
+rot_logs = re.findall(r"^\S+ INFO input_record_rotate to=(\S+) reason=(\w+) bytes=(\d+)$", err, re.M)
+check(len(rot_logs) == len(rot13) == end_rotated(err, "input_record"),
+      f"RT-T13: rotate logs {len(rot_logs)} files {len(rot13)} end {end_rotated(err, 'input_record')}")
+check([t for t, _, _ in rot_logs] == rot13 and all(r == "size" for _, r, _ in rot_logs),
+      f"RT-T13: rotate logs {rot_logs[:3]}")
+check(all(int(b) == os.path.getsize(t) for t, _, b in rot_logs), "RT-T13: bytes= in log must equal rotated file size")
+check(end_log(err) == (got13.count(b"\n"), 0), f"RT-T13: end log {end_log(err)}")
+ev_rot13 = rotated_files(ev13)
+ev_all13 = b"".join(read(f) for f in ev_rot13) + read(ev13)
+again13 = os.path.join(TMP, "rt13_again.jsonl")
+with open(again13, "wb") as f:
+    f.write(got13)
+rm(EV_OFF)
+r13 = run(["--replay", again13, "--config", CFG_OFF])
+check(r13.returncode == 0 and alerts(r13.stdout) == alerts(out), "RT-T13: alerts differ from replay of the record")
+check(ev_all13 == read(EV_OFF), f"RT-T13: concatenated evidence ({len(ev_rot13)} rotated) differs from replay")
+check(len(re.findall(r"INFO evidence_rotate to=", err)) == len(ev_rot13) == end_rotated(err, "evidence"),
+      f"RT-T13: evidence rotations {len(ev_rot13)} end {end_rotated(err, 'evidence')}")
 
 print("OK" if not failures else f"{len(failures)} failure(s)")
 sys.exit(1 if failures else 0)
