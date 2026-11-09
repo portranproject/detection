@@ -116,7 +116,10 @@ INT_RANGES = {
     "kpm2_close_lag_ms": (100, 60000),  # 24_ §4.1
 }
 
-ENV_RE = re.compile(r"[a-z0-9-]{1,32}")
+# 헤더 X-Env 값 형식 (19_ §3, 이슈 #104) — 대시보드는 '영숫자로 시작, 영숫자·._- 64자 이하'가 아니면 묶음 전체를 400으로
+# 거부하고, 전송기는 400을 받은 묶음을 다시 보내지 않고 넘긴다(19_ §6). 그래서 그 부분집합(소문자·숫자·-, 첫 글자 영숫자,
+# 32자 이하)만 받아, 설정 실수로 모든 묶음이 조용히 버려지지 않게 시작할 때 막는다.
+ENV_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
 
 
 def _is_int(v):
@@ -174,7 +177,7 @@ def load_config(path):
 
     env = val("env")
     if not isinstance(env, str) or not ENV_RE.fullmatch(env):
-        raise ConfigError("env: must match [a-z0-9-]{1,32}")
+        raise ConfigError("env: must match [a-z0-9][a-z0-9-]{0,31}")
     cfg["env"] = env
 
     # 따라 읽을 파일 — evidence 1개 이상(반드시) + input 0~1개. input 항목이 있으면 상시 KPM이 켜진다 (24_ §4.1)
