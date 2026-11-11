@@ -1031,9 +1031,11 @@ class InputTracker(Tracker):
         self.pin = None            # (dev, ino, offset) — 옛 파일에서 이어 온 칸의 첫 줄 앞
         self.pin_keys = set()      # 이어 온 칸 (session, cell, t0) — 모두 받으면(200·400) pin을 푼다
 
-    def _warn_once(self, key, event, **kv):
-        if key not in self.warned:
-            self.warned.add(key)
+    # 같은 경고는 한 번만 낸다 (24_ §4.4). 첫 인자 once_key는 '이미 냈나'를 가르는 키일 뿐이다 — 이름을 key로 두면
+    # agg_unknown_key가 로그 칸 key=…(24_ §4.4)를 kv로 넘길 때 이름이 겹쳐 TypeError로 전송기가 멈췄다(이슈 #106)
+    def _warn_once(self, once_key, event, **kv):
+        if once_key not in self.warned:
+            self.warned.add(once_key)
             log("WARN", event, file=self.path, **kv)
 
     def start(self, entry):
