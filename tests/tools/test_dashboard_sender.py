@@ -1139,6 +1139,32 @@ class InputSending(InputBase):
                                              state_path=os.path.join(self.dir, "other_state.json"))).returncode, 0)
         self.assertEqual(first_of(agg_lines(srv)), expect_agg(kpms, 10000))
 
+    def test_S52_unknown_keys_not_aggregated(self):
+        # S52 (11/11 이슈 #106, 24_ §5.2·§4.4): 모든 원본 kpm2에 모르는 키 — 맨 위 키(분석 엔진이 싣는 inferred 모양)·
+        #      si의 Mean·Max가 아닌 이름·ext의 모르는 이름 — 가 있어도 전송기가 멈추지 않는다. 묶은 줄은 그 키들이 없을 때와
+        #      같고, agg_unknown_key 경고는 이름마다 한 번이며 로그 칸은 key=이다
+        lines, kpms = gen_stream(3)
+        out = []
+        for x in lines:
+            d = json.loads(x)
+            if d["type"] == "kpm2":
+                d["inferred"] = {"RRC.ConnEstabAtt": 0, "RRC.ConnEstabSucc": 0, "RRC.ResumeAtt": None}
+                d["si"]["RRC.ConnSample"] = 1
+                d["ext"]["NewThing"] = 2
+                x = jl(d)
+            out.append(x)
+        self.write_in(out)
+        r = self.once(self.icfg(send_ue_evt=False))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        got = self.srv.accepted_lines()
+        self.assertEqual([x for x in got if b'"agg_ms"' not in x],
+                         [x for x in lines if json.loads(x)["type"] in ("hello", "f1_evt")])
+        self.assertEqual(first_of(agg_lines(self.srv)), expect_agg(kpms, 1000))
+        warns = [w for w in r.stderr.splitlines() if " WARN agg_unknown_key " in w]
+        for k in ("inferred", "si.RRC.ConnSample", "ext.NewThing"):
+            self.assertEqual(sum(1 for w in warns if f" key={k} " in w), 1, r.stderr)
+        self.assertEqual(len(warns), 3, r.stderr)
+
 
 class InputConfig(Base):
     needs_server = False
