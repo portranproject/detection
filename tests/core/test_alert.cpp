@@ -65,13 +65,13 @@ TEST(AlertLog, RaiseLineMatchesSpecExample) {
   e.rule = "L3-01-V";
   e.cell_id = 1;
   e.t = 1792209001200;
-  e.log_fields = {{"A_w", "48"}, {"F_w", "45"}, {"ratio", "0.94"}, {"base", "3.1"}, {"k", "3"},
+  e.log_fields = {{"A_w", "48"}, {"F_w", "45"}, {"ratio", "0.94"}, {"base", "3.1"}, {"sigma", "1.2"}, {"z", "3"},
                   {"theta", "0.5"}, {"f_abs", "10"}, {"uectx", "93/96"}};
   e.severity = Severity::High;
   e.mode = AlertMode::Normal;
   e.candidates = {"L3-11"};
   EXPECT_EQ(format_log_line(e),
-            "ALERT RAISE rule=L3-01-V cell=1 t=1792209001200 A_w=48 F_w=45 ratio=0.94 base=3.1 k=3 theta=0.5 f_abs=10 "
+            "ALERT RAISE rule=L3-01-V cell=1 t=1792209001200 A_w=48 F_w=45 ratio=0.94 base=3.1 sigma=1.2 z=3 theta=0.5 f_abs=10 "
             "uectx=93/96 severity=high mode=normal candidates=L3-11");
 }
 
@@ -99,11 +99,11 @@ TEST(AlertLog, ClearEndUpdateAndDlMissing) {
   d.rule = "L3-01-V";
   d.cell_id = 2;
   d.t = 5;
-  d.log_fields = {{"A_w", "7"}, {"U", "0.86"}, {"base", "0.0"}, {"k", "3"}, {"theta", "0.5"}};
+  d.log_fields = {{"A_w", "7"}, {"U", "0.86"}, {"base", "0.0"}, {"sigma", "0.0"}, {"z", "3"}, {"theta", "0.5"}};
   d.mode = AlertMode::DlMissing;
   d.candidates = {"L3-11"};
   EXPECT_EQ(format_log_line(d),
-            "ALERT RAISE rule=L3-01-V cell=2 t=5 A_w=7 U=0.86 base=0.0 k=3 theta=0.5 severity=medium "
+            "ALERT RAISE rule=L3-01-V cell=2 t=5 A_w=7 U=0.86 base=0.0 sigma=0.0 z=3 theta=0.5 severity=medium "
             "mode=dl_missing candidates=L3-11");
 }
 

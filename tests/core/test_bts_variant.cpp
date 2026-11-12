@@ -108,7 +108,7 @@ TEST(BtsVariant, HoldUntilWindowsFull) {
 
 // A 윈도우는 T_nr(D칸)만큼 과거, F 윈도우는 현재 — 공격 시도 3/칸이 D칸 뒤 NoReply 3/칸 (3_ §3)
 TEST(BtsVariant, RaiseWithShiftedWindowsAndLogValues) {
-  Harness h;
+  Harness h({}, 1000, 96);  // 셀 한도 96 → F_abs = ⌈0.1 × 96⌉ = 10 (3_ §4, 11/12)
   h.slots(10, {0, 0, 0});  // 칸 0..9 조용
   h.slots(10, {3, 0, 0});  // 칸 10..19 공격 시도
   h.slots(4, {3, 0, 3});   // 칸 20..23 NoReply 도착 (D = 10)
@@ -131,11 +131,15 @@ TEST(BtsVariant, RaiseWithShiftedWindowsAndLogValues) {
   // 로그 줄 전체 (3_ §7 순서): 룰이 log_fields로 넣는 근거 값 + 공통 꼬리 severity·mode·candidates (4_ §6.1 #5)
   char base[32];
   std::snprintf(base, sizeof(base), "%.1f", e.values.at("base").get<double>());
+  char sigma[32];
+  std::snprintf(sigma, sizeof(sigma), "%.1f", e.values.at("sigma").get<double>());
   EXPECT_EQ(format_log_line(e), "ALERT RAISE rule=L3-01-V cell=1 t=" + std::to_string(e.t) +
-                                    " A_w=12 F_w=12 ratio=1.00 base=" + base +
-                                    " k=3 theta=0.5 f_abs=10 severity=medium mode=normal candidates=L3-11");
-  // alert 레코드의 자리 (14_ §8.5 옮김 표): k·theta는 실수, f_abs는 normal 모드만, refs는 A·F 윈도우 seq 범위
-  EXPECT_EQ(e.params.dump(), R"({"k":3.0,"theta":0.5,"f_abs":10})");
+                                    " A_w=12 F_w=12 ratio=1.00 base=" + base + " sigma=" + sigma +
+                                    " z=3 theta=0.5 f_abs=10 severity=medium mode=normal candidates=L3-11");
+  // alert 레코드의 자리 (14_ §8.5 옮김 표, 3_ §7.1 — 11/12): z·theta·f_abs_frac은 실수, f_abs는 그 칸에 쓴 문턱(정수)이고
+  // normal 모드만, refs는 A·F 윈도우 seq 범위
+  EXPECT_EQ(e.params.dump(), R"({"z":3.0,"theta":0.5,"f_abs_frac":0.1,"f_abs":10})");
+  EXPECT_TRUE(e.values.contains("sigma"));
   EXPECT_TRUE(e.refs.contains("a"));
   EXPECT_TRUE(e.refs.contains("f"));
 }
@@ -262,7 +266,7 @@ TEST(BtsVariant, ModeSwitchToDlMissing) {
   EXPECT_TRUE(h.has_diag(DiagKind::ModeChanged));
 }
 
-// 웜업이 끝났을 때 k × base < A_min이면 1회 로그 (3_ §5, 결정 E6)
+// 웜업이 끝났을 때 base + z·σ < A_min이면 1회 로그 (3_ §5, 결정 E6 — 11/12 전 k × base)
 TEST(BtsVariant, BaselineLowLoggedAfterWarmup) {
   BtsVariantConfig cfg;
   cfg.warmup_ms = 3000;
@@ -288,9 +292,10 @@ TEST(BtsVariant, SuspiciousSlotsExcludedFromBaseline) {
 }
 
 // C2a (3_ §4, 10/27 Q-41): 정상 부하가 커서 ratio < θ여도 1초 NoReply가 F_abs(10) 이상이면 C1·C3 없이 RAISE.
-// 정상 6/칸(60/s) + 공격 5/칸(50/s) → ratio ≤ 50/110 ≈ 0.45 < θ, F_w는 공격 NoReply 2칸부터 10 ≥ F_abs
+// 정상 6/칸(60/s) + 공격 5/칸(50/s) → ratio ≤ 50/110 ≈ 0.45 < θ, F_w는 공격 NoReply 2칸부터 10 ≥ F_abs.
+// F_abs = ⌈0.1 × 셀 한도 96⌉ = 10 (11/12)
 TEST(BtsVariant, C2aRaisesUnderHighNormalLoad) {
-  Harness h;
+  Harness h({}, 1000, 96);
   h.slots(10, {6, 6, 0});
   h.slots(10, {11, 6, 0});
   h.slots(4, {11, 6, 5});  // 칸 20..23 NoReply 5/칸 → 칸 21부터 F_w ≥ 10 → M = 3 → 칸 23(t = 2400)에서 RAISE
@@ -305,15 +310,57 @@ TEST(BtsVariant, C2aRaisesUnderHighNormalLoad) {
   EXPECT_EQ(e.cond, (std::vector<std::string>{"C1", "C2a"}));  // C2 불성립 — C2a로 걸렸음이 보인다
 }
 
-// 같은 입력에서 F_abs를 아주 크게 두면 비율 조건만 남아 경보가 없다 — 위 RAISE가 C2a 때문임을 확인
+// 같은 입력에서 f_abs_frac을 1로 두면 F_abs = 96이라 비율 조건만 남아 경보가 없다 — 위 RAISE가 C2a 때문임을 확인
 TEST(BtsVariant, LargeFabsLeavesRatioOnly) {
   BtsVariantConfig cfg;
-  cfg.f_abs = 1000000;
-  Harness h(cfg);
+  cfg.f_abs_frac = 1.0;
+  Harness h(cfg, 1000, 96);
+  h.slots(10, {6, 6, 0});
+  h.slots(10, {11, 6, 0});
+  h.slots(20, {11, 6, 5});  // F_w는 50에서 멈춤 < 96
+  EXPECT_TRUE(h.alerts.empty());
+  EXPECT_FALSE(h.has_diag(DiagKind::C2aOff));
+}
+
+// C2a 문턱은 셀 한도를 따른다 (3_ §4 — 11/12 사용자 결정): 셀 한도 200이면 F_abs = 20 → 위 입력에서 F_w 20이 되는 칸 23부터
+// M칸 → 칸 25(t = 2600)에서 RAISE. 셀 한도 100이면 0.1 × 100의 부동소수 오차에도 F_abs는 11이 아니라 10 (올림 전 1e-9)
+TEST(BtsVariant, C2aThresholdFollowsCellLimit) {
+  Harness h({}, 1000, 200);
+  h.slots(10, {6, 6, 0});
+  h.slots(10, {11, 6, 0});
+  h.slots(6, {11, 6, 5});
+  ASSERT_EQ(h.alerts.size(), 1u);
+  EXPECT_EQ(h.t_rel(h.alerts[0]), 2600);
+  EXPECT_EQ(h.alerts[0].params.at("f_abs"), 20);
+  EXPECT_NE(format_log_line(h.alerts[0]).find(" f_abs=20 "), std::string::npos);
+
+  Harness g({}, 1000, 100);
+  g.slots(10, {6, 6, 0});
+  g.slots(10, {11, 6, 0});
+  g.slots(4, {11, 6, 5});
+  ASSERT_EQ(g.alerts.size(), 1u);
+  EXPECT_EQ(g.t_rel(g.alerts[0]), 2400);
+  EXPECT_EQ(g.alerts[0].params.at("f_abs"), 10);
+}
+
+// 셀 한도를 모르면(hello·설정 모두 null) C2a를 끄고 진단 c2a_off를 셀마다 1회 (3_ §4 — 11/12 사용자 결정, C4와 같은 방식).
+// 비율로는 못 잡는 입력이라 경보가 없고, RAISE가 나도 params에 f_abs가 없다
+TEST(BtsVariant, C2aOffWithoutMaxConn) {
+  Harness h;
   h.slots(10, {6, 6, 0});
   h.slots(10, {11, 6, 0});
   h.slots(20, {11, 6, 5});
   EXPECT_TRUE(h.alerts.empty());
+  EXPECT_EQ(std::count_if(h.diags.begin(), h.diags.end(), [](const Diag& d) { return d.kind == DiagKind::C2aOff; }), 1);
+
+  Harness r;  // 비율로 잡히는 공격 — RAISE에 f_abs_frac은 있고 f_abs는 없음, 로그에도 f_abs= 없음
+  r.slots(10, {0, 0, 0});
+  r.slots(10, {3, 0, 0});
+  r.slots(4, {3, 0, 3});
+  ASSERT_EQ(r.alerts.size(), 1u);
+  EXPECT_EQ(r.alerts[0].params.dump(), R"({"z":3.0,"theta":0.5,"f_abs_frac":0.1})");
+  EXPECT_EQ(format_log_line(r.alerts[0]).find("f_abs="), std::string::npos);
+  EXPECT_EQ(r.alerts[0].cond, (std::vector<std::string>{"C1", "C2"}));
 }
 
 // C2a 칸도 의심 칸 — ratio < θ지만 F_w ≥ F_abs면 기준선 갱신에서 빠진다 (3_ §5, 10/27 Q-41)
@@ -322,7 +369,7 @@ TEST(BtsVariant, C2aSlotsExcludedFromBaseline) {
   cfg.warmup_ms = 1000;
   cfg.baseline_tau_s = 1;  // α = 0.1
   cfg.m_raise = 1000;      // 경보가 나지 않게
-  Harness h(cfg);
+  Harness h(cfg, 1000, 96);  // F_abs = 10 (11/12)
   h.slots(40, {30, 30, 0});  // 정상 30/칸: base = 300
   const double before = *h.rule_->base(1);
   h.slots(10, {40, 30, 0});  // 공격 10/칸 섞임, NoReply는 아직 — A 윈도우는 아직 정상 구간
@@ -330,23 +377,25 @@ TEST(BtsVariant, C2aSlotsExcludedFromBaseline) {
   EXPECT_NEAR(*h.rule_->base(1), before, 0.5);  // 제외가 없으면 400 쪽으로 올라간다
 }
 
-// DL 미관측 모드에는 C2a가 없다 — RAISE에 f_abs가 없고 로그에도 안 찍힘 (3_ §4.1·§7)
+// DL 미관측 모드에는 C2a가 없다 — 셀 한도를 알아도 RAISE에 f_abs·f_abs_frac이 없고 로그에도 안 찍힘 (3_ §4.1·§7)
 TEST(BtsVariant, DlMissingRaiseHasNoFabs) {
-  Harness h;
+  Harness h({}, 1000, 96);
   h.slots(10, {1, 1, std::nullopt});
   h.slots(10, {3, 0, std::nullopt});  // U가 θ를 넘어 시차 없이 RAISE
   ASSERT_FALSE(h.alerts.empty());
   EXPECT_EQ(h.alerts[0].mode, AlertMode::DlMissing);
   EXPECT_FALSE(h.alerts[0].params.contains("f_abs"));
+  EXPECT_FALSE(h.alerts[0].params.contains("f_abs_frac"));
   EXPECT_EQ(format_log_line(h.alerts[0]).find("f_abs="), std::string::npos);
+  EXPECT_NE(format_log_line(h.alerts[0]).find(" sigma="), std::string::npos);  // σ′는 DL 미관측에도 (11/12)
   EXPECT_EQ(h.alerts[0].cond, std::vector<std::string>{"U"});  // 웜업 중 — C3 없음 (결정 J3)
 }
 
-// 웜업이 끝난 뒤 RAISE면 C3가 cond에 들어간다 (14_ §8.5, 결정 J2). F_abs를 크게 둬 C2a는 빠짐
+// 웜업이 끝난 뒤 RAISE면 C3가 cond에 들어간다 (14_ §8.5, 결정 J2). 셀 한도가 없어 C2a는 꺼짐(11/12).
+// 정상 0이라 base = σ = 0 → C3 문턱 0
 TEST(BtsVariant, CondHasC3AfterWarmup) {
   BtsVariantConfig cfg;
   cfg.warmup_ms = 1000;
-  cfg.f_abs = 1000;
   Harness h(cfg);
   h.slots(40, {0, 0, 0});
   h.slots(10, {3, 0, 0});
@@ -360,7 +409,7 @@ TEST(BtsVariant, DlMissingCondHasC3AfterWarmup) {
   BtsVariantConfig cfg;
   cfg.warmup_ms = 1000;
   Harness h(cfg);
-  h.slots(40, {1, 1, std::nullopt});  // base′ ≈ 10 → k × base′ ≈ 30
+  h.slots(40, {1, 1, std::nullopt});  // base′ = 10, σ′ = 0(일정) → 문턱 base′ + z·σ′ = 10 (11/12)
   h.slots(10, {5, 0, std::nullopt});
   ASSERT_EQ(h.alerts.size(), 1u);
   EXPECT_EQ(h.alerts[0].mode, AlertMode::DlMissing);
@@ -383,4 +432,47 @@ TEST(BtsVariant, InputLostEndCarriesUectx) {
   EXPECT_EQ(e.values.at("uectx"), 90);
   EXPECT_EQ(e.values.at("max_conn"), 96);
   EXPECT_EQ(format_log_line(e).find("uectx"), std::string::npos);
+}
+
+// C3 = base + z·σ (3_ §4·§5 — 11/12 사용자 결정, Q-44 C3 부분 해결). 창 W = P(1칸), T_nr = P(D = 1칸)로 A_w = 바로 앞 칸의 시도 수가
+// 되게 해 기준선을 직접 만든다: 정상 시도 8·12를 번갈아 → base ≈ 10, σ ≈ 2 → 문턱 ≈ 16. 무응답 비율이 1인 칸이라도
+// A_w 15는 C3 거짓(경보 없음), 17은 참(RAISE). 11/12 전 k × base(30)였으면 17도 거짓이었다
+TEST(BtsVariant, C3UsesBaselineSigma) {
+  BtsVariantConfig cfg;
+  cfg.window_ms = 100;
+  cfg.warmup_ms = 1000;
+  cfg.a_min = 1;
+  cfg.m_raise = 1;
+  Harness h(cfg, 100);
+  for (int i = 0; i < 30; ++i) h.slot({i % 2 == 0 ? 8 : 12, i % 2 == 0 ? 8 : 12, 0});  // 정상 3 s (웜업 1 s 포함)
+  h.slot({15, 0, 0});    // 시도 15, 응답 없음
+  h.slot({10, 10, 15});  // 다음 칸 NoReply 15 → A_w 15, ratio 1 — C3: 15 < base + 3σ ≈ 16
+  EXPECT_TRUE(h.alerts.empty());
+  h.slot({10, 10, 0});
+  h.slot({17, 0, 0});
+  h.slot({10, 10, 17});  // A_w 17 ≥ ≈ 16 → RAISE
+  ASSERT_EQ(h.alerts.size(), 1u);
+  const AlertEvent& e = h.alerts[0];
+  EXPECT_EQ(e.values.at("a_w"), 17);
+  EXPECT_NEAR(e.values.at("base").get<double>(), 10.0, 0.2);
+  EXPECT_NEAR(e.values.at("sigma").get<double>(), 2.0, 0.1);
+  EXPECT_EQ(e.cond, (std::vector<std::string>{"C1", "C2", "C3"}));
+  EXPECT_EQ(e.params.at("z"), 3.0);
+}
+
+// z는 설정 키 (3_ §4 — 11/12): 같은 입력에서 z = 1이면 문턱 ≈ 12라 A_w 15에서 RAISE
+TEST(BtsVariant, C3ZFromConfig) {
+  BtsVariantConfig cfg;
+  cfg.window_ms = 100;
+  cfg.warmup_ms = 1000;
+  cfg.a_min = 1;
+  cfg.m_raise = 1;
+  cfg.z = 1;
+  Harness h(cfg, 100);
+  for (int i = 0; i < 30; ++i) h.slot({i % 2 == 0 ? 8 : 12, i % 2 == 0 ? 8 : 12, 0});
+  h.slot({15, 0, 0});
+  h.slot({10, 10, 15});
+  ASSERT_EQ(h.alerts.size(), 1u);
+  EXPECT_EQ(h.alerts[0].values.at("a_w"), 15);
+  EXPECT_NE(format_log_line(h.alerts[0]).find(" z=1 "), std::string::npos);
 }

@@ -16,8 +16,9 @@ struct BtsVariantConfig {
   int64_t window_ms = 1000;            // window_ms — W
   int64_t a_min = 5;                   // a_min — A_min
   double theta = 0.5;                  // theta — θ
-  int64_t f_abs = 10;                  // f_abs — F_abs: C2a 절대 실패 수 문턱(건/W), 1 이상 (3_ §4, 10/27 Q-41)
-  double k = 3;                        // k — 기준선 배수
+  double f_abs_frac = 0.1;             // f_abs_frac — C2a 문턱 비율: F_abs = ⌈f_abs_frac × max_conn⌉(건/W), 0 초과 1 이하.
+                                       // max_conn이 없으면 C2a 끔 (3_ §4 — 11/12, 그전 f_abs 10건 고정)
+  double z = 3;                        // z — C3 표준편차 배수: A_w ≥ base + z·σ, 0 이상 (3_ §4·§5 — 11/12, 그전 k 기준선 배수)
   int m_raise = 3;                     // m_raise — M (연속 성립)
   int k_clear = 10;                    // k_clear — K (연속 불성립)
   int64_t h_sat_ms = 3000;             // h_sat_ms — 해제 유지 창 (3_ §6.1 가)
@@ -25,7 +26,7 @@ struct BtsVariantConfig {
   double baseline_tau_s = 300;         // baseline_tau_s — τ, α = P / τ (3_ §5)
   int64_t h_hold_ms = 10000;           // h_hold_ms — 보류 상한 (3_ §8)
   int missing_key_slots = 10;          // missing_key_slots — A·S 누락 연속 칸 상한 (3_ §8)
-  std::optional<int64_t> max_conn;     // max_conn — C4. null이면 끔, hello cells[].max_conn이 우선 (3_ §4)
+  std::optional<int64_t> max_conn;     // max_conn — C4·C2a 문턱. null이면 둘 다 끔, hello cells[].max_conn이 우선 (3_ §4)
 };
 
 // 증거 내보내기 설정 (3_ §7.1 파라미터 표, 4_ §1.2 "evidence")

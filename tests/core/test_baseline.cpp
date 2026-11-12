@@ -3,6 +3,8 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
+
 using namespace detect;
 
 // 웜업 동안은 단순 평균
@@ -53,6 +55,39 @@ TEST(Baseline, SeedWhenNoWarmupSamples) {
   EXPECT_DOUBLE_EQ(b.value(), 0.0);
   b.add(1000, 6);  // 웜업(1 s) 뒤 첫 표본 → 시드
   EXPECT_DOUBLE_EQ(b.value(), 6.0);
+  EXPECT_DOUBLE_EQ(b.sigma(), 0.0);  // 표본 하나로는 분산을 모름 — σ는 0으로 시드 (3_ §5, 11/12)
   b.add(1100, 3006);  // 그 뒤 EWMA (α = 1/3000)
   EXPECT_NEAR(b.value(), 6.0 + 3000.0 / 3000.0, 1e-9);
+  EXPECT_NEAR(b.sigma(), std::sqrt((1.0 - 1.0 / 3000) * (3000.0 * 3000.0 / 3000)), 1e-9);
+}
+
+// σ (3_ §5 — 11/12 사용자 결정, Q-44 C3 부분 해결): 웜업 중에는 모분산(n으로 나눔)
+TEST(Baseline, WarmupSigmaIsPopulationStd) {
+  Baseline b(30000, 300, 100);
+  EXPECT_DOUBLE_EQ(b.sigma(), 0.0);
+  b.add(1000, 2);
+  b.add(1100, 4);
+  b.add(1200, 6);
+  EXPECT_NEAR(b.sigma(), std::sqrt(8.0 / 3.0), 1e-12);
+}
+
+// 일정한 입력이면 σ는 정확히 0 — 웜업 중에도 뒤에도 (반올림 잔차가 있으면 A_w = base인 칸의 C3가 흔들린다)
+TEST(Baseline, ConstantInputGivesExactZeroSigma) {
+  Baseline b(1000, 300, 100);
+  for (int i = 0; i < 30; ++i) b.add(100 * i, 7);
+  EXPECT_FALSE(b.in_warmup(2900));
+  EXPECT_EQ(b.sigma(), 0.0);
+  EXPECT_EQ(b.value(), 7.0);
+}
+
+// 웜업 뒤에는 같은 α의 지수 이동 분산: d = x − base, var ← (1 − α)·(var + α·d²), 웜업 분산에서 이어 간다
+TEST(Baseline, EwmaVarianceAfterWarmup) {
+  Baseline b(1000, 300, 100);
+  b.add(0, 2);
+  b.add(100, 4);  // 웜업: base 3, var 1
+  EXPECT_DOUBLE_EQ(b.sigma(), 1.0);
+  b.add(1000, 33);  // d = 30, α = 1/3000
+  const double a = 1.0 / 3000;
+  EXPECT_NEAR(b.value(), 3.0 + a * 30, 1e-12);
+  EXPECT_NEAR(b.sigma(), std::sqrt((1 - a) * (1.0 + a * 900)), 1e-12);
 }

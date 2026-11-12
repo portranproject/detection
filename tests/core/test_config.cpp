@@ -46,9 +46,10 @@ TEST(Config, RepoConfigFileParses) {
   EXPECT_EQ(b.config.window_ms, bd.window_ms);
   EXPECT_EQ(b.config.a_min, bd.a_min);
   EXPECT_DOUBLE_EQ(b.config.theta, bd.theta);
-  EXPECT_EQ(b.config.f_abs, bd.f_abs);
-  EXPECT_EQ(bd.f_abs, 10);  // 3_ §4 F_abs 기본값 (10/27 Q-41)
-  EXPECT_DOUBLE_EQ(b.config.k, bd.k);
+  EXPECT_DOUBLE_EQ(b.config.f_abs_frac, bd.f_abs_frac);
+  EXPECT_DOUBLE_EQ(bd.f_abs_frac, 0.1);  // 3_ §4 C2a 문턱 비율 기본값 — 셀 한도의 10% (11/12)
+  EXPECT_DOUBLE_EQ(b.config.z, bd.z);
+  EXPECT_DOUBLE_EQ(bd.z, 3.0);           // 3_ §4 C3 표준편차 배수 기본값 (11/12)
   EXPECT_EQ(b.config.h_sat_ms, bd.h_sat_ms);
   EXPECT_DOUBLE_EQ(b.config.baseline_tau_s, bd.baseline_tau_s);
   EXPECT_EQ(b.config.max_conn, 96);  // DU 셀 UE 한도 (4_ §6.1 #1, 10/27 이슈 #13 W-16). 구조체 기본값은 null(C4 끔)
@@ -204,14 +205,15 @@ TEST(Config, RepoConfigFileParses) {
 
 // 빠진 키는 기본값, 일부만 덮어쓰기
 TEST(Config, PartialOverride) {
-  const std::string text = R"({"rules":{"L3-01-V":{"theta":0.7,"f_abs":20,"max_conn":96}},"evidence":{"mode":"ref","pre_slots":300}})";
+  const std::string text = R"({"rules":{"L3-01-V":{"theta":0.7,"f_abs_frac":0.2,"z":2.5,"max_conn":96}},"evidence":{"mode":"ref","pre_slots":300}})";
   ConfigResult r = parse_config(text);
   ASSERT_TRUE(r.ok) << r.error;
   BtsVariantConfigResult b = bts_of(text);
   ASSERT_TRUE(b.ok) << b.error;
   EXPECT_DOUBLE_EQ(b.config.theta, 0.7);
   EXPECT_EQ(b.config.max_conn, 96);
-  EXPECT_EQ(b.config.f_abs, 20);
+  EXPECT_DOUBLE_EQ(b.config.f_abs_frac, 0.2);
+  EXPECT_DOUBLE_EQ(b.config.z, 2.5);
   EXPECT_EQ(b.config.a_min, 5);
   EXPECT_EQ(r.config.evidence.mode, EvidenceMode::Ref);
   EXPECT_EQ(r.config.evidence.pre_slots, 300u);
@@ -249,8 +251,16 @@ TEST(Config, Errors) {
   EXPECT_FALSE(bts_of(R"({"rules":{"L3-01-V":{"a_min":1.5}}})").ok);
   EXPECT_FALSE(bts_of(R"({"rules":{"L3-01-V":{"theta":0}}})").ok);
   EXPECT_FALSE(bts_of(R"({"rules":{"L3-01-V":{"max_conn":"96"}}})").ok);
-  EXPECT_FALSE(bts_of(R"({"rules":{"L3-01-V":{"f_abs":0}}})").ok);    // 1 이상 (결정 I1)
-  EXPECT_FALSE(bts_of(R"({"rules":{"L3-01-V":{"f_abs":2.5}}})").ok);  // 정수
+  EXPECT_FALSE(bts_of(R"({"rules":{"L3-01-V":{"f_abs_frac":0}}})").ok);    // (0, 1] (3_ §4, 11/12)
+  EXPECT_FALSE(bts_of(R"({"rules":{"L3-01-V":{"f_abs_frac":1.5}}})").ok);
+  EXPECT_FALSE(bts_of(R"({"rules":{"L3-01-V":{"f_abs_frac":"0.1"}}})").ok);
+  EXPECT_TRUE(bts_of(R"({"rules":{"L3-01-V":{"f_abs_frac":1}}})").ok);
+  EXPECT_FALSE(bts_of(R"({"rules":{"L3-01-V":{"z":-0.5}}})").ok);  // 0 이상 (3_ §4, 11/12)
+  EXPECT_TRUE(bts_of(R"({"rules":{"L3-01-V":{"z":0}}})").ok);       // 0이면 문턱이 base 자체
+  // 11/12 전 키 f_abs·k는 모르는 키 — 경고만 하고 무시한다 (4_ §1.2)
+  auto old = bts_of(R"({"rules":{"L3-01-V":{"f_abs":10,"k":3}}})");
+  EXPECT_TRUE(old.ok);
+  EXPECT_EQ(old.warnings.size(), 2u);
   EXPECT_FALSE(parse_bts_variant_config("[1]").ok);
   auto b = bts_of(R"({"rules":{"L3-01-V":{"window_ms":-1}}})");
   EXPECT_FALSE(b.ok);

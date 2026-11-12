@@ -34,10 +34,11 @@ class BtsVariantRule : public Rule {
   struct CellState {
     CellState(const BtsVariantConfig& cfg, int64_t period_ms);
     AlertMachine machine;
-    Baseline base;     // A_w의 기준선 (3_ §5)
-    Baseline base_dl;  // A′_w의 기준선 base′ (3_ §4.1)
+    Baseline base;     // A_w의 기준선·표준편차 (3_ §5)
+    Baseline base_dl;  // A′_w의 기준선 base′·표준편차 σ′ (3_ §4.1)
     std::optional<AlertMode> mode;
     bool warmup_done = false;
+    bool c2a_off_logged = false;  // 셀 한도를 몰라 C2a를 끈 진단을 냈는지 — 셀마다 1회 (3_ §4, 11/12)
     // 진행 중 경보
     std::string alert_id;
     Severity severity = Severity::Medium;
@@ -51,7 +52,8 @@ class BtsVariantRule : public Rule {
 
   // on_feed의 단계 — 순서대로 부른다 (3_ §4 처리 순서, 해설 §3). 모드(normal·dl_missing·보류)는 series가 FeedResult로 준다
   // (3_ §4.1 결정 E1 — 11/05 26_ R4, 이슈 #98)
-  Verdict evaluate(const CellState& st, AlertMode mode, const WindowSums& w, bool was_active, bool warming) const;  // 3_ §4·§4.1
+  Verdict evaluate(const CellState& st, AlertMode mode, const WindowSums& w, bool was_active, bool warming,
+                   std::optional<int64_t> f_abs) const;  // 3_ §4·§4.1
   void update_baseline(CellState& st, const Ctx& c, AlertMode mode, const WindowSums& w, const Verdict& v,
                        bool alert_slot, RuleOutput& out);                // 3_ §5
   void emit(CellState& st, const Ctx& c, AlertMode mode, const WindowSums& w, const Verdict& v,

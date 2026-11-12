@@ -1,7 +1,14 @@
 {
   "scenario": "T25_DL미관측웜업",
-  "description": "웜업 30 s 내내 F null, 정상 5/s, 35 s부터 공격 8/s — 웜업 뒤 첫 표본으로 base 시드(5), C3 거짓, 경보 없음 (25_ X3, 11/05 Q-76)",
+  "description": "웜업 30 s 내내 F null, 정상 5/s, 35 s부터 공격 8/s — 웜업 뒤 첫 표본으로 base 시드(5)·σ 0, 11/12 C3 = base + z·σ(≈5.3) 참 → RAISE 36.9 s (25_ X3, 11/05 Q-76)",
   "t0_ms": 1792209000000,
   "tolerance_ms": 100,
-  "alerts": []
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "cell": 1,
+      "t_rel_ms": 36900,
+      "mode": "normal"
+    }
+  ]
 }
