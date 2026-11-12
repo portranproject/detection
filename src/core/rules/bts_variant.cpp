@@ -12,7 +12,7 @@ Diag diag(DiagKind kind, int64_t cell, std::string msg) { return Diag{kind, cell
 
 const char* mode_name(AlertMode m) { return m == AlertMode::Normal ? "normal" : "dl_missing"; }
 
-// 로그 줄의 숫자 형식 (3_ §7 예: ratio=0.94 base=3.1 k=3)
+// 로그 줄의 숫자 형식 (3_ §7 예: ratio=0.94 base=3.1 sigma=1.2 z=3)
 std::string fmt(const char* f, double v) {
   char buf[64];
   std::snprintf(buf, sizeof(buf), f, v);
@@ -30,6 +30,15 @@ std::optional<int64_t> max_conn_for(const Hello& h, int64_t cell_id, const BtsVa
   return cfg.max_conn;
 }
 
+// C2a 문턱 F_abs = ⌈f_abs_frac × max_conn⌉ (3_ §4 — 11/12 사용자 결정, 그전 10건 고정): 셀 용량의 일정 비율만큼 컨텍스트가
+// 잡혀 있으면 성립. 곱의 부동소수 오차(예: 0.1 × 100 = 10.000000000000002)로 문턱이 한 건 올라가지 않게 1e-9를 빼고 올린다.
+// max_conn을 모르면 없음 → C2a 끔 (C4와 같은 방식)
+std::optional<int64_t> f_abs_for(std::optional<int64_t> max_conn, double frac) {
+  if (!max_conn) return std::nullopt;
+  const double x = frac * static_cast<double>(*max_conn);
+  return std::max<int64_t>(1, static_cast<int64_t>(std::ceil(x - 1e-9)));
+}
+
 }  // namespace
 
 struct BtsVariantRule::Ctx {
@@ -40,6 +49,7 @@ struct BtsVariantRule::Ctx {
   const CellSeries& cs;  // 읽기만 — seq 범위용 (3_ §7.1). 창 구간(시차 D 포함)은 series가 WindowSums로 준다 (R4)
   const Hello& hello;
   const std::string& session;
+  std::optional<int64_t> f_abs;  // 이 셀의 C2a 문턱 — max_conn을 모르면 없음 (3_ §4, 11/12)
 };
 
 struct BtsVariantRule::Verdict {
@@ -49,6 +59,7 @@ struct BtsVariantRule::Verdict {
   std::optional<double> ratio;
   std::optional<double> u;
   double base_used = 0;        // 판정에 쓴(갱신 전) 기준선 (결정 E8)
+  double sigma_used = 0;       // 판정에 쓴(갱신 전) 표준편차 (3_ §5 — 11/12)
   std::vector<std::string> cond;  // 이 칸에서 참인 조건 ID — RAISE 칸이면 경보의 cond가 된다 (14_ §8.5)
 };
 
@@ -108,7 +119,7 @@ void BtsVariantRule::end_alert(CellState& st, int64_t cell_id, int64_t t, const 
 
 // 판정 (3_ §4·§4.1). 비율은 분모가 0보다 클 때만, 분모 0이면 그 조건은 거짓
 BtsVariantRule::Verdict BtsVariantRule::evaluate(const CellState& st, AlertMode mode, const WindowSums& w,
-                                                 bool was_active, bool warming) const {
+                                                 bool was_active, bool warming, std::optional<int64_t> f_abs) const {
   Verdict v;
   const double a2 = static_cast<double>(*w.a2_w);
   if (*w.a2_w > 0) v.u = (a2 - static_cast<double>(*w.s2_w)) / a2;
@@ -120,11 +131,15 @@ BtsVariantRule::Verdict BtsVariantRule::evaluate(const CellState& st, AlertMode 
     if (*w.a_w > 0) v.ratio = static_cast<double>(*w.f_w) / aw;
     const bool c1 = *w.a_w >= cfg_.a_min;
     const bool c2 = v.ratio && *v.ratio >= cfg_.theta;
-    v.base_used = st.base.value();  // 갱신 전 base로 판정 (결정 E8)
-    const bool c3 = warming || aw >= cfg_.k * v.base_used;  // 웜업 중엔 참 (3_ §4·§5)
+    v.base_used = st.base.value();  // 갱신 전 base·σ로 판정 (결정 E8)
+    v.sigma_used = st.base.sigma();
+    // C3 급증 (3_ §4 — 11/12 사용자 결정, Q-44 C3 부분 해결): 정상 A_w가 흔들리는 폭의 z배를 넘을 때만. 그전 k × base는
+    // base 크기에 따라 뜻이 바뀌었다(0.2 → 0.6 무의미, 50 → 150 느슨). 웜업 중엔 참 (3_ §4·§5)
+    const bool c3 = warming || aw >= v.base_used + cfg_.z * v.sigma_used;
     // C2a 절대 실패 수 (3_ §4, 10/27 Q-41 해결): 정상 시도가 많아 ratio < θ여도 1초 NoReply가 F_abs 이상이면
-    // 컨텍스트가 그만큼 잡혀 있는 것이므로 C1·C3 없이 단독 성립. dl_missing 모드에는 없다(F가 없음)
-    const bool c2a = *w.f_w >= cfg_.f_abs;
+    // 컨텍스트가 그만큼 잡혀 있는 것이므로 C1·C3 없이 단독 성립. dl_missing 모드에는 없다(F가 없음).
+    // F_abs는 셀 한도의 비율(11/12) — 셀 한도를 모르면 거짓
+    const bool c2a = f_abs && *w.f_w >= *f_abs;
     // 경보가 아닐 때 (C1∧C2∧C3) ∨ C2a, 경보 중 (C1∧C2) ∨ C2a ∨ (A′_w ≥ A_min ∧ U ≥ θ) — 마지막은 거절로 바뀐 포화 ② (3_ §6.1 나)
     v.satisfied = was_active ? ((c1 && c2) || c2a || u_ok) : ((c1 && c2 && c3) || c2a);
     v.suspicious = *w.a_w > 0 && (c2 || c2a);  // 의심 칸 (3_ §5): 비율이 높거나 절대 실패 수가 큰 칸
@@ -139,7 +154,8 @@ BtsVariantRule::Verdict BtsVariantRule::evaluate(const CellState& st, AlertMode 
   } else {
     // DL 미관측 모드 (3_ §4.1): ratio 대신 U, base′는 A′_w의 기준선
     v.base_used = st.base_dl.value();
-    const bool c3 = warming || a2 >= cfg_.k * v.base_used;
+    v.sigma_used = st.base_dl.sigma();
+    const bool c3 = warming || a2 >= v.base_used + cfg_.z * v.sigma_used;  // base′ + z·σ′ (11/12)
     v.satisfied = was_active ? u_ok : (u_ok && c3);
     // U = (A′_w ≥ A_min ∧ U ≥ θ), 웜업 뒤면 base′ 기준 C3도 (결정 J3)
     if (!was_active && v.satisfied) {
@@ -151,7 +167,7 @@ BtsVariantRule::Verdict BtsVariantRule::evaluate(const CellState& st, AlertMode 
 }
 
 // 기준선 갱신 (3_ §5): 경보 중인 칸과 의심 칸은 뺀다. 판정 뒤에 갱신 (결정 E8).
-// 웜업이 끝났을 때 k × base < A_min이면 C3가 C1보다 약해 사실상 항상 참 — 1회 로그 (결정 E6)
+// 웜업이 끝났을 때 base + z·σ < A_min이면 C3가 C1보다 약해 사실상 항상 참 — 1회 로그 (결정 E6, 3_ §5 — 11/12 전 k × base)
 void BtsVariantRule::update_baseline(CellState& st, const Ctx& c, AlertMode mode, const WindowSums& w, const Verdict& v,
                                      bool alert_slot, RuleOutput& out) {
   const bool warming = st.base.in_warmup(c.t);
@@ -160,10 +176,11 @@ void BtsVariantRule::update_baseline(CellState& st, const Ctx& c, AlertMode mode
 
   if (!st.warmup_done && !warming) {
     st.warmup_done = true;
-    const double b = mode == AlertMode::Normal ? st.base.value() : st.base_dl.value();
-    if (cfg_.k * b < static_cast<double>(cfg_.a_min))
+    const Baseline& bl = mode == AlertMode::Normal ? st.base : st.base_dl;
+    if (bl.value() + cfg_.z * bl.sigma() < static_cast<double>(cfg_.a_min))
       out.diags.push_back(diag(DiagKind::BaselineLow, c.cell_id,
-                               "baseline low after warmup: base=" + std::to_string(b)));
+                               "baseline low after warmup: base=" + std::to_string(bl.value()) +
+                                   " sigma=" + std::to_string(bl.sigma())));
   }
 }
 
@@ -226,14 +243,20 @@ void BtsVariantRule::emit(CellState& st, const Ctx& c, AlertMode mode, const Win
       a_seq = c.cs.seq_range(w.f_from, w.f_to);  // A′ 윈도우 = F와 같은 구간
     }
     e.values["base"] = v.base_used;
-    e.params["k"] = cfg_.k;
+    e.values["sigma"] = v.sigma_used;  // 11/12 (3_ §7.1)
+    e.params["z"] = cfg_.z;            // 11/12 — 그전 k
     e.params["theta"] = cfg_.theta;
     e.log_fields.emplace_back("base", fmt("%.1f", v.base_used));
-    e.log_fields.emplace_back("k", fmt("%g", cfg_.k));
+    e.log_fields.emplace_back("sigma", fmt("%.1f", v.sigma_used));
+    e.log_fields.emplace_back("z", fmt("%g", cfg_.z));
     e.log_fields.emplace_back("theta", fmt("%g", cfg_.theta));
-    if (mode == AlertMode::Normal) {  // C2a 문턱은 normal 모드만 (3_ §7, 10/27 Q-41)
-      e.params["f_abs"] = cfg_.f_abs;
-      e.log_fields.emplace_back("f_abs", std::to_string(cfg_.f_abs));
+    // C2a 문턱은 normal 모드만 (3_ §7, 10/27 Q-41). 11/12부터 비율 f_abs_frac과, C2a가 켜져 있으면 그 칸에 쓴 문턱 f_abs
+    if (mode == AlertMode::Normal) {
+      e.params["f_abs_frac"] = cfg_.f_abs_frac;
+      if (c.f_abs) {
+        e.params["f_abs"] = *c.f_abs;
+        e.log_fields.emplace_back("f_abs", std::to_string(*c.f_abs));
+      }
     }
     e.refs = nlohmann::ordered_json::object();
     if (a_seq) e.refs["a"] = seq_pair(*a_seq);
@@ -279,7 +302,8 @@ void BtsVariantRule::on_feed(const Series& series, const FeedResult& fed, RuleOu
 
   const Slot& slot = cs->back();
   const int64_t P = hello->period_ms;
-  const Ctx c{cell_id, slot, slot.kpm, slot.kpm.t_end_ms, *cs, *hello, series.session()};
+  const Ctx c{cell_id, slot, slot.kpm, slot.kpm.t_end_ms, *cs, *hello, series.session(),
+              f_abs_for(max_conn_for(*hello, cell_id, cfg_), cfg_.f_abs_frac)};
 
   auto it = cells_.find(cell_id);
   if (it == cells_.end()) it = cells_.emplace(cell_id, CellState(cfg_, P)).first;
@@ -299,11 +323,17 @@ void BtsVariantRule::on_feed(const Series& series, const FeedResult& fed, RuleOu
     out.diags.push_back(diag(DiagKind::ModeChanged, cell_id, std::string("mode -> ") + mode_name(*mode)));
   st.mode = mode;
 
+  // 셀 한도를 몰라 C2a를 끔 — 셀마다 1회 진단 (3_ §4 — 11/12 사용자 결정, C4와 같은 방식)
+  if (!c.f_abs && !st.c2a_off_logged) {
+    st.c2a_off_logged = true;
+    out.diags.push_back(diag(DiagKind::C2aOff, cell_id, "C2a off: max_conn unknown (hello and config null)"));
+  }
+
   // 웜업은 그 셀에서 처음 판정한 칸부터 데이터 시각으로 잰다 (3_ §5)
   st.base.tick(c.t);
   st.base_dl.tick(c.t);
   const bool was_active = st.machine.active();
-  const Verdict v = evaluate(st, *mode, w, was_active, st.base.in_warmup(c.t));
+  const Verdict v = evaluate(st, *mode, w, was_active, st.base.in_warmup(c.t), c.f_abs);
 
   const AlertMachine::Step step = st.machine.on_slot(v.satisfied, c.t);
   const bool now_active = st.machine.active();

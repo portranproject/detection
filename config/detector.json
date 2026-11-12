@@ -4,7 +4,7 @@
   "max_cells": 64, "max_slots": 1024, "input_silent_ms": 10000,
   "rules": {
     "L3-01-V": {
-      "window_ms": 1000, "a_min": 5, "theta": 0.5, "f_abs": 10, "k": 3,
+      "window_ms": 1000, "a_min": 5, "theta": 0.5, "f_abs_frac": 0.1, "z": 3,
       "m_raise": 3, "k_clear": 10, "h_sat_ms": 3000,
       "warmup_ms": 30000, "baseline_tau_s": 300,
       "h_hold_ms": 10000, "missing_key_slots": 10,

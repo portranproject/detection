@@ -90,6 +90,26 @@ void read_real(const json& obj, const char* key, double& out, double min_exclusi
   out = x;
 }
 
+// 하한을 포함하는 실수 (rules."L3-01-V".z — 3_ §4, 11/12: 0이면 C3 문턱이 base 자체)
+void read_real_at_least(const json& obj, const char* key, double& out, double min, const std::string& where) {
+  const json* v = find(obj, key);
+  if (!v) return;
+  if (!v->is_number()) throw ConfigErr(where + key + ": not a number");
+  const double x = v->get<double>();
+  if (!(x >= min)) throw ConfigErr(where + key + ": out of range (>= " + std::to_string(min) + ")");
+  out = x;
+}
+
+// 비율 (0, 1] (rules."L3-01-V".f_abs_frac — 3_ §4, 11/12)
+void read_fraction(const json& obj, const char* key, double& out, const std::string& where) {
+  const json* v = find(obj, key);
+  if (!v) return;
+  if (!v->is_number()) throw ConfigErr(where + key + ": not a number");
+  const double x = v->get<double>();
+  if (!(x > 0.0 && x <= 1.0)) throw ConfigErr(where + key + ": out of range (0, 1]");
+  out = x;
+}
+
 void read_bool(const json& obj, const char* key, bool& out, const std::string& where) {
   const json* v = find(obj, key);
   if (!v) return;
@@ -134,6 +154,10 @@ struct KeySpec {
   [](const json& r, const char* k, auto& c, const std::string& w) { read_int(r, k, c.member, lo, w); }
 #define KEY_REAL_MIN(member, lo) \
   [](const json& r, const char* k, auto& c, const std::string& w) { read_real(r, k, c.member, lo, w); }
+#define KEY_REAL_AT_LEAST(member, lo) \
+  [](const json& r, const char* k, auto& c, const std::string& w) { read_real_at_least(r, k, c.member, lo, w); }
+#define KEY_FRACTION(member) \
+  [](const json& r, const char* k, auto& c, const std::string& w) { read_fraction(r, k, c.member, w); }
 #define KEY_NULLABLE_INT(member, lo) \
   [](const json& r, const char* k, auto& c, const std::string& w) { read_nullable_int(r, k, c.member, lo, w); }
 
@@ -155,13 +179,14 @@ void read_ignore_causes(const json& r, const char* key, UplinkDosConfig& c, cons
 }
 
 // rules."L3-01-V" (3_ §4 파라미터 표 · §5 · §8). m_raise·k_clear·missing_key_slots는 상한도 검사 (4_ §1.2 — 11/05 W-31: int 필드라
-// INT_MAX 초과값이 잘려 들어갔다). f_abs는 1 이상, 끄는 값은 두지 않음 (3_ §4, 결정 I1). max_conn은 null이면 C4 끔
+// INT_MAX 초과값이 잘려 들어갔다). f_abs_frac은 (0, 1], z는 0 이상 (3_ §4 — 11/12, 그전 키 f_abs·k는 모르는 키 경고).
+// max_conn은 null이면 C4와 C2a를 끔
 const KeySpec<BtsVariantConfig> kBtsVariantKeys[] = {
     {"window_ms", KEY_INT_MIN(window_ms, 1)},
     {"a_min", KEY_INT_MIN(a_min, 0)},
     {"theta", KEY_REAL_MIN(theta, 0.0)},
-    {"f_abs", KEY_INT_MIN(f_abs, 1)},
-    {"k", KEY_REAL_MIN(k, 0.0)},
+    {"f_abs_frac", KEY_FRACTION(f_abs_frac)},
+    {"z", KEY_REAL_AT_LEAST(z, 0.0)},
     {"m_raise", KEY_INT_IN(m_raise, 1, 1000000)},
     {"k_clear", KEY_INT_IN(k_clear, 1, 1000000)},
     {"h_sat_ms", KEY_INT_MIN(h_sat_ms, 0)},

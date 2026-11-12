@@ -1,4 +1,4 @@
-{"type":"hello","ver":1,"session":"S1","seq":1,"producer":"gen_kpm2","node_id":"synthetic","cells":[{"cell_id":1,"max_conn":null}],"period_ms":100,"noreply_timeout_ms":1000,"si_sample_ms":100,"clock":"realtime"}
+{"type":"hello","ver":1,"session":"S1","seq":1,"producer":"gen_kpm2","node_id":"synthetic","cells":[{"cell_id":1,"max_conn":96}],"period_ms":100,"noreply_timeout_ms":1000,"si_sample_ms":100,"clock":"realtime"}
 {"type":"kpm2","ver":1,"session":"S1","seq":2,"cell_id":1,"t_start_ms":1792209000000,"t_end_ms":1792209000100,"cc":{"RRC.ConnEstabAtt":{"total":2},"RRC.ConnEstabSucc":{"total":2},"RRC.ConnEstabFailCause":{"NetworkReject":0,"NoReply":0,"Other":0}}}
 {"type":"kpm2","ver":1,"session":"S1","seq":3,"cell_id":1,"t_start_ms":1792209000100,"t_end_ms":1792209000200,"cc":{"RRC.ConnEstabAtt":{"total":2},"RRC.ConnEstabSucc":{"total":1},"RRC.ConnEstabFailCause":{"NetworkReject":0,"NoReply":0,"Other":0}}}
 {"type":"kpm2","ver":1,"session":"S1","seq":4,"cell_id":1,"t_start_ms":1792209000200,"t_end_ms":1792209000300,"cc":{"RRC.ConnEstabAtt":{"total":2},"RRC.ConnEstabSucc":{"total":2},"RRC.ConnEstabFailCause":{"NetworkReject":0,"NoReply":0,"Other":0}}}

@@ -160,10 +160,12 @@ TEST(EvidenceRecord, AlertRaiseCommonFormat) {
   e.values["f_w"] = 45;
   e.values["ratio"] = 0.94;
   e.values["base"] = 3.1;
+  e.values["sigma"] = 1.2;
   e.values["uectx"] = 93;
   e.values["max_conn"] = 96;
-  e.params["k"] = 3.0;
+  e.params["z"] = 3.0;
   e.params["theta"] = 0.5;
+  e.params["f_abs_frac"] = 0.1;
   e.params["f_abs"] = 10;
   e.refs["a"] = {5280, 5300};
   e.refs["f"] = {5290, 5310};
@@ -171,8 +173,8 @@ TEST(EvidenceRecord, AlertRaiseCommonFormat) {
             R"({"type":"alert","fmt":1,"alert_id":"S-L3-01-V-1-5310","event":"raise","rule":"L3-01-V","stage":1,)"
             R"("unit":"cell","kind":"attack","cell":1,"t":1792209001200,"severity":"high","mode":"normal",)"
             R"("cond":["C1","C2","C3"],"candidates":["L3-11"],)"
-            R"("values":{"a_w":48,"f_w":45,"ratio":0.94,"base":3.1,"uectx":93,"max_conn":96},)"
-            R"("params":{"k":3.0,"theta":0.5,"f_abs":10},"refs":{"a":[5280,5300],"f":[5290,5310]}})");
+            R"("values":{"a_w":48,"f_w":45,"ratio":0.94,"base":3.1,"sigma":1.2,"uectx":93,"max_conn":96},)"
+            R"("params":{"z":3.0,"theta":0.5,"f_abs_frac":0.1,"f_abs":10},"refs":{"a":[5280,5300],"f":[5290,5310]}})");
 }
 
 // clear·end는 겉모양 + duration·증거 수(+ reason). C4 값이 없으면 values도 없다 (결정 J5)

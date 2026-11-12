@@ -77,15 +77,15 @@ def hello(session, seq, cells, max_conn=None):
             "period_ms": P, "noreply_timeout_ms": T_NR, "si_sample_ms": P, "clock": "realtime"}
 
 
-def generate(duration_ms, cells, dl_missing=False, events=None):
+def generate(duration_ms, cells, dl_missing=False, events=None, max_conn=None):
     """events: {상대 ms: [동작]} — 칸을 내기 전에 실행. 동작은
     ('session', 새 session) / ('hello_same',) / ('hello_changed',) / ('raw', 줄 dict)
-    dl_missing: True면 내내 F null(DL 미관측), 정수 ms면 그 시각 전까지만 F null(T25 — 웜업만 DL 미관측)"""
+    dl_missing: True면 내내 F null(DL 미관측), 정수 ms면 그 시각 전까지만 F null(T25 — 웜업만 DL 미관측)
+    max_conn: hello cells[].max_conn — C2a 문턱 F_abs = ⌈0.1 × max_conn⌉ (3_ §4 — 11/12). None이면 C2a 꺼짐"""
     events = events or {}
     session = "S1"
     seq = 1
-    lines = [hello(session, seq, cells)]
-    max_conn = None
+    lines = [hello(session, seq, cells, max_conn)]
     for i in range(duration_ms // P):
         t_rel = i * P
         for ev in events.get(t_rel, []):
@@ -173,8 +173,8 @@ SCENARIOS = {
         # 재시작 뒤 첫 칸 12.0 s → A 윈도우가 차는 t = 14000부터 성립 → RAISE 14200
         expect=[alert("RAISE", 6400), alert("END", 12000, reason="session_reset"), alert("RAISE", 14200)]),
     "T08_공격정상혼합": dict(
-        desc="공격 30/s + 정상 20/s — 비율은 3j/(3j+20) ≥ 0.5에 j = 7칸(6.9 s)이지만, C2a(F_w ≥ 10)가 4칸(12건)에 먼저 성립 → 6.6 s (10/27 Q-41)",
-        duration=15000,
+        desc="공격 30/s + 정상 20/s — 비율은 3j/(3j+20) ≥ 0.5에 j = 7칸(6.9 s)이지만, C2a(F_w ≥ 10)가 4칸(12건)에 먼저 성립 → 6.6 s (10/27 Q-41). 셀 한도 96 → F_abs = 10 (11/12)",
+        duration=15000, max_conn=96,
         cells=lambda: [Cell(1, normal=const(20), attack=window(30, 5000))],
         expect=[alert("RAISE", 6600)]),
     "T10_긴공격": dict(
@@ -200,17 +200,22 @@ SCENARIOS = {
     "T18a_램프3s": dict(
         desc="정상 2/s, 40 s부터 0→30/s를 3 s에 걸쳐 (웜업 뒤)", duration=55000,
         cells=lambda: [Cell(1, normal=const(2), attack=ramp(30, 40000, 3000))],
-        # 3_ §9 T18 값(2.2·2.9·5.3 s)은 base가 정확히 2.0일 때다. 웜업 뒤 EWMA(3_ §5)가 램프 초반의
-        # 의심 아닌 칸으로 base를 2.000 → 2.002로 올려 k × base가 6을 넘으므로 A_w = 7이 필요하다 (10/22 사용자 결정)
-        expect=[alert("RAISE", 40000 + 2300)]),
+        # 11/12 C3 = base + z·σ (3_ §4·§5): 정상 2/s가 칸마다 일정해 σ ≈ 0 → 문턱 ≈ base 2.0이라 C3는 묶지 않고 C1(A_w ≥ 5,
+        # 창에 공격 3건)이 정한다. ratio = 공격/(공격 + 2) ≥ 0.5도 3건이면 참. 공격 누적이 3건이 되는 칸 끝 40.9 s + T_nr 1 s
+        # → 41.9 s부터 성립 → M칸 → 42.1 s (A_w 7 = 정상 2 + 공격 5). 11/12 전(k × base 6.006 → A_w 7 필요)은 2.3 s
+        expect=[alert("RAISE", 40000 + 2100)]),
     "T18b_램프10s": dict(
         desc="정상 2/s, 40 s부터 0→30/s를 10 s에 걸쳐", duration=55000,
         cells=lambda: [Cell(1, normal=const(2), attack=ramp(30, 40000, 10000))],
-        expect=[alert("RAISE", 40000 + 3300)]),
+        # 11/12: 칸당 공격 0.03k건 — 누적 ⌊0.015k(k+1)⌋가 3이 되는 칸 k = 14(끝 41.5 s) + 1 s → 42.5 s부터 성립 → 42.7 s.
+        # 11/12 전(k × base)은 3.3 s
+        expect=[alert("RAISE", 40000 + 2700)]),
     "T18c_램프30s": dict(
         desc="정상 2/s, 40 s부터 0→30/s를 30 s에 걸쳐", duration=60000,
         cells=lambda: [Cell(1, normal=const(2), attack=ramp(30, 40000, 30000))],
-        expect=[alert("RAISE", 40000 + 6600)]),
+        # 11/12: 칸당 공격 0.01k건 — 1 s 창(10칸) 안 공격이 3건이 되는 첫 칸 k = 35(끝 43.6 s) + 1 s → 44.6 s부터 성립 → 44.8 s.
+        # 11/12 전(k × base)은 6.6 s
+        expect=[alert("RAISE", 40000 + 4800)]),
     "T19_DL미관측": dict(
         desc="F·R가 null + 공격 30/s (5 s부터) — U로 판정, 시차 없음", duration=10000, dl_missing=True,
         cells=lambda: [Cell(1, normal=const(1), attack=window(30, 5000))],
@@ -218,14 +223,16 @@ SCENARIOS = {
         expect=[alert("RAISE", 5400, mode="dl_missing")]),
     "T25_DL미관측웜업": dict(
         # 3_ §5 웜업 표본 0개 (11/05 Q-76 해결, 이슈 #94 — 25_ 부록 A X3): 웜업 30 s 내내 F null이라 normal 기준선이 갱신되지 않음 →
-        # 웜업 뒤 첫 표본(A_w = 5, 31 s)으로 시드. 35 s부터 공격 8/s: A_w 13 ≥ A_min, ratio 8/13 ≥ θ, F_w 8 < F_abs(10), C3 13 ≥ 3 × 5 거짓
-        # → 경보 없음. 11/04까지는 base 0에서 EWMA(≈0.08)라 C3 참 → RAISE 36 s대
-        desc="웜업 30 s 내내 F null, 정상 5/s, 35 s부터 공격 8/s — 웜업 뒤 첫 표본으로 base 시드(5), C3 거짓, 경보 없음 (25_ X3, 11/05 Q-76)",
+        # 웜업 뒤 첫 표본(A_w = 5, 31 s)으로 base 시드, σ는 0으로 시드(11/12). 35 s부터 공격 8/s. 11/12 C3 = base + z·σ: 정상이
+        # 일정해 σ ≈ 0.1(공격 초반 ratio < θ인 의심 아닌 칸이 더함) → 문턱 ≈ 5.3이라 C3 참. 창에 공격 5건(35.7 s 끝) + 1 s → 36.7 s부터 ratio ≥ θ
+        # → M칸 → RAISE 36.9 s (A_w 12, F_w 7, ratio 0.58; F_abs 없음 — 셀 한도 null). 11/12 전에는 C3 13 ≥ 3 × 5 거짓으로 경보 없음.
+        # 시드 자체(base 5, σ 0)는 단위 시험 Baseline.SeedWhenNoWarmupSamples가 본다
+        desc="웜업 30 s 내내 F null, 정상 5/s, 35 s부터 공격 8/s — 웜업 뒤 첫 표본으로 base 시드(5)·σ 0, 11/12 C3 = base + z·σ(≈5.3) 참 → RAISE 36.9 s (25_ X3, 11/05 Q-76)",
         duration=45000, dl_missing=30000,
-        cells=lambda: [Cell(1, normal=const(5), attack=window(8, 35000))], expect=[]),
+        cells=lambda: [Cell(1, normal=const(5), attack=window(8, 35000))], expect=[alert("RAISE", 36900)]),
     "T25b_정상웜업": dict(
-        desc="T25와 같되 F가 처음부터 있음 — 웜업 평균 base 5, C3 거짓, 경보 없음 (25_ X3b)", duration=45000,
-        cells=lambda: [Cell(1, normal=const(5), attack=window(8, 35000))], expect=[]),
+        desc="T25와 같되 F가 처음부터 있음 — 웜업 평균 base 5·σ 0(일정), 11/12 C3 = base + z·σ 참 → RAISE 36.9 s (25_ X3b)", duration=45000,
+        cells=lambda: [Cell(1, normal=const(5), attack=window(8, 35000))], expect=[alert("RAISE", 36900)]),
     "T21_두셀한셀끊김": dict(
         desc="셀 2개 모두 공격 30/s, 셀 2만 5.5 s 칸 유실 — 셀 2만 보류", duration=12000,
         cells=lambda: [Cell(1, normal=const(1), attack=window(30, 5000)),
@@ -253,8 +260,8 @@ SCENARIOS = {
                       "cc": {"RRC.ConnEstabAtt": {"total": 50}, "RRC.ConnEstabSucc": {"total": 0}}},
         expect=[alert("RAISE", 6400)]),
     "T24_정상부하포화공격": dict(
-        desc="정상 60/s + 공격 50/s 5~20 s(점유 ≈100 > 96 포화) — ratio ≈ 0.45 < θ라 비율로는 못 잡고 C2a(F_w ≥ 10)로 잡음 (10/27 Q-41)",
-        duration=25000,
+        desc="정상 60/s + 공격 50/s 5~20 s(점유 ≈100 > 96 포화) — ratio ≈ 0.45 < θ라 비율로는 못 잡고 C2a(F_w ≥ 10)로 잡음 (10/27 Q-41). 셀 한도 96 → F_abs = 10 (11/12)",
+        duration=25000, max_conn=96,
         cells=lambda: [Cell(1, normal=const(60), attack=window(50, 5000, 20000))],
         # RAISE: 공격 NoReply 2칸(10건)이 F 윈도우에 들어오는 t = 6200부터 성립 → M칸 → 6400 (T_nr + ⌈F_abs/(50×P)⌉×P + (M−1)×P)
         # CLEAR: F 윈도우에 공격 NoReply 2칸(10건)이 남는 마지막 칸 21800 + H_sat 3000 → 24800
@@ -273,7 +280,8 @@ def main():
         os.path.dirname(os.path.abspath(__file__)), "..", "tests", "data", "scenarios")
     os.makedirs(out_dir, exist_ok=True)
     for name, sc in SCENARIOS.items():
-        lines = generate(sc["duration"], sc["cells"](), sc.get("dl_missing", False), sc.get("events"))
+        lines = generate(sc["duration"], sc["cells"](), sc.get("dl_missing", False), sc.get("events"),
+                         sc.get("max_conn"))
         if "before_hello" in sc:
             lines.insert(0, sc["before_hello"])
         with open(os.path.join(out_dir, name + ".jsonl"), "w", encoding="utf-8") as f:

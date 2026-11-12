@@ -24,6 +24,7 @@ const char* to_string(DiagKind kind) {
     case DiagKind::RuleResumed: return "rule_resumed";
     case DiagKind::ModeChanged: return "mode_changed";
     case DiagKind::BaselineLow: return "baseline_low";
+    case DiagKind::C2aOff: return "c2a_off";
     case DiagKind::EvidenceDropped: return "evidence_dropped";
     case DiagKind::InputSilent: return "input_silent";
     case DiagKind::EvtBeforeHello: return "evt_before_hello";

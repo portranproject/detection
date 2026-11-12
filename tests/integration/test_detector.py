@@ -35,14 +35,17 @@ def check(cond, msg):
         print("FAIL:", msg)
 
 
-def config(name, **evidence):
+def config(name, rules=None, **evidence):
     p = os.path.join(TMP, name + ".json")
     ev = {"out_path": os.path.join(TMP, name + "_evidence.jsonl")}
     ev.update(evidence)
     if os.path.exists(ev["out_path"]):
         os.remove(ev["out_path"])
+    cfg = {"evidence": ev}
+    if rules:
+        cfg["rules"] = rules
     with open(p, "w") as f:
-        json.dump({"evidence": ev}, f)
+        json.dump(cfg, f)
     return p, ev["out_path"]
 
 
@@ -120,7 +123,9 @@ with open(repo_cfg_path, "w") as f:
 if os.path.exists(repo_cfg["evidence"]["out_path"]):
     os.remove(repo_cfg["evidence"]["out_path"])
 r = replay("T05_공격종료", cfg=repo_cfg_path)
-default_cfg, default_ev = config("stage2_defaults")
+# 저장소 설정 파일은 셀 한도 max_conn 96(구조체 기본값 null) 말고는 기본값이다. 11/12부터 C2a 문턱이 셀 한도를 따르므로
+# (3_ §4 — F_abs = ⌈0.1 × max_conn⌉, 모르면 C2a 끔) 비교하는 기본값 실행에도 96만 준다
+default_cfg, default_ev = config("stage2_defaults", rules={"L3-01-V": {"max_conn": 96}})
 check(r.returncode == 0, f"repo config exit {r.returncode}: {r.stderr}")
 check(" WARN " not in r.stderr, f"repo config warnings: {r.stderr}")
 dflt = replay("T05_공격종료", cfg=default_cfg)
