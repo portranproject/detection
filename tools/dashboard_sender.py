@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """전송기 — 탐지 엔진 증거 파일(evidence.jsonl)의 새 줄을 대시보드 /ingest로 보낸다 (19_ 전송기 명세서).
 상시 KPM (24_ §4·§5): inputs에 kind input(탐지 엔진 입력 기록 input.jsonl)이 있으면 그 파일도 따라 읽어 hello·f1_evt·ue_evt는
-줄 그대로, kpm2는 셀마다 kpm2_interval_ms(기본 3초)로 묶은 줄만 보낸다 — 0.1초 원본 kpm2는 보내지 않는다.
+줄 그대로(hello는 node_id만 hello_node_id로 — 11/13 이슈 #110), kpm2는 셀마다 kpm2_interval_ms(기본 3초)로 묶은 줄만 보낸다
+— 0.1초 원본 kpm2는 보내지 않는다.
 
 실행 (19_ §2.2):
   python3 tools/dashboard_sender.py --config config/sender.json            # 계속 따라 읽으며 보냄
@@ -10,6 +11,7 @@
   python3 tools/dashboard_sender.py --config config/sender.json --check-detector-config config/detector.json
 
 - 줄의 내용을 바꾸지 않는다. 환경 이름은 헤더 X-Env로 붙이고 토큰은 쓰지 않는다 (19_ §1, 17_ §1.3).
+  예외는 상시 경로의 묶은 kpm2 줄과 hello의 node_id뿐이다 (24_ §4.2).
 - 보낸 위치는 200·400을 받은 뒤에만 상태 파일에 저장한다 — '최소 한 번' (19_ §4.3, 17_ §1.5).
 - 종료 코드: 0 정상, 1 설정 오류, 2 약속에 없는 응답, 3 TLS 검증 실패, 4 상태 파일 저장 실패, 5 잠금 실패 (19_ §7).
 - 탐지 엔진이 파일을 회전하면(29_ §2) 회전 파일(<파일>.<YYYYMMDD-HHMMSS>[.N])을 이름 시각 순으로 빠짐없이 따라간다 —
@@ -101,6 +103,7 @@ DEFAULTS = {
     "kpm2_interval_ms": 3000,   # 상시 KPM 묶음 주기 — 기본 3초 (24_ §4.1, 11/04 사용자 결정)
     "send_ue_evt": False,
     "kpm2_close_lag_ms": 2000,  # 다른 셀 줄로 칸을 닫을 때의 데이터 시각 여유 (24_ §5.3 ②)
+    "hello_node_id": "cu",      # 대시보드로 보내는 hello의 node_id — null이면 바이트 그대로 (24_ §4.2, 11/13 사용자 결정)
 }
 
 # 정수 키의 허용 범위 — 19_ §3 표. retry_max_ms는 retry_initial_ms에 따라 정해져 아래에서 따로 본다
@@ -246,6 +249,12 @@ def load_config(path):
     if not isinstance(v, bool):
         raise ConfigError("send_ue_evt: must be a boolean")
     cfg["send_ue_evt"] = v
+    # hello의 node_id (24_ §4.1·§4.2, 11/13 이슈 #110): 밖으로 나가는 node_id를 분석 엔진이 넣은 값과 관계없이 한 값으로 맞춘다.
+    # 빈 문자열은 받지 않는다 — '이름 없음'을 뜻하려면 null(바이트 그대로)을 쓴다
+    v = val("hello_node_id")
+    if v is not None and (not isinstance(v, str) or not v):
+        raise ConfigError("hello_node_id: must be a non-empty string or null")
+    cfg["hello_node_id"] = v
     # 켜고 끄기 = input 항목 (24_ §4.1): 없으면 위 두 값은 쓰이지 않는다. 있는데 보낼 것이 없으면 경고하고 따라 읽지 않는다
     if in_inputs and cfg["kpm2_interval_ms"] == 0 and not cfg["send_ue_evt"]:
         warnings.append("inputs: kind=input entry ignored — kpm2_interval_ms is 0 and send_ue_evt is false (24_ §4.1)")
@@ -1011,13 +1020,15 @@ class KpmAggregator:
 
 class InputTracker(Tracker):
     """kind input — 탐지 엔진 입력 기록 파일(input.jsonl, 24_ §3)을 따라 읽는다 (24_ §4.2).
-    hello·f1_evt·(send_ue_evt면) ue_evt는 줄 그대로, kpm2는 칸에 모았다가 닫힐 때 묶은 줄로(원본은 보내지 않음),
-    그 밖의 줄은 보내지 않고 센다. 줄마다 safe를 열린 칸의 첫 줄 앞으로 낮춰 보낸 위치가 열린 칸을 넘지 않게 한다(§4.3)."""
+    hello·f1_evt·(send_ue_evt면) ue_evt는 줄 그대로(hello는 node_id만 바꿈), kpm2는 칸에 모았다가 닫힐 때 묶은 줄로
+    (원본은 보내지 않음), 그 밖의 줄은 보내지 않고 센다. 줄마다 safe를 열린 칸의 첫 줄 앞으로 낮춰 보낸 위치가 열린 칸을
+    넘지 않게 한다(§4.3)."""
     is_input = True
 
     def __init__(self, cfg, path, abspath):
         super().__init__(cfg, path, abspath)
         self.send_ue = cfg["send_ue_evt"]
+        self.hello_node_id = cfg["hello_node_id"]
         self.warned = set()
         self.agg = KpmAggregator(cfg["kpm2_interval_ms"], cfg["kpm2_close_lag_ms"], self._warn_once) \
             if cfg["kpm2_interval_ms"] else None
@@ -1105,6 +1116,23 @@ class InputTracker(Tracker):
         self._warn_once(("skip", reason), "skip_input", off=start, reason=reason, head=_head(line))
         self._add(Entry(start, end, None, now))
 
+    def _hello_out(self, obj, line):
+        """대시보드로 보낼 hello 줄 (24_ §4.2 'hello의 node_id', 11/13 사용자 결정 — 이슈 #110).
+        밖으로 나가는 node_id를 분석 엔진·가짜 분석 엔진·시험 생성기가 넣은 값(cu-p4·synthetic 등)과 관계없이
+        hello_node_id 하나로 맞춘다. 탐지 엔진의 input.jsonl(재생용 원본)은 건드리지 않고 보내는 줄만 바꾼다.
+        - 설정이 null이거나 node_id가 이미 그 값이면 원래 줄을 바이트 그대로 (①)
+        - 아니면 node_id만 바꾸고(없으면 맨 끝에 더함 — dict는 키 순서를 지킨다) 공백 없는 JSON 한 줄로 다시 쓴다 (②).
+          ensure_ascii는 켠 채 둔다 — 짝 없는 서로게이트(\\ud800 등)가 든 줄도 UTF-8로 인코딩할 수 있게, ASCII 밖 문자는 \\uXXXX
+        - 다시 쓴 줄이 line_max_bytes를 넘으면 None — 원래 값이 새어 나가지 않게 보내지 않는다 (③)"""
+        nid = self.hello_node_id
+        if nid is None or obj.get("node_id") == nid:
+            return line
+        obj["node_id"] = nid
+        out = json.dumps(obj, separators=(",", ":")).encode("ascii")
+        if len(out) > self.cfg["line_max_bytes"]:
+            return None
+        return out
+
     def _line(self, start, end, line, now):
         try:
             obj = json.loads(line)
@@ -1128,7 +1156,10 @@ class InputTracker(Tracker):
         if typ == "hello":
             if self.agg is not None and isinstance(obj.get("session"), str):
                 self._emit(self.agg.on_hello(obj["session"]), start, now)
-            return self._add(Entry(start, end, line, now))
+            out = self._hello_out(obj, line)
+            if out is None:
+                return self._skip("hello_too_long", start, end, line, now)
+            return self._add(Entry(start, end, out, now))
         if typ == "f1_evt":
             return self._add(Entry(start, end, line, now))
         if typ == "ue_evt":
