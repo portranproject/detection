@@ -672,8 +672,19 @@ def jl(d):
 
 
 def hello_line(seq, session=SESSION):
-    return jl({"type": "hello", "ver": 1, "session": session, "seq": seq, "cells": [{"cell_id": 1, "max_conn": None}],
-               "period_ms": 100, "noreply_timeout_ms": 1000, "ue_evt": True})
+    # node_id는 분석 엔진이 실제로 싣는 값 — 전송기가 "cu"로 바꿔 보내는지 S22·S23·S28·S33·S52도 함께 본다 (24_ §4.2)
+    return jl({"type": "hello", "ver": 1, "session": session, "seq": seq, "node_id": "cu-p4",
+               "cells": [{"cell_id": 1, "max_conn": None}], "period_ms": 100, "noreply_timeout_ms": 1000, "ue_evt": True})
+
+
+def sent_form(x, node_id="cu"):
+    """원본 줄이 대시보드로 갈 때의 모양 (24_ §4.2, 11/13 이슈 #110) — hello는 node_id만 바꿔 공백 없는 JSON(ASCII)으로,
+    이미 그 값이면 그대로. 그 밖의 줄은 그대로. 전송기 코드를 부르지 않고 시험 안에서 만든다."""
+    d = json.loads(x)
+    if d.get("type") != "hello" or d.get("node_id") == node_id:
+        return x
+    d["node_id"] = node_id
+    return jl(d)
 
 
 def kpm2_dict(seq, cell, t, slot, session=SESSION, period=100):
@@ -788,25 +799,25 @@ class InputBase(Base):
 
 class InputSending(InputBase):
     def test_S22_kpm2_aggregated_only(self):
-        # S22: 1000·send_ue_evt false — hello·f1_evt는 바이트 그대로, kpm2는 묶은 줄만(원본 0줄), ue_evt는 가지 않음
+        # S22: 1000·send_ue_evt false — hello(node_id만 cu로)·f1_evt는 바이트 그대로, kpm2는 묶은 줄만(원본 0줄), ue_evt는 가지 않음
         lines, kpms = gen_stream(3)
         self.write_in(lines)
         r = self.once(self.icfg(send_ue_evt=False))
         self.assertEqual(r.returncode, 0, r.stderr)
         got = self.srv.accepted_lines()
         self.assertEqual([x for x in got if b'"agg_ms"' not in x],
-                         [x for x in lines if json.loads(x)["type"] in ("hello", "f1_evt")])
+                         [sent_form(x) for x in lines if json.loads(x)["type"] in ("hello", "f1_evt")])
         self.assertFalse(set(got) & {x for x in lines if json.loads(x)["type"] == "kpm2"})
         self.assertFalse(any(b'"type":"ue_evt"' in x for x in got))
         self.assertEqual(first_of(agg_lines(self.srv)), expect_agg(kpms, 1000))
 
     def test_S23_ue_evt_only(self):
-        # S23: 0·send_ue_evt true — hello·f1_evt·ue_evt만 바이트 그대로, kpm2 없음
+        # S23: 0·send_ue_evt true — hello(node_id만 cu로)·f1_evt·ue_evt만 바이트 그대로, kpm2 없음
         lines, _ = gen_stream(3)
         self.write_in(lines)
         r = self.once(self.icfg(kpm2_interval_ms=0, send_ue_evt=True))
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(self.srv.accepted_lines(), [x for x in lines if json.loads(x)["type"] != "kpm2"])
+        self.assertEqual(self.srv.accepted_lines(), [sent_form(x) for x in lines if json.loads(x)["type"] != "kpm2"])
 
     def test_S24_aggregate_values(self):
         # S24: N 1000·5000·10000, 셀 2개 — 합·평균·최대·n·seq·칸 경계와 키 순서·바이트 모양이 기대값과 같다
@@ -940,7 +951,7 @@ class InputSending(InputBase):
         self.assertEqual(self.once(self.icfg()).returncode, 0)
         got = self.srv.accepted_lines()
         a_last = expect_agg(a_kpms, 1000)[("A", 1, 1000, T0 + 1000)]
-        self.assertLess(got.index(a_last), got.index(b_lines[0]), "A's open bucket closes before B's hello")
+        self.assertLess(got.index(a_last), got.index(sent_form(b_lines[0])), "A's open bucket closes before B's hello")
         self.assertEqual(first_of(agg_lines(self.srv)), {**expect_agg(a_kpms, 1000), **expect_agg(b_kpms, 1000)})
         # hello 없이 — 상주 모드에서 파일 끝 마무리 없이도 A의 칸이 닫혀 간다(C의 마지막 칸은 열린 채)
         srv = self.server()
@@ -1051,7 +1062,7 @@ class InputSending(InputBase):
         self.write_in(bad + [hello_line(1)])
         r = self.once(self.icfg())
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual(self.srv.accepted_lines(), [hello_line(1)])
+        self.assertEqual(self.srv.accepted_lines(), [sent_form(hello_line(1))])
         for reason in ("not_json", "no_type", "unknown_type"):
             self.assertEqual(r.stderr.count(f"reason={reason}"), 1, r.stderr)
         self.assertEqual(self.state_offset(self.inp), os.path.getsize(self.inp))
@@ -1158,12 +1169,66 @@ class InputSending(InputBase):
         self.assertEqual(r.returncode, 0, r.stderr)
         got = self.srv.accepted_lines()
         self.assertEqual([x for x in got if b'"agg_ms"' not in x],
-                         [x for x in lines if json.loads(x)["type"] in ("hello", "f1_evt")])
+                         [sent_form(x) for x in lines if json.loads(x)["type"] in ("hello", "f1_evt")])
         self.assertEqual(first_of(agg_lines(self.srv)), expect_agg(kpms, 1000))
         warns = [w for w in r.stderr.splitlines() if " WARN agg_unknown_key " in w]
         for k in ("inferred", "si.RRC.ConnSample", "ext.NewThing"):
             self.assertEqual(sum(1 for w in warns if f" key={k} " in w), 1, r.stderr)
         self.assertEqual(len(warns), 3, r.stderr)
+
+    def test_S53_hello_node_id(self):
+        # S53 ①② (11/13 이슈 #110, 24_ §4.2): hello의 node_id는 늘 hello_node_id("cu")로 나간다 — 다른 값·숫자·없음이면
+        #      node_id만 바꿔 공백 없는 JSON으로 다시 쓰고(다른 필드 값·키 순서 그대로, ASCII 밖 문자는 \uXXXX),
+        #      이미 "cu"이면 바이트 그대로. 묶은 kpm2·f1_evt는 바뀌지 않는다. hello_node_id null이면 모두 바이트 그대로
+        def raw(seq, nid):
+            return ('{"type": "hello", "ver": 1, "session": "%s", "seq": %d, "producer": "분석 엔진 0.1", %s'
+                    '"cells": [{"cell_id": 1, "max_conn": null}], "period_ms": 100, "noreply_timeout_ms": 1000}'
+                    % (SESSION, seq, nid)).encode()
+        hellos = [raw(1, '"node_id": "cu-p4", '),   # 다른 값 + 공백·ASCII 밖 문자 — 자리 그대로 바뀜
+                  raw(2, ""),                       # 없음 — 맨 끝에 더함
+                  raw(3, '"node_id": 7, '),         # 문자열 아님
+                  raw(4, '"node_id": "cu", ')]      # 이미 cu — 바이트 그대로
+        lines, kpms = gen_stream(2, seq0=5, ue=False, hello=False)
+        self.write_in(hellos + lines)
+        r = self.once(self.icfg())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        got = self.srv.accepted_lines()
+        out = [x for x in got if json.loads(x)["type"] == "hello"]
+        self.assertEqual(out[3], hellos[3])
+        for src, o in zip(hellos[:3], out[:3]):
+            want = json.loads(src)
+            keys = list(want)
+            want["node_id"] = "cu"
+            self.assertEqual(json.loads(o), want)
+            self.assertEqual(list(json.loads(o)), keys if "node_id" in keys else keys + ["node_id"])
+            self.assertEqual(o, json.dumps(want, separators=(",", ":")).encode())  # 공백 없음, ASCII(\uXXXX)
+            self.assertTrue(o.isascii())
+        self.assertEqual(len(out), 4)
+        self.assertNotIn(b"cu-p4", b"".join(got))
+        self.assertEqual([x for x in got if json.loads(x)["type"] == "f1_evt"],
+                         [x for x in lines if json.loads(x)["type"] == "f1_evt"])
+        self.assertEqual(first_of(agg_lines(self.srv)), expect_agg(kpms, 1000))
+        # ② null — hello도 바이트 그대로
+        srv = self.server()
+        r = self.once(self.icfg(hello_node_id=None, url=srv.url(), state_path=os.path.join(self.dir, "state_null.json")))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual([x for x in srv.accepted_lines() if json.loads(x)["type"] == "hello"], hellos)
+
+    def test_S53_hello_too_long(self):
+        # S53 ③: 다시 쓰면 line_max_bytes를 넘는 hello — 보내지 않고 hello_too_long으로 센다(원래 값이 새어 나가지 않게).
+        #      원래 줄은 한도 안(정확히 1024바이트)이라 읽기에서는 빠지지 않는다. 그 뒤 줄은 그대로 가고 위치는 넘어간다
+        d = {"type": "hello", "ver": 1, "session": SESSION, "seq": 1, "node_id": 1, "producer": "",
+             "period_ms": 100, "noreply_timeout_ms": 1000}
+        d["producer"] = "x" * (1024 - len(jl(d)))
+        long_hello = jl(d)
+        self.assertEqual(len(long_hello), 1024)
+        f1 = jl({"type": "f1_evt", "ver": 1, "session": SESSION, "seq": 2, "t_ms": T0, "event": "du_reset"})
+        self.write_in([long_hello, f1])
+        r = self.once(self.icfg(line_max_bytes=1024))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.srv.accepted_lines(), [f1])
+        self.assertEqual(r.stderr.count("reason=hello_too_long"), 1, r.stderr)
+        self.assertEqual(self.state_offset(self.inp), os.path.getsize(self.inp))
 
 
 class InputConfig(Base):
@@ -1193,6 +1258,20 @@ class InputConfig(Base):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("kind=input entry ignored", r.stderr)
         self.assertNotIn("input.jsonl", r.stderr.split("kind=input entry ignored")[1])  # 따라 읽지 않음
+
+    def test_S53_config(self):
+        # S53 ④ (11/13 이슈 #110, 24_ §4.1): hello_node_id는 빈 문자열이 아닌 문자열 또는 null — 그 밖은 종료 코드 1
+        self.write(lines_bytes([L(1)]))
+        for v in ("", 1, False, ["cu"]):
+            with self.subTest(bad=v):
+                r = self.run_sender(self.cfg(hello_node_id=v), "--dry-run")
+                self.assertEqual(r.returncode, 1, r.stderr)
+                self.assertIn("hello_node_id:", r.stderr)
+        for v in ("cu", "gnb-1", None):
+            with self.subTest(ok=v):
+                r = self.run_sender(self.cfg(hello_node_id=v), "--dry-run")
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertNotIn("config_warning", r.stderr)
 
     def test_S35_check_detector_config(self):
         # S35: 시작 전 확인(24_ §7 표) — input 있음 × 탐지 엔진 null·다른 경로·같은 경로 / input 없음 × 경로 있음·null

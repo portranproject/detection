@@ -16,5 +16,6 @@
   "stats_interval_ms": 60000,
   "kpm2_interval_ms": 3000,
   "send_ue_evt": false,
-  "kpm2_close_lag_ms": 2000
+  "kpm2_close_lag_ms": 2000,
+  "hello_node_id": "cu"
 }
