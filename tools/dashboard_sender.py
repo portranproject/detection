@@ -1164,6 +1164,15 @@ class InputTracker(Tracker):
             return self._add(Entry(start, end, line, now))
         if typ == "ue_evt":
             return self._add(Entry(start, end, line if self.send_ue else None, now))
+        if typ == "overhead":
+            # 계측 엔진이 낸 줄을 그대로 실음. 형식을 옮기면 대시보드가 거부함
+            #   (2026-11-13 p1 실측: 그대로 보낸 줄은 accepted, 옛 형식으로 옮긴 줄은 rejected)
+            # link 가 null 인 줄은 보내지 않고 셈. 대시보드는 link 를 배열로만 받는데 [] 로 바꿔 보내면
+            #   인터페이스 카운터를 못 읽었다는 뜻이 읽었는데 흐름이 없었다는 뜻과 같아져,
+            #   받는 쪽에서 측정 구멍을 가릴 수 없게 됨
+            if obj.get("link") is None:
+                return self._skip("overhead_no_link", start, end, line, now)
+            return self._add(Entry(start, end, line, now))
         return self._skip("unknown_type", start, end, line, now)
 
     def flush_open(self):
