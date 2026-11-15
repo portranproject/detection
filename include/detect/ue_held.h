@@ -6,7 +6,8 @@
 //  - HeldBook: 불확실 경보 묶음 (14_ §6.2 — Q-58 ② 해결, 이슈 #48). 보류 시각 목록(raise의 values.held), 공격 경보가 열린 뒤 보류 수
 //    (update의 values.held), 창 안 보류 UE 수 H_W ≥ N이면 kind anomaly RAISE, 그 뒤 보류는 UPDATE로 모음, 마지막 보류 뒤 clear_quiet_ms면
 //    CLEAR, 공격 RAISE 직전 CLEAR(14_ §8.2), END. 룰은 창·문턱·raise의 params·로그 필드만 넘긴다 — L3-20·L3-01-O·L3-21(2단계)·
-//    L3-24·L3-14·L3-06(3단계). 이동 전 룰마다 60~90줄이 같은 코드였다(25_ §4, 26_ §3.4)
+//    L3-24·L3-14·L3-06(3단계). 이동 전 룰마다 60~90줄이 같은 코드였다(25_ §4, 26_ §3.4). (11/15) L3-01-O·L3-21은 문턱이 셀마다 달라
+//    (15_ §1.2 셀 한도 비율 문턱) 문턱·raise 값을 셀별로 정하는 함수를 넘긴다
 
 #include "detect/alert.h"
 #include "detect/config.h"
@@ -18,6 +19,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -56,9 +58,16 @@ class EvictWindow {
 // 불확실 경보 묶음 (14_ §6.2). 룰·셀마다 보류 시각 목록과 창 안 보류 UE를 두고, 공격 경보와 별개의 UeAlertBook(kind anomaly)을 쓴다
 class HeldBook {
  public:
-  // 룰이 넘기는 것 (14_ §6.2): window_ms = 그 룰의 성립 창(L3-01-O·L3-21 갈래 ①은 W, L3-20·3단계는 clear_quiet_ms), n = 개수 문턱
-  // (L3-01-O n_stall·L3-21 n_fail, 그 밖 1), params·log_fields = raise 레코드의 params와 로그 줄에서 kind=anomaly·held_w 뒤에 붙는
-  // 룰 필드(모두 설정값이라 고정)
+  // 한 셀의 문턱과 raise 값 — n = 개수 문턱, params·log_fields = raise 레코드의 params와 로그 줄에서 kind=anomaly·held_w 뒤에 붙는 룰 필드
+  struct CellSpec {
+    int64_t n = 1;
+    nlohmann::ordered_json params;
+    std::vector<std::pair<std::string, std::string>> log_fields;
+  };
+  // 룰이 넘기는 것 (14_ §6.2): window_ms = 그 룰의 성립 창(L3-01-O·L3-21 갈래 ①은 W, L3-20·3단계는 clear_quiet_ms), n·params·log_fields =
+  // 모든 셀에 같은 문턱과 raise 값(L3-20·3단계는 문턱 1, 모두 설정값이라 고정). per_cell이 있으면 그 셋 대신 tick이 그 셀의 지금
+  // hello로 부른 값을 쓴다 — 셀 한도 비율 문턱(15_ §1.2 — 11/15, L3-01-O·L3-21): 보류 문턱은 공격 경보와 같은 셀의 N이고(15_ §4.7·§5.7),
+  // raise에는 그 셀에 쓴 N(n_stall_th·n_fail_th)이 실린다
   struct Spec {
     std::string rule;
     int stage = 2;
@@ -67,6 +76,7 @@ class HeldBook {
     int64_t clear_quiet_ms = 0;
     nlohmann::ordered_json params;
     std::vector<std::pair<std::string, std::string>> log_fields;
+    std::function<CellSpec(const Hello& hello, int64_t cell)> per_cell;
   };
 
   HeldBook(Spec spec, AlertConfig alert);
@@ -104,7 +114,9 @@ class HeldBook {
   };
 
   int64_t window(Cell& c, int64_t now) const;
-  void decorate(std::size_t from, std::vector<AlertEvent>& out);
+  CellSpec cell_spec(const Hello& hello, int64_t cell) const;  // 그 셀의 문턱·raise 값 (Spec::per_cell 또는 고정값)
+  // cs = 이번 칸의 문턱·raise 값 — RAISE를 낼 수 있는 tick에서만 있고, close(CLEAR만)는 nullptr
+  void decorate(std::size_t from, std::vector<AlertEvent>& out, const CellSpec* cs);
 
   Spec spec_;
   AlertConfig alert_;

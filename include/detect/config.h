@@ -85,24 +85,32 @@ struct BlindDosConfig {
   int64_t clear_quiet_ms = 60000;  // clear_quiet_ms — 마지막 걸림 뒤 이만큼 새로 걸린 UE가 없으면 해제 (15_ §2.5)
 };
 
-// 룰 L3-01-O 인증 단계 고착 (15_ §4.4·§1.2). 설정 파일 rules.L3-01-O에 키가 없으면 이 기본값을 쓴다 (4_ §1.2)
+// 룰 L3-01-O 인증 단계 고착 (15_ §4.4·§1.2). 설정 파일 rules.L3-01-O에 키가 없으면 이 기본값을 쓴다 (4_ §1.2).
+// 셀 고착 수 문턱 N = max(n_stall, ⌈n_stall_frac × max_conn⌉)을 셀마다 정한다 (15_ §1.2·§4.3 — 11/15 사용자 결정, 31_ §4)
 struct AuthStallConfig {
   int64_t auth_wait_ms = 2000;           // auth_wait_ms — T_auth, AuthenticationRequest 응답 대기 (15_ §4.3)
   int64_t window_ms = 10000;             // window_ms — W, 셀 고착 수를 세는 창
-  int64_t n_stall = 5;                   // n_stall — N, 창 안 고착 수 문턱
+  int64_t n_stall = 5;                   // n_stall — N의 최소값 (11/14까지는 고정 문턱 N). 셀 한도를 모르거나 작을 때의 바닥
+  double n_stall_frac = 0.1;             // n_stall_frac — N의 셀 한도 비율 [0, 1]. 0이면 비율을 쓰지 않음(N = n_stall) (11/15 추가)
   int64_t clear_quiet_ms = 60000;        // clear_quiet_ms — 마지막 성립 뒤 이만큼 성립이 없으면 해제 (15_ §4.5)
-  std::optional<int64_t> max_conn = 96;  // max_conn — 심각도 high 문턱 0.9 × max_conn. null이면 high를 쓰지 않음,
-                                         // hello cells[].max_conn이 우선 (15_ §4.3, 1단계 3_ §4와 같음)
+  std::optional<int64_t> max_conn = 96;  // max_conn — 심각도 high 문턱 0.9 × max_conn과 문턱 N(11/15)에 쓰는 셀 연결 한도. null이면
+                                         // high를 쓰지 않고 N = n_stall. hello cells[].max_conn이 우선 (15_ §4.3, 1단계 3_ §4와 같음)
 };
 
-// 룰 L3-21 상향 DoS (15_ §5.4·§1.2). 설정 파일 rules.L3-21에 키가 없으면 이 기본값을 쓴다 (4_ §1.2)
+// 룰 L3-21 상향 DoS (15_ §5.4·§1.2). 설정 파일 rules.L3-21에 키가 없으면 이 기본값을 쓴다 (4_ §1.2).
+// 갈래 ① 실패 UE 수 문턱 N = max(n_fail, ⌈n_fail_frac × max_conn⌉)을 셀마다 정한다 (15_ §1.2·§5.3 — 11/15 사용자 결정, 31_ §4)
 struct UplinkDosConfig {
-  int64_t window_ms = 10000;            // window_ms — W, 셀 실패 UE 수를 세는 창 (갈래 ①)
-  int64_t n_fail = 5;                   // n_fail — N, 창 안 실패 UE 수 문턱 (갈래 ①)
-  int64_t fail_accept_wait_ms = 5000;   // fail_accept_wait_ms — T_fa, 실패 뒤 망 수락 대기 (15_ §5.3)
-  int64_t reg_repeat = 3;               // reg_repeat — R, 한 연결 안 RegistrationRequest 수 문턱 (갈래 ②)
-  int64_t clear_quiet_ms = 60000;       // clear_quiet_ms — 마지막 성립·걸림 뒤 이만큼 조용하면 해제 (15_ §5.5)
-  std::vector<int64_t> ignore_causes;   // ignore_causes — 실패로 세지 않을 Reject의 5GMM 원인값. 기본 끔 (15_ §5.2)
+  int64_t window_ms = 10000;             // window_ms — W, 셀 실패 UE 수를 세는 창 (갈래 ①)
+  int64_t n_fail = 5;                    // n_fail — 갈래 ① N의 최소값 (11/14까지는 고정 문턱 N)
+  double n_fail_frac = 0.1;              // n_fail_frac — N의 셀 한도 비율 [0, 1]. 0이면 비율을 쓰지 않음(N = n_fail) (11/15 추가)
+  std::optional<int64_t> max_conn = 96;  // max_conn — 문턱 N에만 쓰는 셀 연결 한도(심각도에는 안 씀). null이면 N = n_fail.
+                                         // hello cells[].max_conn이 우선 (15_ §5.4 — 11/15 추가)
+  // fail_accept_wait_ms — T_fa, 실패 뒤 망 수락 대기 (15_ §5.3). 11/15 사용자 결정으로 5,000 → 3,000: '실패 뒤 수락'은 실패 → 재인증 →
+  // 수락이라 L3-20 수락 대기(15_ §2.4)와 같은 근거 — 정상 RRCSetupComplete → RRC SecurityModeCommand의 Cantelli 0.1% 경계 2.93 s (15_ §5.4)
+  int64_t fail_accept_wait_ms = 3000;
+  int64_t reg_repeat = 3;                // reg_repeat — R, 한 연결 안 RegistrationRequest 수 문턱 (갈래 ②)
+  int64_t clear_quiet_ms = 60000;        // clear_quiet_ms — 마지막 성립·걸림 뒤 이만큼 조용하면 해제 (15_ §5.5)
+  std::vector<int64_t> ignore_causes;    // ignore_causes — 실패로 세지 않을 Reject의 5GMM 원인값. 기본 끔 (15_ §5.2)
 };
 
 // 룰 L3-24 하향 IMSI 추출 (20_ §3.4·§1.5). 설정 파일 rules.L3-24에 키가 없으면 이 기본값을 쓴다 (4_ §1.2).

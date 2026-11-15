@@ -246,3 +246,55 @@ TEST(EvictWindow, NoteWindowAndOpen) {
   w.reset();
   EXPECT_EQ(w.window(1, 63000), 0);
 }
+
+// 셀별 문턱 (15_ §1.2 — 11/15 사용자 결정, L3-01-O·L3-21의 셀 한도 비율 문턱): Spec::per_cell이 있으면 tick이 그 셀의 지금 hello로
+// 문턱 N과 raise의 params·로그 필드를 정한다(고정 n·params·log_fields 대신). 새 보류가 없는 칸에서는 부르지 않는다
+TEST(HeldBook, PerCellThreshold) {
+  HeldBook::Spec s = spec(1);  // 고정 n 1·params — per_cell이 대신한다
+  int calls = 0;
+  s.per_cell = [&calls](const Hello& hello, int64_t cell) {
+    ++calls;
+    HeldBook::CellSpec cs;
+    cs.n = 3;  // hello에 셀 한도가 없으면 3
+    for (const CellInfo& ci : hello.cells)
+      if (ci.cell_id == cell && ci.max_conn) cs.n = *ci.max_conn / 10;
+    cs.params["n_th"] = cs.n;
+    cs.log_fields = {{"n_th", std::to_string(cs.n)}};
+    return cs;
+  };
+  Ctx c;
+  c.hello.cells = {CellInfo{1, 20}, CellInfo{2, std::nullopt}};
+  HeldBook b(std::move(s), AlertConfig{});
+  std::vector<AlertEvent> out;
+  auto at = [](int64_t cell, int64_t du, int64_t t) {
+    AlertUe a = held(du, t);
+    a.cell = cell;
+    return a;
+  };
+  b.tick(1, 100, false, false, c.ctx(), out);
+  EXPECT_EQ(calls, 0);  // 새 보류가 없는 칸
+  b.hold(1, 1000, false, at(1, 1, 1000));
+  b.hold(2, 1000, false, at(2, 1, 1000));
+  b.hold(2, 1050, false, at(2, 2, 1050));
+  b.tick(1, 1100, false, false, c.ctx(), out);
+  b.tick(2, 1100, false, false, c.ctx(), out);
+  EXPECT_TRUE(out.empty());  // 셀 1은 1 < 2, 셀 2는 2 < 3 — 고정 n 1이었으면 둘 다 RAISE
+  EXPECT_EQ(calls, 2);
+  b.hold(1, 1200, false, at(1, 2, 1200));
+  b.hold(2, 1200, false, at(2, 3, 1200));
+  b.tick(1, 1300, false, false, c.ctx(), out);
+  b.tick(2, 1300, false, false, c.ctx(), out);
+  ASSERT_EQ(out.size(), 2u);
+  EXPECT_EQ(out[0].cell_id, 1);
+  EXPECT_EQ(out[0].kind, AlertEventKind::Raise);
+  EXPECT_EQ(out[0].ues.size(), 2u);
+  EXPECT_EQ(out[0].params.dump(), R"({"n_th":2})");
+  EXPECT_EQ(out[0].log_fields, (std::vector<std::pair<std::string, std::string>>{
+                                   {"kind", "anomaly"}, {"held_w", "2"}, {"n_th", "2"}}));
+  EXPECT_EQ(out[1].cell_id, 2);
+  EXPECT_EQ(out[1].kind, AlertEventKind::Raise);
+  EXPECT_EQ(out[1].ues.size(), 3u);
+  EXPECT_EQ(out[1].params.dump(), R"({"n_th":3})");
+  EXPECT_EQ(out[1].log_fields, (std::vector<std::pair<std::string, std::string>>{
+                                   {"kind", "anomaly"}, {"held_w", "3"}, {"n_th", "3"}}));
+}

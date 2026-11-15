@@ -8,7 +8,7 @@
       "kind": "RAISE",
       "rule": "L3-21",
       "cell": 1,
-      "t_rel_ms": 6000,
+      "t_rel_ms": 5000,
       "mode": "normal",
       "severity": "medium",
       "branch": "1"

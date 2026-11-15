@@ -542,3 +542,24 @@ TEST(HitWindow, HeldBookHookClearsBeforeRaise) {
   EXPECT_EQ(held.held(1, false, 400), 0);  // 새 공격 경보 — 보류 수 0부터
   EXPECT_FALSE(held.open(1));
 }
+
+// 칸마다 정하는 문턱 (15_ §1.2·§4.3 — 11/15 셀 한도 비율 문턱, L3-01-O): set_n은 그 칸의 성립 판단에 쓴다(set_severity와 같은 방식).
+// 성립은 새 걸림에서 보므로 문턱을 낮춘 칸에 새 걸림이 없으면 RAISE하지 않는다. 부르지 않으면 만들 때의 n(4단계 고정 문턱)
+TEST(HitWindow, ThresholdPerTick) {
+  H h(5, 10000, 60000, {}, "attack", 2);
+  h.w.hit(uid(1), ue(1, 100));
+  h.w.hit(uid(2), ue(2, 200));
+  h.tick(300);
+  EXPECT_TRUE(h.out.empty());  // 2 < 5
+  h.w.set_n(2);
+  h.tick(400);
+  EXPECT_TRUE(h.out.empty());  // 새 걸림 없음
+  h.w.set_n(3);
+  h.w.hit(uid(3), ue(3, 450));
+  h.tick(500);
+  ASSERT_EQ(h.out.size(), 1u);  // 창 안 3 ≥ 3
+  EXPECT_EQ(h.out[0].kind, AlertEventKind::Raise);
+  EXPECT_EQ(h.out[0].t, 500);
+  ASSERT_EQ(h.out[0].ues.size(), 3u);
+  EXPECT_EQ(h.out[0].ues[0].du_ue_id, 1);
+}

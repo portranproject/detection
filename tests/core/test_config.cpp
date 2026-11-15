@@ -116,6 +116,8 @@ TEST(Config, RepoConfigFileParses) {
   EXPECT_EQ(st.config.auth_wait_ms, sd.auth_wait_ms);
   EXPECT_EQ(st.config.window_ms, sd.window_ms);
   EXPECT_EQ(st.config.n_stall, sd.n_stall);
+  EXPECT_DOUBLE_EQ(st.config.n_stall_frac, sd.n_stall_frac);
+  EXPECT_DOUBLE_EQ(sd.n_stall_frac, 0.1);  // 15_ §1.2·§4.4 — 11/15 셀 한도 비율 문턱(96이면 N 10)
   EXPECT_EQ(st.config.clear_quiet_ms, sd.clear_quiet_ms);
   EXPECT_EQ(st.config.max_conn, sd.max_conn);
   auto up = parse_uplink_dos_config(r.config.rules.at("L3-21"));
@@ -124,7 +126,12 @@ TEST(Config, RepoConfigFileParses) {
   const UplinkDosConfig pd;
   EXPECT_EQ(up.config.window_ms, pd.window_ms);
   EXPECT_EQ(up.config.n_fail, pd.n_fail);
+  EXPECT_DOUBLE_EQ(up.config.n_fail_frac, pd.n_fail_frac);
+  EXPECT_DOUBLE_EQ(pd.n_fail_frac, 0.1);  // 15_ §1.2·§5.4 — 11/15
+  EXPECT_EQ(up.config.max_conn, pd.max_conn);
+  EXPECT_EQ(pd.max_conn, 96);              // 15_ §5.4 — 11/15 추가, L3-01-O와 같은 값
   EXPECT_EQ(up.config.fail_accept_wait_ms, pd.fail_accept_wait_ms);
+  EXPECT_EQ(pd.fail_accept_wait_ms, 3000);  // 15_ §1.2·§5.4 — 11/15 사용자 결정 5,000 → 3,000
   EXPECT_EQ(up.config.reg_repeat, pd.reg_repeat);
   EXPECT_EQ(up.config.clear_quiet_ms, pd.clear_quiet_ms);
   EXPECT_EQ(up.config.ignore_causes, pd.ignore_causes);
@@ -328,19 +335,27 @@ TEST(Config, Stage2KeysRead) {
   ASSERT_TRUE(bl.ok) << bl.error;
   EXPECT_EQ(bl.config.accept_wait_ms, 4000);
   EXPECT_EQ(bl.config.clear_quiet_ms, 30000);
-  auto st = parse_auth_stall_config(R"({"auth_wait_ms":1500,"window_ms":5000,"n_stall":3,"clear_quiet_ms":2000,"max_conn":null})");
+  auto st = parse_auth_stall_config(
+      R"({"auth_wait_ms":1500,"window_ms":5000,"n_stall":3,"n_stall_frac":0.25,"clear_quiet_ms":2000,"max_conn":null})");
   ASSERT_TRUE(st.ok) << st.error;
+  EXPECT_TRUE(st.warnings.empty());
   EXPECT_EQ(st.config.auth_wait_ms, 1500);
   EXPECT_EQ(st.config.window_ms, 5000);
   EXPECT_EQ(st.config.n_stall, 3);
+  EXPECT_DOUBLE_EQ(st.config.n_stall_frac, 0.25);
   EXPECT_EQ(st.config.clear_quiet_ms, 2000);
-  EXPECT_FALSE(st.config.max_conn);  // null이면 심각도 high를 쓰지 않는다 (15_ §1.2)
+  EXPECT_FALSE(st.config.max_conn);  // null이면 심각도 high를 쓰지 않고 문턱 N = n_stall (15_ §1.2)
   EXPECT_EQ(parse_auth_stall_config(R"({"max_conn":50})").config.max_conn, 50);
   auto up = parse_uplink_dos_config(
-      R"({"window_ms":20000,"n_fail":3,"fail_accept_wait_ms":4000,"reg_repeat":4,"clear_quiet_ms":120000,"ignore_causes":[9,22]})");
+      R"({"window_ms":20000,"n_fail":3,"n_fail_frac":0.2,"max_conn":null,"fail_accept_wait_ms":4000,"reg_repeat":4,)"
+      R"("clear_quiet_ms":120000,"ignore_causes":[9,22]})");
   ASSERT_TRUE(up.ok) << up.error;
+  EXPECT_TRUE(up.warnings.empty());
   EXPECT_EQ(up.config.window_ms, 20000);
   EXPECT_EQ(up.config.n_fail, 3);
+  EXPECT_DOUBLE_EQ(up.config.n_fail_frac, 0.2);
+  EXPECT_FALSE(up.config.max_conn);  // null이면 문턱 N = n_fail (15_ §1.2)
+  EXPECT_EQ(parse_uplink_dos_config(R"({"max_conn":256})").config.max_conn, 256);
   EXPECT_EQ(up.config.fail_accept_wait_ms, 4000);
   EXPECT_EQ(up.config.reg_repeat, 4);
   EXPECT_EQ(up.config.clear_quiet_ms, 120000);
@@ -487,6 +502,51 @@ TEST(Config, Stage2TypeErrors) {
   EXPECT_FALSE(parse_uplink_dos_config(R"({"reg_repeat":true})").ok);
   EXPECT_FALSE(parse_uplink_dos_config("[1]").ok);
   EXPECT_EQ(parse_auth_stall_config("[1]").error, "config: rules.L3-01-O: not an object");
+}
+
+// 셀 한도 비율 문턱 키 (15_ §1.2 — 11/15 사용자 결정, L01-T25·L21-T28): n_stall_frac·n_fail_frac은 실수 [0, 1](0은 비율을 쓰지
+// 않음 — 1단계 f_abs_frac (0, 1]과 다름), L3-21 max_conn은 1 이상 또는 null(L3-01-O와 같음). 범위 밖·문자열은 오류(종료 코드 1)
+TEST(Config, Stage2CellRatioKeys) {
+  for (const char* v : {"0", "1", "0.0", "1.0", "0.25"}) {
+    const std::string s = std::string("{\"n_stall_frac\":") + v + "}";
+    const std::string f = std::string("{\"n_fail_frac\":") + v + "}";
+    EXPECT_TRUE(parse_auth_stall_config(s).ok) << s;
+    EXPECT_TRUE(parse_uplink_dos_config(f).ok) << f;
+  }
+  EXPECT_DOUBLE_EQ(parse_auth_stall_config(R"({"n_stall_frac":0})").config.n_stall_frac, 0.0);
+  EXPECT_DOUBLE_EQ(parse_uplink_dos_config(R"({"n_fail_frac":1})").config.n_fail_frac, 1.0);
+  for (const char* v : {"-0.1", "1.5", "-1", "2"}) {
+    const std::string s = std::string("{\"n_stall_frac\":") + v + "}";
+    const std::string f = std::string("{\"n_fail_frac\":") + v + "}";
+    const auto st = parse_auth_stall_config(s);
+    const auto up = parse_uplink_dos_config(f);
+    EXPECT_FALSE(st.ok) << s;
+    EXPECT_FALSE(up.ok) << f;
+    EXPECT_EQ(st.error, "config: rules.L3-01-O.n_stall_frac: out of range [0, 1]") << s;
+    EXPECT_EQ(up.error, "config: rules.L3-21.n_fail_frac: out of range [0, 1]") << f;
+  }
+  for (const char* v : {R"("0.1")", "null", "true", "[0.1]"}) {
+    const std::string s = std::string("{\"n_stall_frac\":") + v + "}";
+    const std::string f = std::string("{\"n_fail_frac\":") + v + "}";
+    EXPECT_EQ(parse_auth_stall_config(s).error, "config: rules.L3-01-O.n_stall_frac: not a number") << s;
+    EXPECT_EQ(parse_uplink_dos_config(f).error, "config: rules.L3-21.n_fail_frac: not a number") << f;
+  }
+  // L3-21 max_conn (11/15 추가) — 1 이상 정수 또는 null. 상한은 없다
+  EXPECT_TRUE(parse_uplink_dos_config(R"({"max_conn":1})").ok);
+  EXPECT_EQ(parse_uplink_dos_config(R"({"max_conn":1000000})").config.max_conn, 1000000);
+  const auto nul = parse_uplink_dos_config(R"({"max_conn":null})");
+  ASSERT_TRUE(nul.ok) << nul.error;
+  EXPECT_FALSE(nul.config.max_conn);
+  EXPECT_NE(parse_uplink_dos_config(R"({"max_conn":0})").error.find("max_conn: out of range"), std::string::npos);
+  EXPECT_FALSE(parse_uplink_dos_config(R"({"max_conn":-5})").ok);
+  EXPECT_FALSE(parse_uplink_dos_config(R"({"max_conn":"96"})").ok);
+  EXPECT_FALSE(parse_uplink_dos_config(R"({"max_conn":96.5})").ok);
+  EXPECT_FALSE(parse_auth_stall_config(R"({"max_conn":-1})").ok);
+  // 최상위 해석은 룰 절을 JSON 그대로 넘기고(Q-46), 룰을 만들 때 키 표로 읽어 이 오류가 난다 — main은 이 오류로 종료 코드 1
+  const ConfigResult r = parse_config(R"({"rules":{"L3-21":{"n_fail_frac":1.5}}})");
+  ASSERT_TRUE(r.ok) << r.error;
+  EXPECT_EQ(parse_uplink_dos_config(r.config.rules.at("L3-21")).error,
+            "config: rules.L3-21.n_fail_frac: out of range [0, 1]");
 }
 
 // ignore_causes (15_ §1.2): 정수 배열, 각 0~255, 중복 없음, 빈 배열 허용(끔)

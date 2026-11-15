@@ -12,12 +12,13 @@
     },
     "L3-20": { "accept_wait_ms": 3000, "clear_quiet_ms": 60000 },
     "L3-01-O": {
-      "auth_wait_ms": 2000, "window_ms": 10000, "n_stall": 5,
+      "auth_wait_ms": 2000, "window_ms": 10000, "n_stall": 5, "n_stall_frac": 0.1,
       "clear_quiet_ms": 60000, "max_conn": 96
     },
     "L3-21": {
-      "window_ms": 10000, "n_fail": 5, "fail_accept_wait_ms": 5000,
-      "reg_repeat": 3, "clear_quiet_ms": 60000, "ignore_causes": []
+      "window_ms": 10000, "n_fail": 5, "n_fail_frac": 0.1, "max_conn": 96,
+      "fail_accept_wait_ms": 3000, "reg_repeat": 3, "clear_quiet_ms": 60000,
+      "ignore_causes": []
     },
     "L3-24": { "clear_quiet_ms": 60000 },
     "L3-14": { "clear_quiet_ms": 60000 },

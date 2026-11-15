@@ -225,7 +225,7 @@ if r6:
     # 재개 뒤 버퍼·기준선이 그대로라 보류 없이 M = 3칸 성립에서 다시 RAISE(+300 ms), CLEAR는 재생과 같은 시각 (3_ §8)
     check(len(a) == 4 and a[2].startswith(f"ALERT RAISE rule=L3-01-V cell=1 t={raise_t + 300} ")
           and a[3].split(" duration_ms=")[0] == ra[-1].split(" duration_ms=")[0], f"T25 after resume: {a}")
-silent_case("ut31", os.path.join(SCN2, "S01_L3-01-O_고착5_RAISE.jsonl"), "L3-01-O")
+silent_case("ut31", os.path.join(SCN2, "S01_L3-01-O_고착10_RAISE.jsonl"), "L3-01-O")
 
 print("OK" if not failures else f"{len(failures)} failure(s)")
 sys.exit(1 if failures else 0)

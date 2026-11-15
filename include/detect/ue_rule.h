@@ -9,11 +9,32 @@
 #include "detect/rule.h"
 #include "detect/ue_table.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <utility>
 
 namespace detect {
+
+// 셀 한도 (15_ §1.2): 그 셀의 hello cells[].max_conn이 있으면 그 값, 없으면 룰 설정 값(null이면 모름) — 1단계 3_ §4와 같은 순서.
+// 2단계 L3-01-O(심각도·문턱 N)와 L3-21(문턱 N)이 쓴다
+inline std::optional<int64_t> cell_max_conn(const Hello& h, int64_t cell, std::optional<int64_t> cfg) {
+  for (const auto& c : h.cells)
+    if (c.cell_id == cell && c.max_conn) return c.max_conn;
+  return cfg;
+}
+
+// 셀 한도 비율 문턱 (15_ §1.2·§4.3·§5.3 — 11/15 사용자 결정, 31_ §4): N = max(최소값, ⌈비율 × 셀 한도⌉). 정상 고착·실패 수는 접속량,
+// 곧 셀 크기에 비례해서 고정 문턱은 큰 셀에서 정상만으로 넘는다. 셀 한도를 모르면 최소값 — 1단계 C2a(3_ §4)는 모르면 끄지만 2단계 두
+// 룰은 개수 문턱이 하나뿐이라 끄면 L3-01-O는 룰이, L3-21은 갈래 ①이 서지 않는다. 비율 0이면 최소값. 올림은 1단계 f_abs_for와 같이
+// 부동소수 오차(0.1 × 1,200 = 120.000…01)를 빼고 한다
+inline int64_t cell_threshold(int64_t n_min, double frac, std::optional<int64_t> max_conn) {
+  if (!max_conn) return n_min;
+  const double x = frac * static_cast<double>(*max_conn);
+  return std::max(n_min, static_cast<int64_t>(std::ceil(x - 1e-9)));
+}
 
 // 룰을 부를 때 함께 넘기는 것: 읽기 전용 상태표·셀 시계·로스 기록, 지금 hello·세션·줄의 seq, 마감 등록
 class UeRuleCtx {

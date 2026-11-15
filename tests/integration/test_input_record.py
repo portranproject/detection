@@ -140,7 +140,7 @@ for path in files:
     check(not rec_logs(off.stderr), f"IR-T11 {name}: recording off must not log input_record")
 
 # IR-T3 — 기록 파일을 다시 재생하면 원래와 같은 출력
-for rel in ("scenarios/T05_공격종료.jsonl", "stage2_green/S01_L3-01-O_고착5_RAISE.jsonl"):
+for rel in ("scenarios/T05_공격종료.jsonl", "stage2_green/S01_L3-01-O_고착10_RAISE.jsonl"):
     src = os.path.join(DATA, rel)
     on, _, rec, ev_on, _ = replay_pair(src)
     again = os.path.join(TMP, "again.jsonl")
@@ -181,7 +181,7 @@ def stop(det):
 
 
 # IR-T4 — 소켓 모드: 보낸 줄 = 기록, 그 기록을 재생하면 같은 ALERT
-for rel in ("scenarios/T05_공격종료.jsonl", "stage2_green/S01_L3-01-O_고착5_RAISE.jsonl"):
+for rel in ("scenarios/T05_공격종료.jsonl", "stage2_green/S01_L3-01-O_고착10_RAISE.jsonl"):
     src = os.path.join(DATA, rel)
     rm(EV_ON, REC)
     det, sock = start_socket("t4", CFG_ON)

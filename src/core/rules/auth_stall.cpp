@@ -20,29 +20,35 @@ bool is_response(const std::string& m) {
 // 앞선 요청 (15_ §4.6 ues[].values.nas) — 인증을 부르는 UL NAS 요청
 bool is_request(const std::string& m) { return m == "RegistrationRequest" || m == "ServiceRequest"; }
 
-// 심각도의 max_conn: hello cells[].max_conn이 있으면 그 값, 없으면 설정 값 (15_ §1.2, 1단계 3_ §4와 같음)
-std::optional<int64_t> max_conn_for(const Hello& h, int64_t cell, const AuthStallConfig& cfg) {
-  for (const auto& c : h.cells)
-    if (c.cell_id == cell && c.max_conn) return c.max_conn;
-  return cfg.max_conn;
+// 셀 고착 수 문턱 N (15_ §1.2·§4.3 — 11/15 사용자 결정, 31_ §4·§5.2): max(n_stall, ⌈n_stall_frac × max_conn⌉). max_conn은 그 셀의
+// hello 값 우선, 없으면 설정 값, 둘 다 없으면 N = n_stall. 공격 경보와 불확실 경보(보류 문턱)가 같은 N을 쓴다
+int64_t n_stall_for(const AuthStallConfig& cfg, std::optional<int64_t> max_conn) {
+  return cell_threshold(cfg.n_stall, cfg.n_stall_frac, max_conn);
 }
 
-// 불확실 경보 묶음의 값 (14_ §6.2, 15_ §4.7): 창 W, 문턱 N. raise의 params는 auth_wait_ms·window_ms·n_stall·clear_quiet_ms,
-// 로그 줄은 kind=anomaly held_w= 뒤에 n_stall= window_ms= auth_wait_ms=
+// 불확실 경보 묶음의 값 (14_ §6.2, 15_ §4.6·§4.7): 창 W, 문턱은 그 셀의 N. raise의 params는 auth_wait_ms·window_ms·n_stall·
+// n_stall_frac·n_stall_th·clear_quiet_ms(공격 경보에서 max_conn을 뺀 것), 로그 줄은 kind=anomaly held_w= 뒤에 n_stall_th= window_ms=
+// auth_wait_ms= — n_stall_th는 그 셀에 쓴 N (11/15, 그전 n_stall)
 HeldBook::Spec held_spec(const AuthStallConfig& cfg) {
   HeldBook::Spec s;
   s.rule = AuthStallRule::kId;
   s.stage = 2;
   s.window_ms = cfg.window_ms;
-  s.n = cfg.n_stall;
   s.clear_quiet_ms = cfg.clear_quiet_ms;
-  s.params["auth_wait_ms"] = cfg.auth_wait_ms;
-  s.params["window_ms"] = cfg.window_ms;
-  s.params["n_stall"] = cfg.n_stall;
-  s.params["clear_quiet_ms"] = cfg.clear_quiet_ms;
-  s.log_fields = {{"n_stall", std::to_string(cfg.n_stall)},
-                  {"window_ms", std::to_string(cfg.window_ms)},
-                  {"auth_wait_ms", std::to_string(cfg.auth_wait_ms)}};
+  s.per_cell = [cfg](const Hello& hello, int64_t cell) {
+    HeldBook::CellSpec c;
+    c.n = n_stall_for(cfg, cell_max_conn(hello, cell, cfg.max_conn));
+    c.params["auth_wait_ms"] = cfg.auth_wait_ms;
+    c.params["window_ms"] = cfg.window_ms;
+    c.params["n_stall"] = cfg.n_stall;
+    c.params["n_stall_frac"] = cfg.n_stall_frac;
+    c.params["n_stall_th"] = c.n;
+    c.params["clear_quiet_ms"] = cfg.clear_quiet_ms;
+    c.log_fields = {{"n_stall_th", std::to_string(c.n)},
+                    {"window_ms", std::to_string(cfg.window_ms)},
+                    {"auth_wait_ms", std::to_string(cfg.auth_wait_ms)}};
+    return c;
+  };
   return s;
 }
 
@@ -50,7 +56,8 @@ HeldBook::Spec held_spec(const AuthStallConfig& cfg) {
 
 // 공격 묶음 (15_ §4.3·§4.5 — R2, 이슈 #96): HitWindow를 2단계 모양으로 — 종류 attack·단계 2, 연결당 한 번은 룰 몫(stalled_ —
 // 응답 뒤 새 기다림은 같은 연결이 다시 고착할 수 있다, §4.3-4), CLEAR 기준은 마지막 성립 t_sat(§4.5 — 성립하지 않는 드문 고착은
-// 해제를 늦추지 않는다), END 뒤 창 비움은 4단계와 같다(§4.5 — 11/05 Q-77, W-41), 공격 RAISE 직전 불확실 경보 CLEAR는 held_ 고리로
+// 해제를 늦추지 않는다), END 뒤 창 비움은 4단계와 같다(§4.5 — 11/05 Q-77, W-41), 공격 RAISE 직전 불확실 경보 CLEAR는 held_ 고리로.
+// 문턱은 셀마다 다르다(§1.2 셀 한도 비율 — 11/15): 만들 때의 n_stall은 자리값이고 on_cell_tick이 칸마다 그 셀의 N을 준다(set_n)
 AuthStallRule::AuthStallRule(AuthStallConfig cfg, AlertConfig alert)
     : cfg_(cfg),
       alert_(alert),
@@ -168,7 +175,8 @@ void AuthStallRule::on_deadline(const Deadline& d, const UeRuleCtx& ctx, RuleOut
 
 // 셀 kpm2마다 (15_ §4.3 셀 단위·심각도, §4.5):
 //  1) 심각도 창: 최근 W 안 kpm2의 ext.UeCtxMax 최댓값 Cx를 룰이 들고 있는다(1단계 버퍼는 21칸이라 쓰지 않는다).
-//     Cx ≥ 0.9 × max_conn이면 high — 셀 연결 자원이 거의 찼다(1단계 C4와 같은 신호·문턱, 10/29 검수 B6)
+//     Cx ≥ 0.9 × max_conn이면 high — 셀 연결 자원이 거의 찼다(1단계 C4와 같은 신호·문턱, 10/29 검수 B6).
+//     문턱 N은 그 셀의 셀 한도 비율로 정한다(15_ §1.2·§4.3 — 11/15): max(n_stall, ⌈n_stall_frac × max_conn⌉), 심각도와 같은 max_conn
 //  2) 헬퍼(HitWindow): input_lost면 END(14_ §1.1·§8.2). 이번 마감 처리에서 정해진 고착마다 (t_hit − W, t_hit] 안의 고착 수 S_W를
 //     센다. S_W ≥ N이면 성립(t_sat). 경보가 없을 때 성립하면 그 창의 고착 UE로 RAISE(열린 불확실 경보는 먼저 CLEAR), 경보 중이면
 //     새 고착 UE를 UPDATE로 모은다(14_ §8.2). 경보 중 high가 되면 바로 UPDATE, 모아 둔 UE는 UPDATE 간격에 맞춰 낸다.
@@ -186,12 +194,14 @@ void AuthStallRule::on_cell_tick(int64_t cell, const Kpm2& k, const CellLoss&, b
   std::optional<int64_t> cx;
   for (const auto& [te, v] : c.uectx)
     if (v && (!cx || *v > *cx)) cx = v;
-  const std::optional<int64_t> max_conn = max_conn_for(ctx.hello, cell, cfg_);
+  const std::optional<int64_t> max_conn = cell_max_conn(ctx.hello, cell, cfg_.max_conn);
   const bool high = max_conn && cx && static_cast<double>(*cx) >= 0.9 * static_cast<double>(*max_conn);
+  const int64_t n_th = n_stall_for(cfg_, max_conn);
   hits_.set_severity(high ? Severity::High : Severity::Medium);
+  hits_.set_n(n_th);
 
   hits_.tick(cell, t, input_lost, ctx, out.alerts,
-             [&](std::size_t from, const AlertUe* hit) { decorate(cell, from, hit, cx, max_conn, out); });
+             [&](std::size_t from, const AlertUe* hit) { decorate(cell, from, hit, cx, max_conn, n_th, out); });
 
   // 창 밖 기록 정리. 경보 중에는 값의 기준이 마지막 고착 시각이고, 경보가 없으면 다음 기준은 앞으로의 고착(> t)이다
   const int64_t bound = (hits_.open(cell) && c.t_last_stall ? *c.t_last_stall : t) - cfg_.window_ms;
@@ -212,9 +222,10 @@ AlertUe AuthStallRule::held_ue(const UeState& n, int64_t t_hit) const {
 
 // L3-01-O 값 채우기 (15_ §4.6): raise·update에 values(stalls_w·auth_req_w는 마지막 고착 시각 기준 창, uectx는 심각도 창,
 // held는 L3-20과 같음, stalls_total = ues_total), raise에 cond·candidates·params·로그 필드. UPDATE 로그에는 uectx가 있을
-// 때만 붙인다. clear·end는 공통 골격 그대로(14_ §8.3). hit = 이번에 처리한 고착(헬퍼가 걸림마다 넘긴다) — 마지막 고착 시각의 기준
+// 때만 붙인다. clear·end는 공통 골격 그대로(14_ §8.3). hit = 이번에 처리한 고착(헬퍼가 걸림마다 넘긴다) — 마지막 고착 시각의 기준.
+// n_th = 이 셀에 쓴 문턱 N — params.n_stall_th와 로그 n_stall_th=로 싣는다(11/15, 그전 로그는 n_stall=)
 void AuthStallRule::decorate(int64_t cell, std::size_t from, const AlertUe* hit, std::optional<int64_t> cx,
-                             std::optional<int64_t> max_conn, RuleOutput& out) {
+                             std::optional<int64_t> max_conn, int64_t n_th, RuleOutput& out) {
   CellState& c = cells_[cell];
   if (hit) c.t_last_stall = hit->t_hit;
   for (std::size_t i = from; i < out.alerts.size(); ++i) {
@@ -241,13 +252,16 @@ void AuthStallRule::decorate(int64_t cell, std::size_t from, const AlertUe* hit,
     e.candidates = {"AN-01"};
     if (std::any_of(e.ues.begin(), e.ues.end(), [](const AlertUe& u) { return u.s_tmsi.has_value(); }))
       e.candidates.push_back("L3-20");
+    // params (15_ §4.6): 문턱은 설정(최소값 n_stall·비율 n_stall_frac)과 그 셀에 쓴 N(n_stall_th), max_conn은 N과 심각도에 쓴 값
     e.params["auth_wait_ms"] = cfg_.auth_wait_ms;
     e.params["window_ms"] = cfg_.window_ms;
     e.params["n_stall"] = cfg_.n_stall;
+    e.params["n_stall_frac"] = cfg_.n_stall_frac;
+    e.params["n_stall_th"] = n_th;
     e.params["clear_quiet_ms"] = cfg_.clear_quiet_ms;
     e.params["max_conn"] = max_conn ? ojson(*max_conn) : ojson(nullptr);
     e.log_fields = {{"stalls_w", std::to_string(stalls_w)},
-                    {"n_stall", std::to_string(cfg_.n_stall)},
+                    {"n_stall_th", std::to_string(n_th)},
                     {"window_ms", std::to_string(cfg_.window_ms)},
                     {"auth_wait_ms", std::to_string(cfg_.auth_wait_ms)},
                     {"uectx", uectx}};

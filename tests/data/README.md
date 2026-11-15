@@ -7,7 +7,7 @@
 |---|---|
 | `scenarios/` | 룰 동작 시나리오 T1~T25 (3_ §9; T25·T25b는 웜업 표본 0개 시드 — 3_ §5, 11/05 Q-76 이슈 #94) |
 | `stage1/` | 1단계 표 II kpm2 (UE 컨텍스트 고갈 룰) |
-| `stage2_green/` | 2단계 녹색 4종 (kpm2 + ue_evt) |
+| `stage2_green/` | 2단계 녹색 4종 (kpm2 + ue_evt) — 11/15 L3-01-O·L3-21 셀 한도 비율 문턱(N 10)에 맞춰 성립 배치 10대 |
 | `stage3_lightgreen/` | 3단계 — 룰 3개 L3-24(#24 하향 IMSI 추출)·L3-14(#14 UE 능력 탈취)·L3-06(#6 NAS 카운터 비동기화 — 4단계에서 올림, M9), `kpm2` + `ue_evt`(명세 `20_` §3.8·§4.8·§5.8, 11/03). #9·#19·#23은 3단계 룰이 없다(L3-09 탐지 안 함, #19·#23 원형은 L3-20이 받음). 합성 생성기 `tools/gen_stage3.py`로 채운다(아래 절) |
 | `stage4_yellow/` | 4단계 — 이상 유형 룰(`kind` anomaly·`stage` 4, 명세 `21_`). 11/04 AN-01(인증 동기 실패 재인증, `21_` §3.8)·AN-06a(보안 수립 뒤 재인증·SMC 재등장, §4.8)·AN-02(식별 요청 증가, §5.8)·AN-04(같은 UE의 짧은 연결 반복, §6.8)·AN-07(같은 S-TMSI의 Setup 반복·Complete 없음, §7.8)·AN-08(기존 UE들의 재등록 급증, §8.8) — 룰 6개 모두. 합성 생성기 `tools/gen_stage4.py`(아래 절) |
 | `captured/` | 실측 녹화 (회귀 테스트용) |
@@ -26,17 +26,19 @@
 - 같은 창의 `ue_evt`는 그 창 `kpm2`보다 먼저 둔다(`2_` §6.1). `.jsonl`마다 `.expected.json` 짝이 있어야 한다(시험이 확인).
 - `.expected.json`: `scenario`·`description`·`t0_ms`·`tolerance_ms`·`alerts`. **경보 시각은 정확히 비교한다** — `tolerance_ms`(허용 오차)는 1단계 데이터(`scenarios/`·`captured/`)에만 쓰고 2단계부터는 쓰지 않는다(이슈 #40). `alerts`의 항목은 `kind`(`RAISE`·`UPDATE`·`CLEAR`·`END`)·`rule`·`cell`·`t_rel_ms`가 필수이고, `mode`·`severity`·`branch`·`reason`·`alert_kind`(`attack`·`anomaly` — 불확실 경보, 이슈 #48)는 적으면 비교한다. `rule`이 없으면 `L3-01-V`로 본다.
 
-### 현재 들어 있는 시나리오 (37개 — 손 작성)
+### 현재 들어 있는 시나리오 (39개 — 손 작성)
 
 `14_` §10 결정(합성 생성기 범위 밖, 직접 작성)에 따라 손으로 쓴 재생 시나리오다. 룰마다 정상(무경보)·RAISE·심각도(medium/high)·UPDATE·보류(로스)·CLEAR·END를 덮는다. 기대 경보 시각은 명세 식(마감 = t₀/t_f + 대기, 처리는 그 이상인 첫 `kpm2` `t_end`)으로 손 계산하고 네 룰 재생으로 확인했다. 파일명은 `S<단계>_<룰ID>_<설명>_<결과>`, 대응 명세 시험은 설명 끝 괄호(`15_` §2.8·§4.8·§5.8). 생성기는 `tools/gen_stage2.py`(1단계 `gen_kpm2.py`와 같은 틀).
 
-- **L3-01-O 인증 단계 고착 (10):** 정상등록·무응답1·고착4(무경보) / 고착5 RAISE(medium)·고착5 high(UeCtxMax 96)·응답경계 늦음·실패는응답·로스보류(불확실 경보 RAISE — 이슈 #48)·해제 CLEAR·해제뒤재걸림(CLEAR 때 창 비움 — 옛 고착 4건은 다시 세지 않고 CLEAR 뒤 5건에 RAISE, `ues_total` 5 — `15_` §4.5, 11/05 Q-73 이슈 #94)
-- **L3-20 Blind DoS (11):** 정상첫등록·RLF재접속·IDLE(무경보) / CONNECTED high(피해자 해제)·medium·공격연결닫힘·peer_uncertain·반복 UPDATE·반복_앞선공격해제(앞선 공격 연결은 짝이 아니라 그 해제로 high가 되지 않음 — `15_` §2.3, 11/05 Q-72 이슈 #94)·해제 CLEAR·세션변경 END
-- **L3-21 상향 DoS (10):** 정상(L3-21 무경보 — 동기 실패 #21을 4단계 AN-01이 받아 AN-01 RAISE 하나, 11/04 이슈 #70)·실패4·등록반복무실패·수락경계정시·SecModeReject(무경보)·로스보류(불확실 경보 RAISE — 이슈 #48) / 원형 갈래① RAISE·변형 갈래② RAISE·혼합 high·해제 CLEAR
+**(11/15 이슈 #116 — `15_` §1.2 셀 한도 비율 문턱, L3-21 실패 뒤 수락 대기 3 s)** L3-01-O·L3-21의 개수 문턱은 N = max(5, ⌈0.1 × `max_conn`⌉)이고, 시나리오 `hello`의 `max_conn`이 `null`이라 설정 값 96을 써서 N = 10이다. 그래서 성립 배치를 5대에서 10대(200 ms 간격, t = 0~1.8 s)로 늘렸다 — L3-01-O RAISE 3.0 s → 4.0 s, L3-21 갈래① RAISE 6.0 s → 5.0 s(대기 5 s → 3 s). 이름에 개수가 든 시나리오는 이름도 바꿨다: `고착4_무경보` → `고착9_무경보`, `고착5_RAISE`·`고착5_high` → `고착10_RAISE`·`고착10_high`, `실패4_무경보` → `실패9_무경보`.
 
-- **입력 불완전 (4, 이슈 #42 — `16_` §3.1·W-17):** 순서역전1줄(UE마다 RegistrationRequest가 자기 창 `kpm2` 뒤 → `late`)·순서역전전부는 '경보 없음'(이슈 #46 `late_until` 16 s 뒤에도 마감 2 s가 그 안). UL로스1칸(t = 1.5 s 한 칸으로 5건 전부 보류)·`ue_evt_lost`누락(양방향 로스로 보아 전부 보류)은 이슈 #48부터 **불확실 경보 RAISE**(`alert_kind` anomaly) — 공격 경보는 없다.
-- **불확실 경보 뒤 공격 경보 (1, 이슈 #48 — `14_` §6.2·§8.2, U-T30·L01-T20):** `불확실뒤공격_CLEAR-RAISE` — 보류 5건으로 불확실 RAISE 3.0 s, 그 뒤 로스 없이 고착 5건 → 같은 칸(7.0 s)에서 불확실 CLEAR 다음 공격 RAISE.
-- **`late_until` 만료 (1, 이슈 #46 — `14_` §4.3, `15_` L01-T21):** `순서역전1줄_만료뒤_RAISE` — 같은 5대가 17 s 뒤 두 번째 AuthenticationRequest에 무응답 → 마감이 `late_until` 뒤라 고착 5건, RAISE 20.0 s. 생성기 옵션은 `Scenario.late_msgs`·`Scenario.drop_lost`. 상태표 포화는 기본 설정으로 재현되지 않아 단위 테스트(`tests/core/test_auth_stall.cpp` `SaturationStopsVerdicts_CurrentBehavior`, 상한 100)로 둔다.
+- **L3-01-O 인증 단계 고착 (11):** 정상등록·무응답1·고착9(무경보) / 고착10 RAISE(medium)·고착10 high(UeCtxMax 96)·응답경계 늦음·실패는응답·로스보류(불확실 경보 RAISE — 이슈 #48)·해제 CLEAR·해제뒤재걸림(CLEAR 때 창 비움 — 옛 고착 4건은 다시 세지 않아 CLEAR 뒤 6건에는 경보 없고 4건 더(10건)에 RAISE, `ues_total` 10 — `15_` §4.5, 11/05 Q-73 이슈 #94)·셀한도50 고착5 RAISE(`hello` `max_conn` 50 → N 5, `15_` L01-T23 — 11/15)
+- **L3-20 Blind DoS (11):** 정상첫등록·RLF재접속·IDLE(무경보) / CONNECTED high(피해자 해제)·medium·공격연결닫힘·peer_uncertain·반복 UPDATE·반복_앞선공격해제(앞선 공격 연결은 짝이 아니라 그 해제로 high가 되지 않음 — `15_` §2.3, 11/05 Q-72 이슈 #94)·해제 CLEAR·세션변경 END
+- **L3-21 상향 DoS (11):** 정상(L3-21 무경보 — 동기 실패 #21을 4단계 AN-01이 받아 AN-01 RAISE 하나, 11/04 이슈 #70)·실패9·등록반복무실패·수락경계정시(t_f + 2,999 ms 수락)·SecModeReject(무경보)·로스보류(불확실 경보 RAISE — 이슈 #48) / 원형 갈래① RAISE·변형 갈래② RAISE·혼합 high·해제 CLEAR·셀한도50 실패5 RAISE(`hello` `max_conn` 50 → N 5, `15_` L21-T26 — 11/15)
+
+- **입력 불완전 (4, 이슈 #42 — `16_` §3.1·W-17):** 순서역전1줄(UE마다 RegistrationRequest가 자기 창 `kpm2` 뒤 → `late`)·순서역전전부는 '경보 없음'(이슈 #46 `late_until` 14 s — 11/15 L3-21 대기 3 s로 16 s에서 줄어듦 — 뒤에도 마감 2 s가 그 안). UL로스1칸(t = 1.9 s 한 칸으로 10건 전부 보류 — 11/15 10대로 늘리며 1.5 s에서 옮김)·`ue_evt_lost`누락(양방향 로스로 보아 전부 보류)은 이슈 #48부터 **불확실 경보 RAISE**(`alert_kind` anomaly) — 공격 경보는 없다.
+- **불확실 경보 뒤 공격 경보 (1, 이슈 #48 — `14_` §6.2·§8.2, U-T30·L01-T20):** `불확실뒤공격_CLEAR-RAISE` — 보류 10건으로 불확실 RAISE 4.0 s, 그 뒤 로스 없이 고착 10건 → 같은 칸(9.0 s)에서 불확실 CLEAR 다음 공격 RAISE.
+- **`late_until` 만료 (1, 이슈 #46 — `14_` §4.3, `15_` L01-T21):** `순서역전1줄_만료뒤_RAISE` — 같은 10대가 17 s 뒤 두 번째 AuthenticationRequest에 무응답 → 마감이 `late_until` 뒤라 고착 10건, RAISE 21.0 s(11/15 — 그전 5대 20.0 s). 생성기 옵션은 `Scenario.late_msgs`·`Scenario.drop_lost`. 상태표 포화는 기본 설정으로 재현되지 않아 단위 테스트(`tests/core/test_auth_stall.cpp` `SaturationStopsVerdicts_CurrentBehavior`, 상한 100)로 둔다.
 
 #3 Null 암호·무결성(L3-03)과 #20 IDLE형(L3-20-V2)은 탐지 대상이 아니므로(사용자 결정 10/29, `15_` §3·§2.1) 공격 시나리오를 두지 않는다. L3-20 IDLE형은 '경보 없음' 반례(`S20_L3-20_IDLE_무경보`)로만 둔다.
 

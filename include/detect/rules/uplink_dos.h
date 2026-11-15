@@ -1,7 +1,8 @@
 #pragma once
 // 룰 L3-21 — 상향 DoS (위조 자격증명) 탐지 (15_ §5). 무효한 자격증명(SUCI·GUTI·MAC)을 담은 등록·서비스 요청을 코어로 올려
 // 보내 인증 실패와 등록 거부를 되풀이하게 만드는 공격이다. 두 갈래로 잡는다:
-//  ① 셀 단위 실패 급증(원형 L3-21-O) — 실패 뒤 수락 대기 시간 안에 망 수락이 없는 UE(실패 UE)가 셀에서 창 W 안에 N개 이상
+//  ① 셀 단위 실패 급증(원형 L3-21-O) — 실패 뒤 수락 대기 시간 안에 망 수락이 없는 UE(실패 UE)가 셀에서 창 W 안에 N개 이상.
+//     N은 셀 한도에 비례한다 — max(n_fail, ⌈n_fail_frac × max_conn⌉), 기본 셀 한도 96이면 10 (15_ §1.2, 11/15 사용자 결정)
 //  ② 한 연결 안 반복 등록 + 실패(변형 L3-21-V) — 한 연결에 RegistrationRequest R번 이상과 실패가 함께 보이면 즉시
 // 정상 단말은 거부 뒤 대기 타이머로 새 연결에서 다시 시도하고(10 s에 1번 안팎), 동기 실패는 재인증으로 곧 수락된다(15_ §5.1).
 // 셀 창 집계는 HitWindow에 올리지 않았다(26_ R2, 이슈 #96 — 갈래 ② 즉시 RAISE의 t·seq가 줄의 것이고, 갈래 ② 경보에서 갈래 ①
@@ -94,7 +95,7 @@ class UplinkDosRule : public UeRule {
                   std::optional<int64_t> closed_ms) const;
   void hit2(const UeState& n, const Conn& c, int64_t t, const UeRuleCtx& ctx, RuleOutput& out);
   void new_alert(int64_t cell, CellState& c);
-  void decorate(std::size_t from, RuleOutput& out);
+  void decorate(std::size_t from, const Hello& hello, RuleOutput& out);
   int64_t in_window(const CellState& c, bool msgs) const;
   AlertUe held_ue(const UeState& n, int64_t t_hit) const;
 

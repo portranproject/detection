@@ -51,13 +51,16 @@ void HeldBook::hold(int64_t cell, int64_t now, bool attack_open, std::optional<A
 
 // 불확실 경보 (14_ §6.2 — Q-58 ② 해결, 이슈 #48): 보류 UE마다 창 (t_hit − W, t_hit] 안 보류 수 H_W. 공격 경보가 없으면 H_W ≥ N에서
 // 창 안 보류 UE로 RAISE(kind anomaly), 불확실 경보 중이면 그 UE를 UPDATE로 모은다. 공격 경보가 이 칸에서 열렸으면 held_open으로만.
-// 마지막 보류 뒤 clear_quiet_ms면 CLEAR, input_lost면 END. 창 밖 정리는 불확실 경보가 없을 때만 — 경보 중에는 값의 기준이 마지막 보류다
+// 마지막 보류 뒤 clear_quiet_ms면 CLEAR, input_lost면 END. 창 밖 정리는 불확실 경보가 없을 때만 — 경보 중에는 값의 기준이 마지막 보류다.
+// 문턱 N과 raise 값은 이번 칸에 보류 UE가 있을 때만 그 셀의 지금 hello로 정한다(셀 한도 비율 문턱 — 15_ §1.2, 11/15)
 void HeldBook::tick(int64_t cell, int64_t t, bool input_lost, bool attack_open, const UeRuleCtx& ctx,
                     std::vector<AlertEvent>& out) {
   Cell& c = cells_[cell];
   window(c, t);
   const std::size_t from = out.size();
   if (input_lost) book_.end(cell, t, "input_lost", out);
+  std::optional<CellSpec> cs;
+  if (!c.fresh.empty()) cs = cell_spec(ctx.hello, cell);
   for (AlertUe& u : c.fresh) {
     c.ues.push_back(u);
     while (c.ues.front().t_hit <= u.t_hit - spec_.window_ms) c.ues.pop_front();
@@ -66,7 +69,7 @@ void HeldBook::tick(int64_t cell, int64_t t, bool input_lost, bool attack_open, 
       ++c.held_open;
       continue;
     }
-    const bool sat = static_cast<int64_t>(c.ues.size()) >= spec_.n;
+    const bool sat = static_cast<int64_t>(c.ues.size()) >= cs->n;
     if (book_.open(cell)) {
       std::vector<AlertUe> one;
       one.push_back(std::move(u));
@@ -79,7 +82,7 @@ void HeldBook::tick(int64_t cell, int64_t t, bool input_lost, bool attack_open, 
   c.fresh.clear();
   book_.flush(cell, t, out);
   if (book_.open(cell) && t - c.t_last >= spec_.clear_quiet_ms) book_.clear(cell, t, out);
-  decorate(from, out);
+  decorate(from, out, cs ? &*cs : nullptr);
   if (!book_.open(cell))
     while (!c.ues.empty() && c.ues.front().t_hit <= t - spec_.window_ms) c.ues.pop_front();
 }
@@ -89,7 +92,13 @@ void HeldBook::close(int64_t cell, int64_t t, std::vector<AlertEvent>& out) {
   if (!book_.open(cell)) return;
   const std::size_t from = out.size();
   book_.clear(cell, t, out);
-  decorate(from, out);
+  decorate(from, out, nullptr);
+}
+
+// 그 셀의 문턱·raise 값: 셀마다 다른 룰(per_cell — L3-01-O·L3-21, 15_ §1.2 11/15)은 그 셀의 지금 hello로, 그 밖은 고정값
+HeldBook::CellSpec HeldBook::cell_spec(const Hello& hello, int64_t cell) const {
+  if (spec_.per_cell) return spec_.per_cell(hello, cell);
+  return CellSpec{spec_.n, spec_.params, spec_.log_fields};
 }
 
 void HeldBook::new_attack_alert(int64_t cell) { cells_[cell].held_open = 0; }
@@ -111,9 +120,9 @@ int64_t HeldBook::window(Cell& c, int64_t now) const {
 }
 
 // 불확실 경보 값 채우기 (14_ §6.2): raise·update에 values.held_w(창 안 보류 수), raise에 cond held_count·candidates(이 룰)·
-// params·로그 필드(맨 앞 kind=anomaly, held_w, 그 뒤 룰 필드). update 로그에는 kind=anomaly만. conditions·branch는 싣지 않는다 —
-// 공격 판정이 아니다(20_ §3.7·§4.7, 15_ §5.7)
-void HeldBook::decorate(std::size_t from, std::vector<AlertEvent>& out) {
+// params·로그 필드(맨 앞 kind=anomaly, held_w, 그 뒤 룰 필드 — 이번 칸의 cs). update 로그에는 kind=anomaly만. conditions·branch는
+// 싣지 않는다 — 공격 판정이 아니다(20_ §3.7·§4.7, 15_ §5.7). RAISE는 보류 UE가 있는 tick에서만 나므로 그때 cs가 있다
+void HeldBook::decorate(std::size_t from, std::vector<AlertEvent>& out, const CellSpec* cs) {
   for (std::size_t i = from; i < out.size(); ++i) {
     AlertEvent& e = out[i];
     if (e.kind != AlertEventKind::Raise && e.kind != AlertEventKind::Update) continue;
@@ -125,9 +134,10 @@ void HeldBook::decorate(std::size_t from, std::vector<AlertEvent>& out) {
     }
     e.cond = {"held_count"};
     e.candidates = {spec_.rule};
-    for (const auto& [k, v] : spec_.params.items()) e.params[k] = v;
     e.log_fields = {{"kind", "anomaly"}, {"held_w", std::to_string(held_w)}};
-    e.log_fields.insert(e.log_fields.end(), spec_.log_fields.begin(), spec_.log_fields.end());
+    if (!cs) continue;
+    for (const auto& [k, v] : cs->params.items()) e.params[k] = v;
+    e.log_fields.insert(e.log_fields.end(), cs->log_fields.begin(), cs->log_fields.end());
   }
 }
 

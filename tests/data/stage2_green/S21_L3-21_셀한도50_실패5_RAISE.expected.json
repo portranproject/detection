@@ -1,0 +1,17 @@
+{
+  "scenario": "S21_L3-21_셀한도50_실패5_RAISE",
+  "description": "hello 셀 한도 50 → 문턱 N=5, 무효 등록 5대 거절로 갈래① 성립 → medium (L21-T26, 셀 한도 비율 문턱)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-21",
+      "cell": 1,
+      "t_rel_ms": 4000,
+      "mode": "normal",
+      "severity": "medium",
+      "branch": "1"
+    }
+  ]
+}

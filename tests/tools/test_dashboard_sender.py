@@ -34,7 +34,7 @@ SAMPLE_SCENARIOS = [
     "scenarios/T07_세션변경.jsonl",
     "scenarios/T10_긴공격.jsonl",
     "scenarios/T19_DL미관측.jsonl",
-    "stage2_green/S01_L3-01-O_고착5_high.jsonl",
+    "stage2_green/S01_L3-01-O_고착10_high.jsonl",
     "stage2_green/S01_L3-01-O_불확실뒤공격_CLEAR-RAISE.jsonl",
     "stage2_green/S01_L3-01-O_해제_CLEAR.jsonl",
     "stage2_green/S20_L3-20_반복_UPDATE.jsonl",

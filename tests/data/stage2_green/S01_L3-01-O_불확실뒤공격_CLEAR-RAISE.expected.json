@@ -1,6 +1,6 @@
 {
   "scenario": "S01_L3-01-O_불확실뒤공격_CLEAR-RAISE",
-  "description": "UL 로스로 5건 보류 → 불확실 RAISE, 그 뒤 로스 없이 고착 5건 → 같은 칸에서 불확실 CLEAR·공격 RAISE (U-T30·L01-T20)",
+  "description": "UL 로스로 10건 보류 → 불확실 RAISE, 그 뒤 로스 없이 고착 10건 → 같은 칸에서 불확실 CLEAR·공격 RAISE (U-T30·L01-T20)",
   "t0_ms": 1792209000000,
   "tolerance_ms": 100,
   "alerts": [
@@ -8,7 +8,7 @@
       "kind": "RAISE",
       "rule": "L3-01-O",
       "cell": 1,
-      "t_rel_ms": 3000,
+      "t_rel_ms": 4000,
       "mode": "normal",
       "severity": "medium",
       "alert_kind": "anomaly"
@@ -17,14 +17,14 @@
       "kind": "CLEAR",
       "rule": "L3-01-O",
       "cell": 1,
-      "t_rel_ms": 7000,
+      "t_rel_ms": 9000,
       "alert_kind": "anomaly"
     },
     {
       "kind": "RAISE",
       "rule": "L3-01-O",
       "cell": 1,
-      "t_rel_ms": 7000,
+      "t_rel_ms": 9000,
       "mode": "normal",
       "severity": "medium",
       "alert_kind": "attack"

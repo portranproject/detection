@@ -60,6 +60,9 @@ class HitWindow {
   // 이번 칸의 심각도 (15_ §4.3 — L3-01-O는 창 안 UeCtxMax로 칸마다 정한다). tick의 RAISE·UPDATE에 쓰고, 경보 중 medium에서 high가 되면
   // 모아 둔 UE와 함께 바로 UPDATE한다(14_ §8.2). 기본 medium(4단계 21_ §1)
   void set_severity(Severity sev) { severity_ = sev; }
+  // 이번 칸의 문턱 N (15_ §1.2·§4.3 — 11/15 셀 한도 비율 문턱): 셀마다 문턱이 다른 룰(L3-01-O)이 tick 전에 그 셀의 N을 준다
+  // (set_severity와 같은 방식). 부르지 않으면 만들 때의 n — 4단계 룰은 고정 문턱이라 바뀌지 않는다
+  void set_n(int64_t n) { n_ = n; }
   // 불확실 경보 묶음 (14_ §8.2): 있으면 공격 RAISE 직전에 그 셀의 열린 불확실 경보를 먼저 CLEAR하고 새 경보의 보류 수를 0부터 센다
   void set_held(HeldBook* held) { held_ = held; }
   bool hit_before(const UeId& id) const;  // 열린 연결이 이미 걸렸나
