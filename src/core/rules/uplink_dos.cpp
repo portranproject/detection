@@ -22,22 +22,48 @@ std::string ue_name(const AlertUe& u) {
   return std::to_string(u.cell) + "/" + std::to_string(u.du_ue_id) + "/" + std::to_string(u.uid);
 }
 
-// 불확실 경보 묶음의 값 (14_ §6.2, 15_ §5.7): 창 W, 문턱 N, 갈래 없음. raise의 params는 공격 경보와 같은 여섯, 로그 줄은
-// kind=anomaly held_w= 뒤에 n_fail= window_ms=
+// 그 셀의 문턱 N과 그에 쓴 셀 한도 (15_ §1.2·§5.3 — 11/15 사용자 결정, 31_ §4·§5.4): N = max(n_fail, ⌈n_fail_frac × max_conn⌉).
+// max_conn은 그 셀의 hello 값 우선, 없으면 설정 값, 둘 다 없으면 N = n_fail. 갈래 ①·불확실 경보(보류 문턱)가 같은 N을 쓰고, 갈래 ②는
+// N과 무관하다(params에만 싣는다)
+struct Threshold {
+  int64_t n;
+  std::optional<int64_t> max_conn;
+};
+Threshold threshold(const UplinkDosConfig& cfg, const Hello& hello, int64_t cell) {
+  const std::optional<int64_t> max_conn = cell_max_conn(hello, cell, cfg.max_conn);
+  return Threshold{cell_threshold(cfg.n_fail, cfg.n_fail_frac, max_conn), max_conn};
+}
+
+// 경보 params (15_ §5.6): window_ms·n_fail·n_fail_frac·n_fail_th·fail_accept_wait_ms·reg_repeat·clear_quiet_ms·ignore_causes·max_conn —
+// n_fail_th는 그 셀에 쓴 N, max_conn은 N에 쓴 값(없으면 null). 공격 경보(두 갈래)와 불확실 경보가 같은 아홉이다 (11/15 셋 추가)
+void fill_params(nlohmann::ordered_json& p, const UplinkDosConfig& cfg, const Threshold& th) {
+  p["window_ms"] = cfg.window_ms;
+  p["n_fail"] = cfg.n_fail;
+  p["n_fail_frac"] = cfg.n_fail_frac;
+  p["n_fail_th"] = th.n;
+  p["fail_accept_wait_ms"] = cfg.fail_accept_wait_ms;
+  p["reg_repeat"] = cfg.reg_repeat;
+  p["clear_quiet_ms"] = cfg.clear_quiet_ms;
+  p["ignore_causes"] = cfg.ignore_causes;
+  p["max_conn"] = th.max_conn ? ojson(*th.max_conn) : ojson(nullptr);
+}
+
+// 불확실 경보 묶음의 값 (14_ §6.2, 15_ §5.7): 창 W, 문턱은 그 셀의 N, 갈래 없음. raise의 params는 공격 경보와 같은 아홉, 로그 줄은
+// kind=anomaly held_w= 뒤에 n_fail_th= window_ms= — n_fail_th는 그 셀에 쓴 N (11/15, 그전 n_fail)
 HeldBook::Spec held_spec(const UplinkDosConfig& cfg) {
   HeldBook::Spec s;
   s.rule = UplinkDosRule::kId;
   s.stage = 2;
   s.window_ms = cfg.window_ms;
-  s.n = cfg.n_fail;
   s.clear_quiet_ms = cfg.clear_quiet_ms;
-  s.params["window_ms"] = cfg.window_ms;
-  s.params["n_fail"] = cfg.n_fail;
-  s.params["fail_accept_wait_ms"] = cfg.fail_accept_wait_ms;
-  s.params["reg_repeat"] = cfg.reg_repeat;
-  s.params["clear_quiet_ms"] = cfg.clear_quiet_ms;
-  s.params["ignore_causes"] = cfg.ignore_causes;
-  s.log_fields = {{"n_fail", std::to_string(cfg.n_fail)}, {"window_ms", std::to_string(cfg.window_ms)}};
+  s.per_cell = [cfg](const Hello& hello, int64_t cell) {
+    const Threshold th = threshold(cfg, hello, cell);
+    HeldBook::CellSpec c;
+    c.n = th.n;
+    fill_params(c.params, cfg, th);
+    c.log_fields = {{"n_fail_th", std::to_string(th.n)}, {"window_ms", std::to_string(cfg.window_ms)}};
+    return c;
+  };
   return s;
 }
 
@@ -161,7 +187,7 @@ void UplinkDosRule::hit2(const UeState& n, const Conn& c, int64_t t, const UeRul
   one.push_back(make_ue(n, &c, "2", {"reg_repeat", "fail"}, t, std::nullopt));
   const std::size_t from = out.alerts.size();
   book_.add(cell, std::move(one), cs.sat1 ? Severity::High : Severity::Medium, t, ctx.session, ctx.seq, out.alerts);
-  decorate(from, out);
+  decorate(from, ctx.hello, out);
 }
 
 // 새 경보 — 경보에 묶인 값을 처음부터 센다 (15_ §5.6 values는 경보가 열린 뒤의 누적)
@@ -232,7 +258,8 @@ void UplinkDosRule::on_deadline(const Deadline& d, const UeRuleCtx& ctx, RuleOut
 // 셀 kpm2마다 (15_ §5.3 갈래 ①·§5.5):
 //  1) input_lost면 진행 중 경보를 END (14_ §1.1·§8.2) — END 뒤에는 CLEAR와 같이 창 안 실패 UE 목록을 비운다(15_ §5.5 — 11/05 Q-77,
 //     W-41: 4단계 21_ §1.1과 같음. 입력이 돌아온 뒤 새 실패 하나로 옛 경보의 UE가 새 RAISE에 다시 실리지 않게)
-//  2) 이번 마감 처리에서 정해진 실패 UE마다 (t_hit − W, t_hit] 안의 수 F_W를 센다. F_W ≥ N이면 갈래 ① 성립.
+//  2) 이번 마감 처리에서 정해진 실패 UE마다 (t_hit − W, t_hit] 안의 수 F_W를 센다. F_W ≥ N이면 갈래 ① 성립 — N은 그 셀의 셀 한도
+//     비율 문턱 max(n_fail, ⌈n_fail_frac × max_conn⌉)이다(15_ §1.2·§5.3 — 11/15).
 //     경보가 없을 때 성립하면 창 안의 실패 UE로 RAISE. 경보 중이면 새 실패 UE를 UPDATE로 모으고, 갈래 ②로 열린 경보에서
 //     갈래 ①이 처음 성립하면 창 안 실패 UE 가운데 이 경보에 아직 실리지 않은 것을 함께 싣고 바로 UPDATE한다 —
 //     branch가 "1"로 바뀌고, 갈래 ② UE가 있으므로 high다(15_ §5.5, 10/29 이슈 #31 사용자 결정)
@@ -246,15 +273,16 @@ void UplinkDosRule::on_cell_tick(int64_t cell, const Kpm2& k, const CellLoss&, b
   std::size_t from = out.alerts.size();
   const bool ended = input_lost && book_.open(cell);
   if (ended) book_.end(cell, t, "input_lost", out.alerts);
-  decorate(from, out);
+  decorate(from, ctx.hello, out);
   if (ended) cs.failed.clear();
 
+  const int64_t n_th = threshold(cfg_, ctx.hello, cell).n;
   for (AlertUe& u : cs.fresh) {
     const int64_t t_hit = u.t_hit;
     cs.failed.push_back(Failed{u, 0});
     while (cs.failed.front().ue.t_hit <= t_hit - cfg_.window_ms) cs.failed.pop_front();
     cs.t_last_hit = std::max(cs.t_last_hit.value_or(t_hit), t_hit);
-    const bool sat = static_cast<int64_t>(cs.failed.size()) >= cfg_.n_fail;
+    const bool sat = static_cast<int64_t>(cs.failed.size()) >= n_th;
     const bool was_open = book_.open(cell);
     if (!was_open && !sat) continue;  // 경보 밖의 문턱 아래 실패 — 창에만 둔다
     if (!was_open) {
@@ -278,7 +306,7 @@ void UplinkDosRule::on_cell_tick(int64_t cell, const Kpm2& k, const CellLoss&, b
     book_.add(cell, std::move(ues), cs.sat1 && cs.has2 ? Severity::High : Severity::Medium, t, ctx.session, ctx.seq,
               out.alerts);
     if (was_open && first_sat && out.alerts.size() == from) book_.update(cell, *book_.severity(cell), t, out.alerts);
-    decorate(from, out);
+    decorate(from, ctx.hello, out);
   }
   cs.fresh.clear();
 
@@ -287,7 +315,7 @@ void UplinkDosRule::on_cell_tick(int64_t cell, const Kpm2& k, const CellLoss&, b
   // 직전 clear_quiet_ms 동안 그 셀에 상태표 밀어내기가 있었으면 풀지 않는다 (15_ §5.5, Q-56 해결 — 이슈 #44)
   const bool cleared = book_.open(cell) && t - cs.t_active >= cfg_.clear_quiet_ms && evict_.window(cell, t) == 0;
   if (cleared) book_.clear(cell, t, out.alerts);
-  decorate(from, out);
+  decorate(from, ctx.hello, out);
   // CLEAR 뒤 걸림만 싣는다 (15_ §5.5 — 11/05 Q-73, 이슈 #94; END도 같음 — Q-77): 창 안 실패 UE 목록을 비워 옛 경보에 실렸던 UE가 새 RAISE에
   // 다시 실리지 않게(4단계 이슈 #84와 같음, 25_ §3.2-3). fail_msgs는 창 안 실패 메시지 수(측정값 fail_msgs_w)라 그대로 둔다
   if (cleared) cs.failed.clear();
@@ -314,8 +342,9 @@ AlertUe UplinkDosRule::held_ue(const UeState& n, int64_t t_hit) const {
 
 // L3-21 값 채우기 (15_ §5.6): branch는 모든 이벤트에 그때의 갈래로(갈래 ①이 한 번이라도 성립했으면 "1"). raise·update에
 // values — fails_w·fail_msgs_w는 가장 최근 걸림 기준 창, branch1_ues·branch2_ues는 실린 걸림 수(누적), held는 L3-20과
-// 같음. raise에 cond(RAISE를 일으킨 갈래의 것)·candidates·params·로그 필드. UPDATE 로그는 공통 골격 그대로(branch 포함)
-void UplinkDosRule::decorate(std::size_t from, RuleOutput& out) {
+// 같음. raise에 cond(RAISE를 일으킨 갈래의 것)·candidates·params·로그 필드. UPDATE 로그는 공통 골격 그대로(branch 포함).
+// hello = 지금 hello — raise의 params·로그에 그 셀의 문턱 N(n_fail_th)과 셀 한도를 싣는다(15_ §5.6 — 11/15, 갈래 ②도 같음)
+void UplinkDosRule::decorate(std::size_t from, const Hello& hello, RuleOutput& out) {
   for (std::size_t i = from; i < out.alerts.size(); ++i) {
     AlertEvent& e = out.alerts[i];
     CellState& cs = cells_[e.cell_id];
@@ -335,17 +364,14 @@ void UplinkDosRule::decorate(std::size_t from, RuleOutput& out) {
     e.candidates = {"AN-01"};
     if (std::any_of(e.ues.begin(), e.ues.end(), [](const AlertUe& u) { return u.s_tmsi.has_value(); }))
       e.candidates.push_back("L3-20");
-    e.params["window_ms"] = cfg_.window_ms;
-    e.params["n_fail"] = cfg_.n_fail;
-    e.params["fail_accept_wait_ms"] = cfg_.fail_accept_wait_ms;
-    e.params["reg_repeat"] = cfg_.reg_repeat;
-    e.params["clear_quiet_ms"] = cfg_.clear_quiet_ms;
-    e.params["ignore_causes"] = cfg_.ignore_causes;
-    // 로그 줄 (15_ §5.6): 갈래 ①은 창 안 실패 UE 수와 문턱, 갈래 ②는 걸린 UE와 그 연결의 등록 요청 수·실패 메시지(쉼표)
+    const Threshold th = threshold(cfg_, hello, e.cell_id);
+    fill_params(e.params, cfg_, th);
+    // 로그 줄 (15_ §5.6): 갈래 ①은 창 안 실패 UE 수와 그 셀에 쓴 문턱 N(11/15 n_fail_th=, 그전 n_fail=), 갈래 ②는 걸린 UE와 그 연결의
+    // 등록 요청 수·실패 메시지(쉼표)
     if (cs.sat1) {
       e.log_fields = {{"branch", "1"},
                       {"fails_w", std::to_string(in_window(cs, false))},
-                      {"n_fail", std::to_string(cfg_.n_fail)},
+                      {"n_fail_th", std::to_string(th.n)},
                       {"window_ms", std::to_string(cfg_.window_ms)}};
     } else if (!e.ues.empty()) {
       const AlertUe& u = e.ues.front();
@@ -371,10 +397,10 @@ int64_t UplinkDosRule::in_window(const CellState& c, bool msgs) const {
 }
 
 // 새 세션 (14_ §7 hello): 진행 중 경보를 END(session_reset)로 끝내고 대기 표시·연결 기록·셀 기록을 모두 버린다
-void UplinkDosRule::on_session_reset(const UeRuleCtx&, RuleOutput& out) {
+void UplinkDosRule::on_session_reset(const UeRuleCtx& ctx, RuleOutput& out) {
   const std::size_t from = out.alerts.size();
   book_.end_all("session_reset", out.alerts);
-  decorate(from, out);
+  decorate(from, ctx.hello, out);
   held_.end_all("session_reset", out.alerts);  // 불확실 경보는 갈래가 없어 decorate 밖에서
   marks_.clear();
   conns_.clear();
@@ -386,12 +412,12 @@ void UplinkDosRule::on_session_reset(const UeRuleCtx&, RuleOutput& out) {
 // 입력 침묵 (14_ §6.2 — 10/29 Q-45 해결, 이슈 #50): 진행 중 공격 경보(갈래 표시 포함)·불확실 경보를 END(input_silent)로 끝낸다 —
 // END t는 각 경보가 마지막으로 본 칸. 대기 표시·연결 기록·셀 기록은 그대로 — kpm2가 다시 오면 마감이 평소처럼 판정된다. 다만 경보가
 // 열려 있던 셀의 창 안 실패 UE 목록은 비운다(15_ §5.5 — 11/05 Q-77, W-41: input_lost END·CLEAR와 같음)
-void UplinkDosRule::on_input_silent(const UeRuleCtx&, RuleOutput& out) {
+void UplinkDosRule::on_input_silent(const UeRuleCtx& ctx, RuleOutput& out) {
   const std::size_t from = out.alerts.size();
   for (auto& [cell, cs] : cells_)
     if (book_.open(cell)) cs.failed.clear();
   book_.end_all("input_silent", out.alerts);
-  decorate(from, out);
+  decorate(from, ctx.hello, out);
   held_.end_all("input_silent", out.alerts);  // 불확실 경보는 갈래가 없어 decorate 밖에서
 }
 

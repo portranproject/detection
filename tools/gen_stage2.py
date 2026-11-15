@@ -11,7 +11,10 @@ stage2_green 데이터는 '직접 작성'하되, 손으로 한 줄씩 치는 대
  - 마감 d는 그 셀 kpm2의 t_end >= d인 첫 칸(= ceil(d/P)*P)에서 처리된다(14_ §6.1).
  - L3-01-O 고착 = t₀(AuthenticationRequest) + auth_wait_ms(2000); 셀 성립은 그 마감 처리 칸(15_ §4.3).
  - L3-20 걸림 = t₀(s_tmsi 정해진 줄) + accept_wait_ms(3000 — 11/15 전 5000, 15_ §2.3·§2.4).
- - L3-21 갈래① 실패 UE = t_f(첫 실패) + fail_accept_wait_ms(5000); 갈래② 즉시(그 줄 t_ms)(15_ §5.3).
+ - L3-21 갈래① 실패 UE = t_f(첫 실패) + fail_accept_wait_ms(3000 — 11/15 전 5000); 갈래② 즉시(그 줄 t_ms)(15_ §5.3).
+ - L3-01-O·L3-21 개수 문턱 N = max(최소 5, ⌈0.1 × max_conn⌉)(15_ §1.2 — 11/15 사용자 결정). hello max_conn이 null이면
+   설정 값 96을 써서 N = 10(11/14까지는 5). 그래서 성립 배치는 10대(200 ms 간격, t = 0~1800)다 — 10번째 고착 마감
+   1905 + 2000 = 3905 → 4000, 10번째 실패 UE 1905 + 3000 = 4905 → 5000. Scenario(max_conn=50)이면 N = 5
  - CLEAR = 마지막 걸림/성립 + clear_quiet_ms(60000) 이상인 첫 kpm2(15_ §2.5·§4.5·§5.5).
 시각은 모두 데이터 시작(T0)부터의 상대 ms이고, 테스트는 ±tolerance_ms(1칸)를 허용한다.
 
@@ -294,36 +297,47 @@ def s01_normal():
 
 
 def s01_one_stall():
-    # L01-T2: 전파 끊긴 정상 UE 1대 무응답 → 고착 1, 셀 문턱 N=5 미만 → 경보 없음
+    # L01-T2: 전파 끊긴 정상 UE 1대 무응답 → 고착 1, 셀 문턱 N=10 미만 → 경보 없음
     sc = Scenario("S01_L3-01-O_무응답1_무경보", "인증 무응답 1대 — 고착 1, 문턱 미만, 경보 없음 (L01-T2)", 2600)
     sc.ue(1).auth_stall(0)
     return sc
 
 
-def s01_stall4():
-    # L01-T4 앞: 고착 4건 → 경보 없음
-    sc = Scenario("S01_L3-01-O_고착4_무경보", "인증 무응답 4대 — 문턱 N=5 미만, 경보 없음 (L01-T4)", 4000)
-    for i, t in enumerate([0, 200, 400, 600]):
-        sc.ue(i + 1).auth_stall(t)
+def s01_stall9():
+    # L01-T4 앞: 고착 9건 → 경보 없음 (11/15 문턱 N 10 — 11/14까지는 S01_L3-01-O_고착4_무경보)
+    sc = Scenario("S01_L3-01-O_고착9_무경보", "인증 무응답 9대 — 문턱 N=10(셀 한도 96의 10%) 미만, 경보 없음 (L01-T4)", 5000)
+    for du, t in _stall10()[:9]:
+        sc.ue(du).auth_stall(t)
     return sc
 
 
-def s01_stall5():
-    # L01-T3/T4: 창 안 고착 5건 → RAISE. 5번째 마감 = (800+105)+2000 = 2905 → 처리 t_end=3000
-    sc = Scenario("S01_L3-01-O_고착5_RAISE", "인증 무응답 5대(200 ms 간격) — 창 안 고착 5건 성립 → medium (L01-T3)", 4000)
-    for i, t in enumerate([0, 200, 400, 600, 800]):
-        sc.ue(i + 1).auth_stall(t)
-    sc.alert("RAISE", 3000, "L3-01-O", severity="medium", mode="normal")
+def s01_stall10():
+    # L01-T3/T4: 창 안 고착 10건 → RAISE. 10번째 마감 = (1800+105)+2000 = 3905 → 처리 t_end=4000
+    # (11/15 문턱 N 10 — 11/14까지는 S01_L3-01-O_고착5_RAISE, 5번째 마감 2905 → 3000)
+    sc = Scenario("S01_L3-01-O_고착10_RAISE", "인증 무응답 10대(200 ms 간격) — 창 안 고착 10건 성립 → medium (L01-T3)", 5000)
+    for du, t in _stall10():
+        sc.ue(du).auth_stall(t)
+    sc.alert("RAISE", 4000, "L3-01-O", severity="medium", mode="normal")
     return sc
 
 
-def s01_stall5_high():
+def s01_stall10_high():
     # L01-T14: 성립 창에 UeCtxMax 96(>= 0.9×96) → high (1단계 C4와 같은 신호·문턱, 15_ §4.3)
-    sc = Scenario("S01_L3-01-O_고착5_high", "인증 무응답 5대 + 셀 UeCtxMax 96 → high (L01-T14)", 4000)
-    for i, t in enumerate([0, 200, 400, 600, 800]):
-        sc.ue(i + 1).auth_stall(t)
+    sc = Scenario("S01_L3-01-O_고착10_high", "인증 무응답 10대 + 셀 UeCtxMax 96 → high (L01-T14)", 5000)
+    for du, t in _stall10():
+        sc.ue(du).auth_stall(t)
     sc.uectx_all(1, 96)
-    sc.alert("RAISE", 3000, "L3-01-O", severity="high", mode="normal")
+    sc.alert("RAISE", 4000, "L3-01-O", severity="high", mode="normal")
+    return sc
+
+
+def s01_cell50():
+    # L01-T23 재생판 (15_ §1.2 — 11/15): hello cells[].max_conn 50 → N = max(5, ⌈0.1 × 50⌉) = 5. 5대로 RAISE 3000(5번째 마감 2905)
+    sc = Scenario("S01_L3-01-O_셀한도50_고착5_RAISE",
+                  "hello 셀 한도 50 → 문턱 N=5, 인증 무응답 5대로 성립 → medium (L01-T23, 셀 한도 비율 문턱)", 4000, max_conn=50)
+    for du, t in _stall10()[:5]:
+        sc.ue(du).auth_stall(t)
+    sc.alert("RAISE", 3000, "L3-01-O", severity="medium", mode="normal")
     return sc
 
 
@@ -337,142 +351,147 @@ def s01_fail_is_response():
 
 
 def s01_resp_boundary_late():
-    # L01-T6: 응답 t_ms = 마감(t₀+2000) = 늦음 → 고착(14_ §6.1-5). 5대 모두 늦은 응답 → RAISE
-    sc = Scenario("S01_L3-01-O_응답경계_늦음_RAISE", "인증 응답이 마감과 같은 시각(늦음) 5대 → 고착 성립 (L01-T6)", 4000)
-    for i, t in enumerate([0, 200, 400, 600, 800]):
-        u = sc.ue(i + 1)
+    # L01-T6: 응답 t_ms = 마감(t₀+2000) = 늦음 → 고착(14_ §6.1-5). 10대 모두 늦은 응답 → RAISE 4000
+    sc = Scenario("S01_L3-01-O_응답경계_늦음_RAISE", "인증 응답이 마감과 같은 시각(늦음) 10대 → 고착 성립 (L01-T6)", 5000)
+    for du, t in _stall10():
+        u = sc.ue(du)
         u.setup_req(t).setup(t + 1).setup_complete(t + 90).reg_req(t + 91).auth_req(t + 105)
         u.auth_resp(t + 105 + 2000)   # = 마감, 늦은 응답이라 풀리지 않음
-    sc.alert("RAISE", 3000, "L3-01-O", severity="medium", mode="normal")
+    sc.alert("RAISE", 4000, "L3-01-O", severity="medium", mode="normal")
     return sc
 
 
 def s01_hold():
-    # L01-T9: 대기 구간에 UL 로스 창 → 고착 보류(14_ §6.2). 5대 모두 보류 → 공격 경보 없음(오탐 방지).
-    # 이슈 #48(Q-58, 14_ §6.2): 보류가 창 안 N=5건이면 불확실 경보(kind anomaly) — 5번째 보류 마감 2905 → RAISE 3000
+    # L01-T9: 대기 구간에 UL 로스 창 → 고착 보류(14_ §6.2). 10대 모두 보류 → 공격 경보 없음(오탐 방지).
+    # 이슈 #48(Q-58, 14_ §6.2): 보류가 창 안 N=10건이면 불확실 경보(kind anomaly) — 10번째 보류 마감 3905 → RAISE 4000
     sc = Scenario("S01_L3-01-O_로스보류_불확실RAISE",
-                  "인증 무응답 5대지만 대기 구간 UL 로스 → 모두 보류, 공격 경보 없이 불확실 경보 RAISE (L01-T9·L01-T20)", 4000)
-    for i, t in enumerate([0, 200, 400, 600, 800]):
-        sc.ue(i + 1).auth_stall(t)
-    for tick in range(10, 31):   # t=1000~3000 UL 로스 — 마감 처리 때 loss_end[UL] > t_from → 보류
+                  "인증 무응답 10대지만 대기 구간 UL 로스 → 모두 보류, 공격 경보 없이 불확실 경보 RAISE (L01-T9·L01-T20)", 5000)
+    for du, t in _stall10():
+        sc.ue(du).auth_stall(t)
+    for tick in range(10, 31):   # t=1000~3100 UL 로스 — 마감 처리 때 loss_end[UL] > t_from(105~1905) → 보류
         sc.set_loss(1, tick, ["UL"])
-    sc.alert("RAISE", 3000, "L3-01-O", severity="medium", mode="normal", alert_kind="anomaly")
+    sc.alert("RAISE", 4000, "L3-01-O", severity="medium", mode="normal", alert_kind="anomaly")
     return sc
 
 
 def s01_held_then_attack():
-    # U-T30·L01-T20 재생판 (이슈 #48): 보류 5건으로 불확실 RAISE(3000) 뒤 로스 없이 고착 5건 — 5번째 마감 6905 → 같은 칸 7000에서
-    # 불확실 CLEAR → 공격 RAISE (14_ §8.2 '같은 줄에서 먼저 CLEAR')
+    # U-T30·L01-T20 재생판 (이슈 #48): 보류 10건으로 불확실 RAISE(4000) 뒤 로스 없이 고착 10건 — 10번째 마감 8905 → 같은 칸
+    # 9000에서 불확실 CLEAR → 공격 RAISE (14_ §8.2 '같은 줄에서 먼저 CLEAR')
     sc = Scenario("S01_L3-01-O_불확실뒤공격_CLEAR-RAISE",
-                  "UL 로스로 5건 보류 → 불확실 RAISE, 그 뒤 로스 없이 고착 5건 → 같은 칸에서 불확실 CLEAR·공격 RAISE (U-T30·L01-T20)", 7200)
-    for i, t in enumerate([0, 200, 400, 600, 800]):
-        sc.ue(i + 1).auth_stall(t)
+                  "UL 로스로 10건 보류 → 불확실 RAISE, 그 뒤 로스 없이 고착 10건 → 같은 칸에서 불확실 CLEAR·공격 RAISE (U-T30·L01-T20)", 9200)
+    for du, t in _stall10():
+        sc.ue(du).auth_stall(t)
     for tick in range(10, 31):
         sc.set_loss(1, tick, ["UL"])
-    for i, t in enumerate([4000, 4200, 4400, 4600, 4800]):   # 인증 요청 t+105, 마감 t+2105: 6105…6905 — 로스 창(≤3100) 뒤
-        sc.ue(11 + i).auth_stall(t)
-    sc.alert("RAISE", 3000, "L3-01-O", severity="medium", mode="normal", alert_kind="anomaly")
-    sc.alert("CLEAR", 7000, "L3-01-O", alert_kind="anomaly")
-    sc.alert("RAISE", 7000, "L3-01-O", severity="medium", mode="normal", alert_kind="attack")
+    for i in range(10):   # 인증 요청 t+105, 마감 t+2105: 7105…8905 — 로스 창(≤3100) 뒤
+        sc.ue(11 + i).auth_stall(5000 + 200 * i)
+    sc.alert("RAISE", 4000, "L3-01-O", severity="medium", mode="normal", alert_kind="anomaly")
+    sc.alert("CLEAR", 9000, "L3-01-O", alert_kind="anomaly")
+    sc.alert("RAISE", 9000, "L3-01-O", severity="medium", mode="normal", alert_kind="attack")
     return sc
 
 
 def s01_clear():
-    # L01-T13: RAISE 뒤 60 s 성립 없음 → CLEAR. t_sat=2905 → t_end>=62905 → 63000
-    sc = Scenario("S01_L3-01-O_해제_CLEAR", "고착 5건 RAISE 뒤 60 s 조용 → CLEAR (L01-T13)", 63200)
-    for i, t in enumerate([0, 200, 400, 600, 800]):
-        sc.ue(i + 1).auth_stall(t)
-    sc.alert("RAISE", 3000, "L3-01-O", severity="medium", mode="normal")
-    sc.alert("CLEAR", 63000, "L3-01-O")
+    # L01-T13: RAISE 뒤 60 s 성립 없음 → CLEAR. t_sat=3905 → t_end>=63905 → 64000
+    sc = Scenario("S01_L3-01-O_해제_CLEAR", "고착 10건 RAISE 뒤 60 s 조용 → CLEAR (L01-T13)", 64200)
+    for du, t in _stall10():
+        sc.ue(du).auth_stall(t)
+    sc.alert("RAISE", 4000, "L3-01-O", severity="medium", mode="normal")
+    sc.alert("CLEAR", 64000, "L3-01-O")
     return sc
 
 
 def s01_clear_then_rehit():
-    # 15_ §4.5 CLEAR 때 창 비움 (11/05 Q-73 해결, 이슈 #94 — 25_ §3.2-3 재현): 고착 5건 RAISE 3000 → 경보 중 불성립 고착 4건(마감
-    # 59105~62105, UPDATE 59200·60200·61200·62200) → CLEAR 63000(t_sat 2905 + 60 s) → 고착 1건(마감 63105): 창 (53105, 63105] 안
-    # 옛 고착 4건은 CLEAR 때 비워져 S_W 1 → 경보 없음 → 4건 더(마감 63405~64305) → S_W 5 → RAISE 64400, ues_total 5(CLEAR 뒤 걸림만).
-    # 11/04까지는 63200에 옛 UE 4개를 다시 실은 RAISE가 났다
+    # 15_ §4.5 CLEAR 때 창 비움 (11/05 Q-73 해결, 이슈 #94 — 25_ §3.2-3 재현): 고착 10건 RAISE 4000 → 경보 중 불성립 고착 4건(마감
+    # 59105~62105, UPDATE 59200·60200·61200·62200) → CLEAR 64000(t_sat 3905 + 60 s) → 고착 6건(마감 64105~65605): 창 안 옛 고착 4건은
+    # CLEAR 때 비워져 S_W 6 → 경보 없음(비우지 않으면 4 + 6 = 10으로 65700에 옛 UE 4개를 다시 실은 RAISE) → 4건 더(마감 65905~66805)
+    # → S_W 10 → RAISE 66900, ues_total 10(CLEAR 뒤 걸림만). 11/15 문턱 N 10에 맞춰 다시 짰다(11/14까지는 CLEAR 63000 뒤 1건 + 4건,
+    # RAISE 64400·ues_total 5)
     sc = Scenario("S01_L3-01-O_해제뒤재걸림_RAISE",
-                  "RAISE → 불성립 고착 4건 → CLEAR 63000 → 고착 1건은 창을 새로 셈(경보 없음) → 4건 더에 RAISE 64400, ues_total 5 (15_ §4.5, 11/05 Q-73)",
-                  64600)
-    for du, t in _stall5():
+                  "RAISE → 불성립 고착 4건 → CLEAR 64000 → 고착 6건은 창을 새로 셈(경보 없음) → 4건 더에 RAISE 66900, ues_total 10 (15_ §4.5, 11/05 Q-73)",
+                  67100)
+    for du, t in _stall10():
         sc.ue(du).auth_stall(t)
     for i in range(4):
         sc.ue(30 + i).auth_stall(57000 + 1000 * i)
-    sc.ue(40).auth_stall(61000)
+    for i in range(6):
+        sc.ue(40 + i).auth_stall(62000 + 300 * i)
     for i in range(4):
-        sc.ue(41 + i).auth_stall(61300 + 300 * i)
-    sc.alert("RAISE", 3000, "L3-01-O", severity="medium", mode="normal")
+        sc.ue(46 + i).auth_stall(63800 + 300 * i)
+    sc.alert("RAISE", 4000, "L3-01-O", severity="medium", mode="normal")
     for t in (59200, 60200, 61200, 62200):
         sc.alert("UPDATE", t, "L3-01-O")
-    sc.alert("CLEAR", 63000, "L3-01-O")
-    sc.alert("RAISE", 64400, "L3-01-O", severity="medium", mode="normal")
-    sc.expect[-1]["ues_total"] = 5
+    sc.alert("CLEAR", 64000, "L3-01-O")
+    sc.alert("RAISE", 66900, "L3-01-O", severity="medium", mode="normal")
+    sc.expect[-1]["ues_total"] = 10
     return sc
 
 
 # ---- 입력 불완전 (이슈 #42, 16_ §3.1·W-17) — 지금 동작을 고정. 4_ §6.1 #7·#8에서 기대값이 바뀐다 ----
 
-def _stall5():
-    # S01_..._고착5_RAISE와 같은 배치: 5대, 200 ms 간격, 5번째 마감 2905 → 정상이면 RAISE 3000
-    return [(i + 1, t) for i, t in enumerate([0, 200, 400, 600, 800])]
+def _stall10():
+    # S01_..._고착10_RAISE와 같은 배치: 10대, 200 ms 간격, 10번째 마감 3905 → 정상이면 RAISE 4000
+    # (11/15 문턱 N 10 — 11/14까지는 _stall5: 5대, 5번째 마감 2905 → 3000)
+    return [(i + 1, 200 * i) for i in range(10)]
 
 
 def s01_late_one():
     # 16_ E1b: UE마다 RegistrationRequest 한 줄만 자기 창 kpm2 뒤에 옴 → 그 UE는 late → '없음' 판정 없음(14_ §4.3).
-    # 이슈 #46(late_until = 늦은 줄 + 16 s) 뒤에도 마감(2 s)이 그 안이라 경보 없음 그대로 — 만료 뒤 판정은 s01_late_one_expired
+    # 이슈 #46(late_until = 늦은 줄 + 14 s — 11/15 L3-21 대기 3 s로 16 s에서 줄어듦) 뒤에도 마감(2 s)이 그 안이라 경보 없음 그대로
+    # — 만료 뒤 판정은 s01_late_one_expired
     sc = Scenario("S01_L3-01-O_순서역전1줄_무경보",
-                  "인증 무응답 5대, UE마다 RegistrationRequest 한 줄이 자기 창 kpm2 뒤에 옴(late) — 판정 없음, 경보 없음 (16_ E1b, 현재 동작 고정)", 4000)
-    for du, t in _stall5():
+                  "인증 무응답 10대, UE마다 RegistrationRequest 한 줄이 자기 창 kpm2 뒤에 옴(late) — 판정 없음, 경보 없음 (16_ E1b, 현재 동작 고정)", 5000)
+    for du, t in _stall10():
         sc.ue(du).auth_stall(t)
     sc.late_msgs = {"RegistrationRequest"}
     return sc
 
 
 def s01_late_one_expired():
-    # 이슈 #46 (14_ §4.3 late_until, 15_ L01-T21): s01_late_one과 같이 RegistrationRequest 한 줄이 늦은 5대. 첫 AuthenticationRequest
-    # (t+105)의 마감 t+2105는 late_until(t+91+16000)보다 앞이라 판정 없음. 17 s 뒤 두 번째 AuthenticationRequest(t+17105)에도
-    # 무응답 → 마감 t+19105 ≥ late_until → 고착. 5번째(t=800) 마감 19905 → RAISE 20000, ues[].uncertain에 late
+    # 이슈 #46 (14_ §4.3 late_until, 15_ L01-T21): s01_late_one과 같이 RegistrationRequest 한 줄이 늦은 10대. 첫 AuthenticationRequest
+    # (t+105)의 마감 t+2105는 late_until(t+91+14000 — 11/15 전 16000)보다 앞이라 판정 없음. 17 s 뒤 두 번째 AuthenticationRequest
+    # (t+17105)에도 무응답 → 마감 t+19105 ≥ late_until → 고착. 10번째(t=1800) 마감 20905 → RAISE 21000, ues[].uncertain에 late
     sc = Scenario("S01_L3-01-O_순서역전1줄_만료뒤_RAISE",
-                  "RegistrationRequest 한 줄이 늦은 5대 — 2 s 마감은 late_until 안(판정 없음), 17 s 뒤 재요청 무응답은 고착 → RAISE (이슈 #46, 15_ L01-T21)", 20200)
-    for du, t in _stall5():
+                  "RegistrationRequest 한 줄이 늦은 10대 — 2 s 마감은 late_until 안(판정 없음), 17 s 뒤 재요청 무응답은 고착 → RAISE (이슈 #46, 15_ L01-T21)", 21200)
+    for du, t in _stall10():
         sc.ue(du).auth_stall(t).auth_req(t + 17105)
     sc.late_msgs = {"RegistrationRequest"}
-    sc.alert("RAISE", 20000, "L3-01-O", severity="medium", mode="normal")
+    sc.alert("RAISE", 21000, "L3-01-O", severity="medium", mode="normal")
     return sc
 
 
 def s01_late_all():
     # 16_ E1a: 모든 ue_evt가 자기 창 kpm2 뒤에 옴 → 모두 late, 경보 없음
     sc = Scenario("S01_L3-01-O_순서역전전부_무경보",
-                  "인증 무응답 5대, 모든 ue_evt가 자기 창 kpm2 뒤에 옴(모두 late) — 판정 없음, 경보 없음 (16_ E1a, 현재 동작 고정)", 4000)
-    for du, t in _stall5():
+                  "인증 무응답 10대, 모든 ue_evt가 자기 창 kpm2 뒤에 옴(모두 late) — 판정 없음, 경보 없음 (16_ E1a, 현재 동작 고정)", 5000)
+    for du, t in _stall10():
         sc.ue(du).auth_stall(t)
     sc.late_msgs = "all"
     return sc
 
 
 def s01_ul_loss_one():
-    # 16_ E2c: t=1500 한 칸(100 ms)만 UL 로스 — 대기 구간 [t₀, t₀+2000)이 모두 그 칸과 겹쳐 5건 전부 보류(14_ §6.2).
-    # 기존 '로스보류'는 20칸이고, 여기서는 한 칸이면 충분하다. 이슈 #48: 보류 5건 → 불확실 경보 RAISE 3000(공격 경보는 없음)
+    # 16_ E2c: t=1900 한 칸(100 ms)만 UL 로스 — 대기 구간 [t₀, t₀+2000)(t₀ = 105~1905)이 모두 그 칸과 겹쳐 10건 전부 보류(14_ §6.2).
+    # 기존 '로스보류'는 21칸이고, 여기서는 한 칸이면 충분하다. 이슈 #48: 보류 10건 → 불확실 경보 RAISE 4000(공격 경보는 없음).
+    # 11/15 문턱 N 10에 맞춰 10대로 늘리며 로스 칸을 1.5 s에서 1.9 s로 옮겼다(마지막 t₀ 1905보다 뒤에 끝나야 한다)
     sc = Scenario("S01_L3-01-O_UL로스1칸_불확실RAISE",
-                  "인증 무응답 5대, t=1.5 s에 UL 로스 한 칸(100 ms) — 겹치는 5건 모두 보류 → 불확실 경보 RAISE (16_ E2c, L01-T20)", 4000)
-    for du, t in _stall5():
+                  "인증 무응답 10대, t=1.9 s에 UL 로스 한 칸(100 ms) — 겹치는 10건 모두 보류 → 불확실 경보 RAISE (16_ E2c, L01-T20)", 5000)
+    for du, t in _stall10():
         sc.ue(du).auth_stall(t)
-    sc.set_loss(1, 15, ["UL"])
-    sc.alert("RAISE", 3000, "L3-01-O", severity="medium", mode="normal", alert_kind="anomaly")
+    sc.set_loss(1, 19, ["UL"])
+    sc.alert("RAISE", 4000, "L3-01-O", severity="medium", mode="normal", alert_kind="anomaly")
     return sc
 
 
 def s01_lost_missing():
     # 16_ E2: kpm2에 ue_evt_lost 키가 없음 — 알 수 없으므로 양방향 로스(14_ §6.2) → 전부 보류. 이슈 #48: 첫 칸에서 진단
-    # ue_evt_lost_missing(시험은 경보만 비교), 보류 5건 → 불확실 경보 RAISE 3000
+    # ue_evt_lost_missing(시험은 경보만 비교), 보류 10건 → 불확실 경보 RAISE 4000
     sc = Scenario("S01_L3-01-O_ue_evt_lost누락_불확실RAISE",
-                  "인증 무응답 5대, 모든 kpm2에 ue_evt_lost 키 없음 — 양방향 로스로 보아 전부 보류 → 불확실 경보 RAISE (16_ E2)", 4000)
-    for du, t in _stall5():
+                  "인증 무응답 10대, 모든 kpm2에 ue_evt_lost 키 없음 — 양방향 로스로 보아 전부 보류 → 불확실 경보 RAISE (16_ E2)", 5000)
+    for du, t in _stall10():
         sc.ue(du).auth_stall(t)
     sc.drop_lost = True
-    sc.alert("RAISE", 3000, "L3-01-O", severity="medium", mode="normal", alert_kind="anomaly")
+    sc.alert("RAISE", 4000, "L3-01-O", severity="medium", mode="normal", alert_kind="anomaly")
     return sc
 
 
@@ -622,22 +641,36 @@ def s21_normal():
     return sc
 
 
-def s21_fail4():
-    # L21-T5 앞: 실패 UE 4개 → 경보 없음
-    sc = Scenario("S21_L3-21_실패4_무경보", "무효 등록 4대 거절(실패 UE 4개) — 문턱 N=5 미만 (L21-T5)", 6200)
-    for i, t in enumerate([0, 200, 400, 600]):
-        u = sc.ue(i + 1)
-        u.setup_req(t).setup(t + 1).setup_complete(t + 90).reg_req(t + 91).reg_reject(t + 105)
+def _reject(sc, du, t):
+    # 무효 등록 한 연결 — 거절 t_f = t + 105, 갈래① 실패 UE = t_f + 3000 (15_ §5.3)
+    sc.ue(du).setup_req(t).setup(t + 1).setup_complete(t + 90).reg_req(t + 91).reg_reject(t + 105)
+
+
+def s21_fail9():
+    # L21-T5 앞: 실패 UE 9개 → 경보 없음 (11/15 문턱 N 10 — 11/14까지는 S21_L3-21_실패4_무경보)
+    sc = Scenario("S21_L3-21_실패9_무경보", "무효 등록 9대 거절(실패 UE 9개) — 문턱 N=10(셀 한도 96의 10%) 미만 (L21-T5)", 5500)
+    for du, t in _stall10()[:9]:
+        _reject(sc, du, t)
     return sc
 
 
 def s21_branch1():
-    # L21-T4: 실패 UE 5개 → 갈래① RAISE. 5번째 t_f=905, 마감 5905 → 처리 6000
-    sc = Scenario("S21_L3-21_원형_갈래1_RAISE", "무효 등록 5대 거절(실패 UE 5개) → 갈래① medium (L21-T4)", 6500)
-    for i, t in enumerate([0, 200, 400, 600, 800]):
-        u = sc.ue(i + 1)
-        u.setup_req(t).setup(t + 1).setup_complete(t + 90).reg_req(t + 91).reg_reject(t + 105)
-    sc.alert("RAISE", 6000, "L3-21", branch="1", severity="medium", mode="normal")
+    # L21-T4: 실패 UE 10개 → 갈래① RAISE. 10번째 t_f=1905, 마감 4905 → 처리 5000 (11/15 — 그전 5개, 5905 → 6000)
+    sc = Scenario("S21_L3-21_원형_갈래1_RAISE", "무효 등록 10대 거절(실패 UE 10개) → 갈래① medium (L21-T4)", 5500)
+    for du, t in _stall10():
+        _reject(sc, du, t)
+    sc.alert("RAISE", 5000, "L3-21", branch="1", severity="medium", mode="normal")
+    return sc
+
+
+def s21_cell50():
+    # L21-T26 재생판 (15_ §1.2 — 11/15): hello cells[].max_conn 50 → N = max(5, ⌈0.1 × 50⌉) = 5. 5대로 갈래① RAISE 4000
+    # (5번째 t_f 905 + 3000 = 3905)
+    sc = Scenario("S21_L3-21_셀한도50_실패5_RAISE",
+                  "hello 셀 한도 50 → 문턱 N=5, 무효 등록 5대 거절로 갈래① 성립 → medium (L21-T26, 셀 한도 비율 문턱)", 4500, max_conn=50)
+    for du, t in _stall10()[:5]:
+        _reject(sc, du, t)
+    sc.alert("RAISE", 4000, "L3-21", branch="1", severity="medium", mode="normal")
     return sc
 
 
@@ -665,24 +698,23 @@ def s21_reg_only():
 def s21_mixed_high():
     # L21-T11: 갈래① 경보 중 갈래② UE 걸림 → UPDATE·high (15_ §5.5)
     sc = Scenario("S21_L3-21_혼합_high", "갈래① RAISE 뒤 같은 셀 갈래② UE 걸림 → UPDATE·high (L21-T11)", 6800)
-    for i, t in enumerate([0, 200, 400, 600, 800]):
-        u = sc.ue(i + 1)
-        u.setup_req(t).setup(t + 1).setup_complete(t + 90).reg_req(t + 91).reg_reject(t + 105)   # 갈래① 5개 → RAISE 6000
-    b2 = sc.ue(6)
+    for du, t in _stall10():
+        _reject(sc, du, t)   # 갈래① 10개 → RAISE 5000
+    b2 = sc.ue(11)
     b2.setup_req(6100).setup(6101).setup_complete(6190)
     b2.reg_req(6191).reg_reject(6200).reg_req(6300).reg_req(6400)   # cnt 3 + 실패 → 갈래②, sat1 참 → high
-    sc.alert("RAISE", 6000, "L3-21", branch="1", severity="medium", mode="normal")
+    sc.alert("RAISE", 5000, "L3-21", branch="1", severity="medium", mode="normal")
     sc.alert("UPDATE", 6400, "L3-21", branch="1", severity="high")
     return sc
 
 
 def s21_accept_boundary_intime():
-    # L21-T9 앞: 실패 뒤 수락 t_ms = t_f+4999(제때) → 실패 UE 아님. 5대 모두 회복 → 경보 없음
-    sc = Scenario("S21_L3-21_수락경계_정시_무경보", "거절 뒤 t_f+4999 수락(제때) 5대 → 실패 UE 아님 (L21-T9)", 6500)
-    for i, t in enumerate([0, 200, 400, 600, 800]):
-        u = sc.ue(i + 1)
+    # L21-T9 앞: 실패 뒤 수락 t_ms = t_f+2999(제때 — 11/15 대기 3 s, 그전 t_f+4999) → 실패 UE 아님. 10대 모두 회복 → 경보 없음
+    sc = Scenario("S21_L3-21_수락경계_정시_무경보", "거절 뒤 t_f+2999 수락(제때) 10대 → 실패 UE 아님 (L21-T9)", 5500)
+    for du, t in _stall10():
+        u = sc.ue(du)
         u.setup_req(t).setup(t + 1).setup_complete(t + 90).reg_req(t + 91)
-        u.reg_reject(t + 105).reg_accept(t + 105 + 4999)   # t_f, 제때 수락 → 대기 풀림
+        u.reg_reject(t + 105).reg_accept(t + 105 + 2999)   # t_f, 제때 수락 → 대기 풀림
     return sc
 
 
@@ -695,37 +727,35 @@ def s21_sec_reject():
 
 
 def s21_hold():
-    # L21-T10: 갈래 ① 대기 구간에 DL 로스 창 → 실패 UE 보류(14_ §6.2). 5대 모두 보류 → 공격 경보 없음.
-    # 이슈 #48(L21-T22): 보류 5건 → 불확실 경보(갈래 없음) — 5번째 마감 5905 → RAISE 6000
+    # L21-T10: 갈래 ① 대기 구간에 DL 로스 창 → 실패 UE 보류(14_ §6.2). 10대 모두 보류 → 공격 경보 없음.
+    # 이슈 #48(L21-T22): 보류 10건 → 불확실 경보(갈래 없음) — 10번째 마감 4905 → RAISE 5000
     sc = Scenario("S21_L3-21_로스보류_불확실RAISE",
-                  "무효 등록 5대 거절이지만 대기 구간 DL 로스 → 모두 보류, 공격 경보 없이 불확실 경보 RAISE (L21-T10·L21-T22)", 6500)
-    for i, t in enumerate([0, 200, 400, 600, 800]):
-        u = sc.ue(i + 1)
-        u.setup_req(t).setup(t + 1).setup_complete(t + 90).reg_req(t + 91).reg_reject(t + 105)
-    for tick in range(10, 62):   # t=1000~6100 DL 로스 — 마감 처리 때 loss_end[DL] > t_from → 보류
+                  "무효 등록 10대 거절이지만 대기 구간 DL 로스 → 모두 보류, 공격 경보 없이 불확실 경보 RAISE (L21-T10·L21-T22)", 5500)
+    for du, t in _stall10():
+        _reject(sc, du, t)
+    for tick in range(10, 50):   # t=1000~5000 DL 로스 — 마감 처리 때 loss_end[DL] > t_from(105~1905) → 보류
         sc.set_loss(1, tick, ["DL"])
-    sc.alert("RAISE", 6000, "L3-21", severity="medium", mode="normal", alert_kind="anomaly")
+    sc.alert("RAISE", 5000, "L3-21", severity="medium", mode="normal", alert_kind="anomaly")
     return sc
 
 
 def s21_clear():
-    # L21-T12: 갈래① RAISE 뒤 60 s 조용 → CLEAR. t_active=5905 → t_end>=65905 → 66000
-    sc = Scenario("S21_L3-21_해제_CLEAR", "갈래① 5건 RAISE 뒤 60 s 조용 → CLEAR (L21-T12)", 66200)
-    for i, t in enumerate([0, 200, 400, 600, 800]):
-        u = sc.ue(i + 1)
-        u.setup_req(t).setup(t + 1).setup_complete(t + 90).reg_req(t + 91).reg_reject(t + 105)
-    sc.alert("RAISE", 6000, "L3-21", branch="1", severity="medium", mode="normal")
-    sc.alert("CLEAR", 66000, "L3-21")
+    # L21-T12: 갈래① RAISE 뒤 60 s 조용 → CLEAR. t_active=4905 → t_end>=64905 → 65000
+    sc = Scenario("S21_L3-21_해제_CLEAR", "갈래① 10건 RAISE 뒤 60 s 조용 → CLEAR (L21-T12)", 65200)
+    for du, t in _stall10():
+        _reject(sc, du, t)
+    sc.alert("RAISE", 5000, "L3-21", branch="1", severity="medium", mode="normal")
+    sc.alert("CLEAR", 65000, "L3-21")
     return sc
 
 
 # 쓰는 순서는 L3-20 → L3-01-O → L3-21(15_ §0)이지만 파일은 룰별로 묶어 둔다
 SCENARIOS = [
-    s01_normal, s01_one_stall, s01_stall4, s01_stall5, s01_stall5_high,
+    s01_normal, s01_one_stall, s01_stall9, s01_stall10, s01_stall10_high,
     s01_fail_is_response, s01_resp_boundary_late, s01_hold, s01_clear, s01_clear_then_rehit,
     s20_normal, s20_rlf, s20_high, s20_medium, s20_closed, s20_idle,
     s20_peer_uncertain, s20_repeat_update, s20_repeat_prior_attack_released, s20_clear, s20_session_end,
-    s21_normal, s21_fail4, s21_branch1, s21_branch2, s21_reg_only,
+    s21_normal, s21_fail9, s21_branch1, s21_branch2, s21_reg_only,
     s21_mixed_high, s21_accept_boundary_intime, s21_sec_reject, s21_hold, s21_clear,
     # 입력 불완전 (이슈 #42) — 뒤에 둔다: 앞의 29개 파일은 그대로다
     s01_late_one, s01_late_all, s01_ul_loss_one, s01_lost_missing,
@@ -733,6 +763,8 @@ SCENARIOS = [
     s01_late_one_expired,
     # 불확실 경보 뒤 공격 경보 (이슈 #48)
     s01_held_then_attack,
+    # 셀 한도 비율 문턱 — hello max_conn 50이면 N 5 (11/15, 15_ §1.2 L01-T23·L21-T26)
+    s01_cell50, s21_cell50,
 ]
 
 

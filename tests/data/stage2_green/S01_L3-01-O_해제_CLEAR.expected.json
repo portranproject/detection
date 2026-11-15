@@ -1,6 +1,6 @@
 {
   "scenario": "S01_L3-01-O_해제_CLEAR",
-  "description": "고착 5건 RAISE 뒤 60 s 조용 → CLEAR (L01-T13)",
+  "description": "고착 10건 RAISE 뒤 60 s 조용 → CLEAR (L01-T13)",
   "t0_ms": 1792209000000,
   "tolerance_ms": 100,
   "alerts": [
@@ -8,7 +8,7 @@
       "kind": "RAISE",
       "rule": "L3-01-O",
       "cell": 1,
-      "t_rel_ms": 3000,
+      "t_rel_ms": 4000,
       "mode": "normal",
       "severity": "medium"
     },
@@ -16,7 +16,7 @@
       "kind": "CLEAR",
       "rule": "L3-01-O",
       "cell": 1,
-      "t_rel_ms": 63000
+      "t_rel_ms": 64000
     }
   ]
 }

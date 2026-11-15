@@ -1,6 +1,6 @@
 {
   "scenario": "S01_L3-01-O_해제뒤재걸림_RAISE",
-  "description": "RAISE → 불성립 고착 4건 → CLEAR 63000 → 고착 1건은 창을 새로 셈(경보 없음) → 4건 더에 RAISE 64400, ues_total 5 (15_ §4.5, 11/05 Q-73)",
+  "description": "RAISE → 불성립 고착 4건 → CLEAR 64000 → 고착 6건은 창을 새로 셈(경보 없음) → 4건 더에 RAISE 66900, ues_total 10 (15_ §4.5, 11/05 Q-73)",
   "t0_ms": 1792209000000,
   "tolerance_ms": 100,
   "alerts": [
@@ -8,7 +8,7 @@
       "kind": "RAISE",
       "rule": "L3-01-O",
       "cell": 1,
-      "t_rel_ms": 3000,
+      "t_rel_ms": 4000,
       "mode": "normal",
       "severity": "medium"
     },
@@ -40,16 +40,16 @@
       "kind": "CLEAR",
       "rule": "L3-01-O",
       "cell": 1,
-      "t_rel_ms": 63000
+      "t_rel_ms": 64000
     },
     {
       "kind": "RAISE",
       "rule": "L3-01-O",
       "cell": 1,
-      "t_rel_ms": 64400,
+      "t_rel_ms": 66900,
       "mode": "normal",
       "severity": "medium",
-      "ues_total": 5
+      "ues_total": 10
     }
   ]
 }

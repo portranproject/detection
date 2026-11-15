@@ -1,4 +1,4 @@
-{"type":"hello","ver":1,"session":"S1","seq":1,"producer":"handwritten","node_id":"stage2_green","ue_evt":true,"cells":[{"cell_id":1,"max_conn":null}],"period_ms":100,"noreply_timeout_ms":1000,"si_sample_ms":100,"clock":"realtime"}
+{"type":"hello","ver":1,"session":"S1","seq":1,"producer":"handwritten","node_id":"stage2_green","ue_evt":true,"cells":[{"cell_id":1,"max_conn":50}],"period_ms":100,"noreply_timeout_ms":1000,"si_sample_ms":100,"clock":"realtime"}
 {"type":"ue_evt","t_ms":1792209000000,"cell_id":1,"du_ue_id":1,"cu_ue_id":1,"crnti":10001,"dir":"UL","proto":"RRC","msg":"RRCSetupRequest","f":{"est_cause":"mo-Signalling","ue_identity":{"type":"randomValue"}},"ver":1,"session":"S1","seq":2}
 {"type":"ue_evt","t_ms":1792209000001,"cell_id":1,"du_ue_id":1,"cu_ue_id":1,"crnti":10001,"dir":"DL","proto":"RRC","msg":"RRCSetup","ver":1,"session":"S1","seq":3}
 {"type":"ue_evt","t_ms":1792209000090,"cell_id":1,"du_ue_id":1,"cu_ue_id":1,"crnti":10001,"dir":"UL","proto":"RRC","msg":"RRCSetupComplete","ver":1,"session":"S1","seq":4}

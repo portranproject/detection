@@ -1,6 +1,6 @@
 {
   "scenario": "S01_L3-01-O_ue_evt_lost누락_불확실RAISE",
-  "description": "인증 무응답 5대, 모든 kpm2에 ue_evt_lost 키 없음 — 양방향 로스로 보아 전부 보류 → 불확실 경보 RAISE (16_ E2)",
+  "description": "인증 무응답 10대, 모든 kpm2에 ue_evt_lost 키 없음 — 양방향 로스로 보아 전부 보류 → 불확실 경보 RAISE (16_ E2)",
   "t0_ms": 1792209000000,
   "tolerance_ms": 100,
   "alerts": [
@@ -8,7 +8,7 @@
       "kind": "RAISE",
       "rule": "L3-01-O",
       "cell": 1,
-      "t_rel_ms": 3000,
+      "t_rel_ms": 4000,
       "mode": "normal",
       "severity": "medium",
       "alert_kind": "anomaly"

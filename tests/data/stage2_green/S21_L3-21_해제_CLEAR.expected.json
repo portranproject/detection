@@ -1,6 +1,6 @@
 {
   "scenario": "S21_L3-21_해제_CLEAR",
-  "description": "갈래① 5건 RAISE 뒤 60 s 조용 → CLEAR (L21-T12)",
+  "description": "갈래① 10건 RAISE 뒤 60 s 조용 → CLEAR (L21-T12)",
   "t0_ms": 1792209000000,
   "tolerance_ms": 100,
   "alerts": [
@@ -8,7 +8,7 @@
       "kind": "RAISE",
       "rule": "L3-21",
       "cell": 1,
-      "t_rel_ms": 6000,
+      "t_rel_ms": 5000,
       "mode": "normal",
       "severity": "medium",
       "branch": "1"
@@ -17,7 +17,7 @@
       "kind": "CLEAR",
       "rule": "L3-21",
       "cell": 1,
-      "t_rel_ms": 66000
+      "t_rel_ms": 65000
     }
   ]
 }

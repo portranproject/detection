@@ -1,6 +1,6 @@
 {
   "scenario": "S01_L3-01-O_응답경계_늦음_RAISE",
-  "description": "인증 응답이 마감과 같은 시각(늦음) 5대 → 고착 성립 (L01-T6)",
+  "description": "인증 응답이 마감과 같은 시각(늦음) 10대 → 고착 성립 (L01-T6)",
   "t0_ms": 1792209000000,
   "tolerance_ms": 100,
   "alerts": [
@@ -8,7 +8,7 @@
       "kind": "RAISE",
       "rule": "L3-01-O",
       "cell": 1,
-      "t_rel_ms": 3000,
+      "t_rel_ms": 4000,
       "mode": "normal",
       "severity": "medium"
     }

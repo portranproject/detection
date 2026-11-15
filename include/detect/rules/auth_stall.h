@@ -2,7 +2,8 @@
 // 룰 L3-01-O — 인증 단계 고착 공격 (Kim'19 원형) 탐지 (15_ §4). 연결과 등록 요청까지 보낸 뒤 AMF의 AuthenticationRequest에
 // 응답하지 않아 연결을 인증 단계에 묶어 두고, 이를 반복해 셀 연결 자원을 채우는 공격이다. 응답 대기 시간 안에 응답이 없는
 // UE(고착)가 셀에서 창 W 안에 N건 이상이면 성립한다 — 정상 UE는 수십~수백 ms 안에 응답하고, 전파가 끊긴 UE 하나로는
-// 문턱에 닿지 않는다(15_ §4.1·§4.9). 비율은 보지 않는다(10/29 사용자 결정, 15_ §4.3).
+// 문턱에 닿지 않는다(15_ §4.1·§4.9). 시도 대비 비율은 보지 않는다(10/29 사용자 결정, 15_ §4.3). N은 셀 한도에 비례한다 —
+// max(n_stall, ⌈n_stall_frac × max_conn⌉), 기본 셀 한도 96이면 10 (15_ §1.2, 11/15 사용자 결정).
 // (11/05 26_ R2, 이슈 #96) 고착의 셀 창 집계·RAISE·UPDATE·CLEAR·밀어내기 보류는 4단계와 같은 HitWindow 위에 둔다 — '대기 뒤 고착'
 // 판정과 심각도·auth_req_w·UeCtxMax 창은 룰에 남는다
 
@@ -74,7 +75,7 @@ class AuthStallRule : public UeRule {
 
   void start(const UeId& id, const UeEvt& evt, const UeRuleCtx& ctx);
   void decorate(int64_t cell, std::size_t from, const AlertUe* hit, std::optional<int64_t> cx,
-                std::optional<int64_t> max_conn, RuleOutput& out);
+                std::optional<int64_t> max_conn, int64_t n_th, RuleOutput& out);
   int64_t auth_req_w(const CellState& c) const;
   AlertUe held_ue(const UeState& n, int64_t t_hit) const;
 

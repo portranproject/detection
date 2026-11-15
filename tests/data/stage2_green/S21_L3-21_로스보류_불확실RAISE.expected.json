@@ -1,6 +1,6 @@
 {
   "scenario": "S21_L3-21_로스보류_불확실RAISE",
-  "description": "무효 등록 5대 거절이지만 대기 구간 DL 로스 → 모두 보류, 공격 경보 없이 불확실 경보 RAISE (L21-T10·L21-T22)",
+  "description": "무효 등록 10대 거절이지만 대기 구간 DL 로스 → 모두 보류, 공격 경보 없이 불확실 경보 RAISE (L21-T10·L21-T22)",
   "t0_ms": 1792209000000,
   "tolerance_ms": 100,
   "alerts": [
@@ -8,7 +8,7 @@
       "kind": "RAISE",
       "rule": "L3-21",
       "cell": 1,
-      "t_rel_ms": 6000,
+      "t_rel_ms": 5000,
       "mode": "normal",
       "severity": "medium",
       "alert_kind": "anomaly"

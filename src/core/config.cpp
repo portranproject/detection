@@ -110,6 +110,17 @@ void read_fraction(const json& obj, const char* key, double& out, const std::str
   out = x;
 }
 
+// 비율 [0, 1] — 0을 받는다 (rules."L3-01-O".n_stall_frac·"L3-21".n_fail_frac — 15_ §1.2, 11/15): 0이면 셀 한도 비율을 쓰지 않고
+// 최소값만 문턱으로 쓴다. 1단계 f_abs_frac(0, 1]과 다른 것은 2단계 두 룰은 최소값(n_stall·n_fail)이 따로 있어 0이 '끔'으로 뜻이 서기 때문
+void read_unit(const json& obj, const char* key, double& out, const std::string& where) {
+  const json* v = find(obj, key);
+  if (!v) return;
+  if (!v->is_number()) throw ConfigErr(where + key + ": not a number");
+  const double x = v->get<double>();
+  if (!(x >= 0.0 && x <= 1.0)) throw ConfigErr(where + key + ": out of range [0, 1]");
+  out = x;
+}
+
 void read_bool(const json& obj, const char* key, bool& out, const std::string& where) {
   const json* v = find(obj, key);
   if (!v) return;
@@ -158,6 +169,8 @@ struct KeySpec {
   [](const json& r, const char* k, auto& c, const std::string& w) { read_real_at_least(r, k, c.member, lo, w); }
 #define KEY_FRACTION(member) \
   [](const json& r, const char* k, auto& c, const std::string& w) { read_fraction(r, k, c.member, w); }
+#define KEY_UNIT(member) \
+  [](const json& r, const char* k, auto& c, const std::string& w) { read_unit(r, k, c.member, w); }
 #define KEY_NULLABLE_INT(member, lo) \
   [](const json& r, const char* k, auto& c, const std::string& w) { read_nullable_int(r, k, c.member, lo, w); }
 
@@ -203,19 +216,22 @@ const KeySpec<BlindDosConfig> kBlindDosKeys[] = {
     {"clear_quiet_ms", KEY_INT_IN(clear_quiet_ms, 1000, 3600000)},
 };
 
-// rules."L3-01-O" (15_ §1.2·§4.4). max_conn은 null이면 심각도 high를 쓰지 않는다
+// rules."L3-01-O" (15_ §1.2·§4.4). max_conn은 null이면 심각도 high를 쓰지 않고 문턱 N은 n_stall이다. n_stall_frac은 [0, 1] (11/15)
 const KeySpec<AuthStallConfig> kAuthStallKeys[] = {
     {"auth_wait_ms", KEY_INT_IN(auth_wait_ms, 100, 60000)},
     {"window_ms", KEY_INT_IN(window_ms, 1000, 600000)},
     {"n_stall", KEY_INT_IN(n_stall, 1, 10000)},
+    {"n_stall_frac", KEY_UNIT(n_stall_frac)},
     {"clear_quiet_ms", KEY_INT_IN(clear_quiet_ms, 1000, 3600000)},
     {"max_conn", KEY_NULLABLE_INT(max_conn, 1)},
 };
 
-// rules."L3-21" (15_ §1.2·§5.4)
+// rules."L3-21" (15_ §1.2·§5.4). n_fail_frac은 [0, 1], max_conn은 1 이상 또는 null(문턱 N = n_fail) (11/15)
 const KeySpec<UplinkDosConfig> kUplinkDosKeys[] = {
     {"window_ms", KEY_INT_IN(window_ms, 1000, 600000)},
     {"n_fail", KEY_INT_IN(n_fail, 1, 10000)},
+    {"n_fail_frac", KEY_UNIT(n_fail_frac)},
+    {"max_conn", KEY_NULLABLE_INT(max_conn, 1)},
     {"fail_accept_wait_ms", KEY_INT_IN(fail_accept_wait_ms, 100, 60000)},
     {"reg_repeat", KEY_INT_IN(reg_repeat, 2, 100)},
     {"clear_quiet_ms", KEY_INT_IN(clear_quiet_ms, 1000, 3600000)},
@@ -269,6 +285,9 @@ const KeySpec<KnownRegBurstConfig> kKnownRegBurstKeys[] = {
 #undef KEY_INT_IN
 #undef KEY_INT_MIN
 #undef KEY_REAL_MIN
+#undef KEY_REAL_AT_LEAST
+#undef KEY_FRACTION
+#undef KEY_UNIT
 #undef KEY_NULLABLE_INT
 
 // 키 표대로 객체 하나를 읽는다 — 표에 없는 키는 경고, 표의 키는 그 읽는 법으로(타입·범위 오류는 ConfigErr)
