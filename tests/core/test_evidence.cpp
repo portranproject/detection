@@ -210,7 +210,7 @@ TEST(EvidenceRecord, AlertUeUnitMatchesL320Example) {
   e.values["peer_uncertain"] = 0;
   e.values["victims"] = 1;
   e.values["held"] = 0;
-  e.params["accept_wait_ms"] = 5000;
+  e.params["accept_wait_ms"] = 3000;  // 15_ §2.6 예 — 11/15 기본값 3,000
   e.params["clear_quiet_ms"] = 60000;
   AlertUe u;
   u.cell = 1;
@@ -223,7 +223,7 @@ TEST(EvidenceRecord, AlertUeUnitMatchesL320Example) {
   u.t_hit = 1793005265410;
   u.values["peer"] = "concurrent";
   u.values["nas"] = "ServiceRequest";
-  u.values["wait_ms"] = 5000;
+  u.values["wait_ms"] = 3000;
   u.values["closed_ms"] = nullptr;
   u.values["victim_released"] = true;
   u.values["repeat"] = 1;
@@ -237,10 +237,10 @@ TEST(EvidenceRecord, AlertUeUnitMatchesL320Example) {
             R"("stage":2,"unit":"ue","kind":"attack","cell":1,"t":1793005265500,"severity":"high","mode":"normal",)"
             R"("cond":["same_stmsi","concurrent","not_accepted"],"candidates":[],)"
             R"("values":{"concurrent":1,"peer_uncertain":0,"victims":1,"held":0},)"
-            R"("params":{"accept_wait_ms":5000,"clear_quiet_ms":60000},)"
+            R"("params":{"accept_wait_ms":3000,"clear_quiet_ms":60000},)"
             R"("ues":[{"cell":1,"du_ue_id":7,"uid":58,"cu_ue_id":12,"crnti":18050,"s_tmsi":"0x0123456789ab",)"
             R"("cond":["same_stmsi","concurrent","not_accepted"],"t_hit":1793005265410,)"
-            R"("values":{"peer":"concurrent","nas":"ServiceRequest","wait_ms":5000,"closed_ms":null,)"
+            R"("values":{"peer":"concurrent","nas":"ServiceRequest","wait_ms":3000,"closed_ms":null,)"
             R"("victim_released":true,"repeat":1},"uncertain":[],"peers":[[1,3,41]],"seq_range":[8790,8812],)"
             R"("evidence":true}],"ues_total":1})");
 }

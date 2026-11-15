@@ -1,5 +1,5 @@
 // 룰 L3-20 Blind DoS 테스트 — 15_ §2.8 L20-T1~T27. 합성 ue_evt·kpm2 줄로 한다(데이터 파일은 설정 키·데이터 이슈).
-// 시각은 kT0 기준 ms. RAISE는 t₀ + accept_wait_ms 이상인 첫 kpm2에서 나온다
+// 시각은 kT0 기준 ms. RAISE는 t₀ + accept_wait_ms(기본 3,000 — 11/15 전 5,000, 15_ §2.4) 이상인 첫 kpm2에서 나온다
 #include "detect/engine.h"
 #include "detect/evidence.h"
 #include "detect/evidence_queue.h"
@@ -194,39 +194,39 @@ TEST(BlindDos, T03RlfCollisionAccepted) {
   EXPECT_TRUE(h.alerts.empty());
 }
 
-// L20-T4: CONNECTED형 공격 + 피해자 해제 +20 ms — t₀ + 5,000 이상인 첫 kpm2에 RAISE, high (15_ §2.3·§2.6)
+// L20-T4: CONNECTED형 공격 + 피해자 해제 +20 ms — t₀ + 3,000 이상인 첫 kpm2에 RAISE, high (15_ §2.3·§2.6)
 TEST(BlindDos, T04ConnectedAttackHigh) {
   Harness h;
   h.victim(3, kS, 0);
   h.tick_to(1000);
-  h.attack(7, kS, 1000);  // t₀ = 1050, 마감 6050
+  h.attack(7, kS, 1000);  // t₀ = 1050, 마감 4050
   h.f1ap(1070, 3, "DL", "UEContextReleaseCommand");
-  h.tick_to(6000);
+  h.tick_to(4000);
   EXPECT_TRUE(h.alerts.empty());
-  h.kpm(6000);  // 마감이 든 창
+  h.kpm(4000);  // 마감이 든 창
   ASSERT_EQ(h.alerts.size(), 1u);
   const AlertEvent& e = h.alerts[0];
   EXPECT_EQ(e.kind, AlertEventKind::Raise);
   EXPECT_EQ(e.rule, "L3-20");
-  EXPECT_EQ(e.t, kT0 + 6100);
+  EXPECT_EQ(e.t, kT0 + 4100);
   EXPECT_EQ(e.severity, Severity::High);
   EXPECT_EQ(e.cond, kCondConcurrent);
   EXPECT_TRUE(e.candidates.empty());
   EXPECT_EQ(e.alert_id.rfind("S-L3-20-1-", 0), 0u);
   EXPECT_EQ(e.values.dump(), R"({"concurrent":1,"peer_uncertain":0,"victims":1,"held":0,"evicted":0})");
-  EXPECT_EQ(e.params.dump(), R"({"accept_wait_ms":5000,"clear_quiet_ms":60000})");
+  EXPECT_EQ(e.params.dump(), R"({"accept_wait_ms":3000,"clear_quiet_ms":60000})");
   ASSERT_EQ(e.ues.size(), 1u);
   const AlertUe& u = e.ues[0];
   EXPECT_EQ(u.du_ue_id, 7);
   EXPECT_EQ(u.uid, 2);
   EXPECT_EQ(u.s_tmsi, kS);
-  EXPECT_EQ(u.t_hit, kT0 + 6050);
+  EXPECT_EQ(u.t_hit, kT0 + 4050);
   EXPECT_EQ(u.cond, kCondConcurrent);
   EXPECT_EQ(u.peers, (std::vector<std::vector<int64_t>>{{1, 3, 1}}));
   EXPECT_EQ(u.values.dump(),
-            R"({"peer":"concurrent","nas":"ServiceRequest","wait_ms":5000,"closed_ms":null,"victim_released":true,"repeat":1})");
-  EXPECT_EQ(h.logs[0], "ALERT RAISE rule=L3-20 cell=1 t=" + std::to_string(kT0 + 6100) +
-                           " peer=concurrent ue=1/7/2 s_tmsi=0x0123456789ab peers=1/3/1 nas=ServiceRequest wait_ms=5000 "
+            R"({"peer":"concurrent","nas":"ServiceRequest","wait_ms":3000,"closed_ms":null,"victim_released":true,"repeat":1})");
+  EXPECT_EQ(h.logs[0], "ALERT RAISE rule=L3-20 cell=1 t=" + std::to_string(kT0 + 4100) +
+                           " peer=concurrent ue=1/7/2 s_tmsi=0x0123456789ab peers=1/3/1 nas=ServiceRequest wait_ms=3000 "
                            "victim_released=1 severity=high mode=normal candidates=");
 }
 
@@ -236,9 +236,9 @@ TEST(BlindDos, T05NoVictimReleaseMedium) {
   h.victim(3, kS, 0);
   h.tick_to(1000);
   h.attack(7, kS, 1000);
-  h.tick_to(6100);
+  h.tick_to(4100);
   ASSERT_EQ(h.alerts.size(), 1u);
-  EXPECT_EQ(h.alerts[0].t, kT0 + 6100);
+  EXPECT_EQ(h.alerts[0].t, kT0 + 4100);
   EXPECT_EQ(h.alerts[0].severity, Severity::Medium);
   EXPECT_EQ(h.alerts[0].ues[0].values.at("victim_released"), false);
   EXPECT_NE(h.logs[0].find("victim_released=0 severity=medium"), std::string::npos);
@@ -254,9 +254,9 @@ TEST(BlindDos, T06ClosedBeforeDeadline) {
   h.nas(2050, 7, "DL", "ServiceReject", R"("cause":9)");
   h.release(2050, 7);
   EXPECT_EQ(h.rule->waiting(), 1u);
-  h.tick_to(6100);
+  h.tick_to(4100);
   ASSERT_EQ(h.alerts.size(), 1u);
-  EXPECT_EQ(h.alerts[0].t, kT0 + 6100);
+  EXPECT_EQ(h.alerts[0].t, kT0 + 4100);
   EXPECT_EQ(h.alerts[0].ues[0].values.at("closed_ms"), 1000);
 }
 
@@ -281,17 +281,17 @@ TEST(BlindDos, T07T08IdleTypeNotDetected) {
   EXPECT_TRUE(h.alerts.empty());
 }
 
-// L20-T9: 수락 경계 — ServiceAccept가 t₀ + 4,999면 제때(경보 없음), t₀ + 5,000이면 늦은 수락(RAISE, 14_ §6.1-5)
+// L20-T9: 수락 경계 — ServiceAccept가 t₀ + 2,999면 제때(경보 없음), t₀ + 3,000이면 늦은 수락(RAISE, 14_ §6.1-5)
 TEST(BlindDos, T09AcceptBoundary) {
-  for (int64_t at : {6049, 6050}) {
+  for (int64_t at : {4049, 4050}) {
     Harness h;
     h.victim(3, kS, 0);
     h.tick_to(1000);
     h.attack(7, kS, 1000);
-    h.tick_to(6000);
+    h.tick_to(4000);
     h.nas(at, 7, "DL", "ServiceAccept", "", 2);
-    h.kpm(6000);
-    EXPECT_EQ(h.alerts.size(), at == 6049 ? 0u : 1u) << at;
+    h.kpm(4000);
+    EXPECT_EQ(h.alerts.size(), at == 4049 ? 0u : 1u) << at;
   }
 }
 
@@ -321,7 +321,7 @@ TEST(BlindDos, T11T12T13LossDuringWait) {
     h.attack(7, kS, 1000);
     h.tick_to(3000);
     h.kpm(3000, lost);
-    h.tick_to(6100);
+    h.tick_to(4100);
     EXPECT_EQ(h.alerts.size(), 1u);
     return h.alerts.empty() ? std::string() : h.alerts[0].alert_kind;
   };
@@ -338,38 +338,38 @@ TEST(BlindDos, T29HeldAlert) {
     Harness h;
     h.victim(3, kS, 0);
     h.tick_to(1000);
-    h.attack(7, kS, 1000);  // t₀ 1050 → 마감 6050
+    h.attack(7, kS, 1000);  // t₀ 1050 → 마감 4050
     h.tick_to(1500);
     h.kpm(1500, R"(["DL"])");  // loss_end[DL] 1600 > 1050 → 보류
-    h.tick_to(6000);
+    h.tick_to(4000);
     EXPECT_TRUE(h.alerts.empty());
-    h.tick_to(6100);
+    h.tick_to(4100);
     ASSERT_EQ(h.alerts.size(), 1u);
     const AlertEvent e = h.alerts[0];  // 복사 — 뒤에 alerts가 늘어난다
     EXPECT_EQ(e.kind, AlertEventKind::Raise);
     EXPECT_EQ(e.alert_kind, "anomaly");
-    EXPECT_EQ(e.t, kT0 + 6100);
+    EXPECT_EQ(e.t, kT0 + 4100);
     EXPECT_EQ(e.severity, Severity::Medium);
     EXPECT_EQ(e.cond, (std::vector<std::string>{"held_count"}));
     EXPECT_EQ(e.candidates, (std::vector<std::string>{"L3-20"}));
     EXPECT_EQ(e.values.dump(), R"({"held_w":1})");
-    EXPECT_EQ(e.params.dump(), R"({"accept_wait_ms":5000,"clear_quiet_ms":60000})");
+    EXPECT_EQ(e.params.dump(), R"({"accept_wait_ms":3000,"clear_quiet_ms":60000})");
     ASSERT_EQ(e.ues.size(), 1u);
     EXPECT_EQ(e.ues[0].du_ue_id, 7);
     EXPECT_EQ(e.ues[0].cond, (std::vector<std::string>{"held"}));
-    EXPECT_EQ(e.ues[0].t_hit, kT0 + 6050);
+    EXPECT_EQ(e.ues[0].t_hit, kT0 + 4050);
     EXPECT_EQ(e.ues[0].uncertain, (std::vector<std::string>{"loss"}));
-    EXPECT_EQ(e.ues[0].values.dump(), R"({"wait_ms":5000,"dir":"DL"})");
-    EXPECT_EQ(h.logs[0], "ALERT RAISE rule=L3-20 cell=1 t=" + std::to_string(kT0 + 6100) +
-                             " kind=anomaly held_w=1 wait_ms=5000 severity=medium mode=normal candidates=L3-20");
-    // 그 뒤 로스 없이 공격 연결 8 → 마감 12050 → 12100에서 불확실 CLEAR 다음 공격 RAISE
+    EXPECT_EQ(e.ues[0].values.dump(), R"({"wait_ms":3000,"dir":"DL"})");
+    EXPECT_EQ(h.logs[0], "ALERT RAISE rule=L3-20 cell=1 t=" + std::to_string(kT0 + 4100) +
+                             " kind=anomaly held_w=1 wait_ms=3000 severity=medium mode=normal candidates=L3-20");
+    // 그 뒤 로스 없이 공격 연결 8 → 마감 10050 → 10100에서 불확실 CLEAR 다음 공격 RAISE
     h.attack(8, kS, 7000);
-    h.tick_to(12100);
+    h.tick_to(10100);
     ASSERT_EQ(h.alerts.size(), 3u);
     EXPECT_EQ(h.alerts[1].kind, AlertEventKind::Clear);
     EXPECT_EQ(h.alerts[1].alert_kind, "anomaly");
     EXPECT_EQ(h.alerts[1].alert_id, e.alert_id);
-    EXPECT_EQ(h.alerts[1].t, kT0 + 12100);
+    EXPECT_EQ(h.alerts[1].t, kT0 + 10100);
     EXPECT_EQ(h.alerts[2].kind, AlertEventKind::Raise);
     EXPECT_EQ(h.alerts[2].alert_kind, "attack");
     EXPECT_NE(h.alerts[2].alert_id, e.alert_id);
@@ -382,12 +382,12 @@ TEST(BlindDos, T29HeldAlert) {
     h.attack(7, kS, 1000);
     h.tick_to(1500);
     h.kpm(1500, R"(["DL"])");
-    h.tick_to(66000);
+    h.tick_to(64000);
     ASSERT_EQ(h.alerts.size(), 1u);
-    h.tick_to(66100);  // 마지막 보류 6050 + 60 s
+    h.tick_to(64100);  // 마지막 보류 4050 + 60 s
     ASSERT_EQ(h.alerts.size(), 2u);
     EXPECT_EQ(h.alerts[1].kind, AlertEventKind::Clear);
-    EXPECT_EQ(h.alerts[1].t, kT0 + 66100);
+    EXPECT_EQ(h.alerts[1].t, kT0 + 64100);
   }
 }
 
@@ -398,7 +398,7 @@ TEST(BlindDos, T14PeerUncertain) {
   h.kpm(0, R"(["UL","DL"])");  // 피해자의 마지막 줄 뒤 로스 창
   h.tick_to(1000);
   h.attack(7, kS, 1000);
-  h.tick_to(6100);
+  h.tick_to(4100);
   ASSERT_EQ(h.alerts.size(), 1u);
   EXPECT_EQ(h.alerts[0].cond, kCondUncertain);
   EXPECT_EQ(h.alerts[0].severity, Severity::Medium);
@@ -416,7 +416,7 @@ TEST(BlindDos, T15RepeatedAttack) {
   h.attack(8, kS, 2000);
   h.tick_to(3000);
   h.attack(9, kS, 3000);
-  h.tick_to(8200);
+  h.tick_to(6200);
   ASSERT_EQ(h.alerts.size(), 3u);
   EXPECT_EQ(h.alerts[0].kind, AlertEventKind::Raise);
   EXPECT_EQ(h.alerts[1].kind, AlertEventKind::Update);
@@ -424,7 +424,7 @@ TEST(BlindDos, T15RepeatedAttack) {
   for (int i = 0; i < 3; ++i) EXPECT_EQ(h.alerts[i].ues[0].values.at("repeat"), i + 1);
   EXPECT_EQ(h.alerts[2].ues_total, 3);
   EXPECT_EQ(h.alerts[2].values.dump(), R"({"concurrent":3,"peer_uncertain":0,"victims":1,"held":0,"evicted":0})");
-  EXPECT_EQ(h.logs[1], "ALERT UPDATE rule=L3-20 cell=1 t=" + std::to_string(kT0 + 7100) +
+  EXPECT_EQ(h.logs[1], "ALERT UPDATE rule=L3-20 cell=1 t=" + std::to_string(kT0 + 5100) +
                            " ues_new=1 ues_total=2 severity=medium");
 }
 
@@ -434,29 +434,29 @@ TEST(BlindDos, T16ClearAfterQuiet) {
     Harness h;
     h.victim(3, kS, 0);
     h.tick_to(1000);
-    h.attack(7, kS, 1000);  // 걸림 6050
-    h.tick_to(66000);
+    h.attack(7, kS, 1000);  // 걸림 4050
+    h.tick_to(64000);
     EXPECT_EQ(h.alerts.size(), 1u);
-    h.kpm(66000);
+    h.kpm(64000);
     ASSERT_EQ(h.alerts.size(), 2u);
     EXPECT_EQ(h.alerts[1].kind, AlertEventKind::Clear);
-    EXPECT_EQ(h.logs[1], "ALERT CLEAR rule=L3-20 cell=1 t=" + std::to_string(kT0 + 66100) +
+    EXPECT_EQ(h.logs[1], "ALERT CLEAR rule=L3-20 cell=1 t=" + std::to_string(kT0 + 64100) +
                              " duration_ms=60000 ues_total=1");
   }
   {
     Harness h;
     h.victim(3, kS, 0);
     h.tick_to(1000);
-    h.attack(7, kS, 1000);  // 걸림 6050
+    h.attack(7, kS, 1000);  // 걸림 4050
     h.tick_to(60900);
-    h.attack(8, kS, 60900);  // 걸림 65950 — 첫 걸림 뒤 59.9초
-    h.tick_to(125900);
+    h.attack(8, kS, 60900);  // 걸림 63950 — 첫 걸림 뒤 59.9초
+    h.tick_to(123900);
     ASSERT_EQ(h.alerts.size(), 2u);
     EXPECT_EQ(h.alerts[1].kind, AlertEventKind::Update);
-    h.kpm(125900);
+    h.kpm(123900);
     ASSERT_EQ(h.alerts.size(), 3u);
     EXPECT_EQ(h.alerts[2].kind, AlertEventKind::Clear);
-    EXPECT_EQ(h.alerts[2].t, kT0 + 126000);
+    EXPECT_EQ(h.alerts[2].t, kT0 + 124000);
   }
 }
 
@@ -465,15 +465,15 @@ TEST(BlindDos, T17HeldDoesNotBlockClear) {
   Harness h;
   h.victim(3, kS, 0);
   h.tick_to(1000);
-  h.attack(7, kS, 1000);  // 걸림 6050
+  h.attack(7, kS, 1000);  // 걸림 4050
   h.tick_to(31000);
-  h.attack(8, kS, 31000);  // 마감 36050
+  h.attack(8, kS, 31000);  // 마감 34050
   h.tick_to(32000);
   h.kpm(32000, R"(["UL","DL"])");  // 그 대기 구간의 로스 창 — 보류
-  h.tick_to(66100);
+  h.tick_to(64100);
   ASSERT_EQ(h.alerts.size(), 2u);
   EXPECT_EQ(h.alerts[1].kind, AlertEventKind::Clear);
-  EXPECT_EQ(h.alerts[1].t, kT0 + 66100);
+  EXPECT_EQ(h.alerts[1].t, kT0 + 64100);
 }
 
 // L20-T18: 새 연결 NAS가 RegistrationRequest(5G-GUTI)·DeregistrationRequest — 후보 (15_ §2.6).
@@ -486,7 +486,7 @@ TEST(BlindDos, T18CandidatesByNas) {
     h.rrc(1000, 7, "UL", "RRCSetupRequest", kRandom);
     h.rrc(1050, 7, "UL", "RRCSetupComplete");
     h.nas(1050, 7, "UL", "RegistrationRequest", R"("reg_type":"mobility","id_type":"5G-GUTI",)" + stmsi(kS));
-    h.tick_to(6100);
+    h.tick_to(4100);
     ASSERT_EQ(h.alerts.size(), 1u);
     EXPECT_EQ(h.alerts[0].candidates, (std::vector<std::string>{"L3-19-Va", "L3-21"}));
     EXPECT_EQ(h.alerts[0].ues[0].values.at("nas"), "RegistrationRequest");
@@ -500,7 +500,7 @@ TEST(BlindDos, T18CandidatesByNas) {
     h.rrc(1000, 7, "UL", "RRCSetupRequest", part1(kS));
     h.rrc(1050, 7, "UL", "RRCSetupComplete", stmsi(kS));
     h.nas(1050, 7, "UL", "DeregistrationRequest", R"("switch_off":false)", 1);
-    h.tick_to(6100);
+    h.tick_to(4100);
     ASSERT_EQ(h.alerts.size(), 1u);
     EXPECT_EQ(h.alerts[0].candidates, (std::vector<std::string>{"L3-23-O", "L3-19-Va"}));
   }
@@ -540,7 +540,7 @@ TEST(BlindDos, T21CrossCell) {
   h.tick_to(1000, 1);
   h.tick_to(1000, 2);
   h.attack(7, kS, 1000, 2);
-  h.tick_to(6100, 2);
+  h.tick_to(4100, 2);
   ASSERT_EQ(h.alerts.size(), 1u);
   EXPECT_EQ(h.alerts[0].cell_id, 2);
   EXPECT_EQ(h.alerts[0].ues[0].peers, (std::vector<std::vector<int64_t>>{{1, 3, 1}}));
@@ -571,7 +571,7 @@ TEST(BlindDos, T23VictimRegisteredWithSuci) {
   h.nas(100, 3, "DL", "RegistrationAccept", stmsi(kS), 2);
   h.tick_to(1000);
   h.attack(7, kS, 1000);
-  h.tick_to(6100);
+  h.tick_to(4100);
   ASSERT_EQ(h.alerts.size(), 1u);
   EXPECT_EQ(h.alerts[0].cond, kCondConcurrent);
   EXPECT_EQ(h.alerts[0].ues[0].peers, (std::vector<std::vector<int64_t>>{{1, 3, 1}}));
@@ -584,17 +584,17 @@ TEST(BlindDos, T24SeverityRiseUpdate) {
   h.kpm(0, R"(["UL","DL"])");  // 피해자 A 불확실
   h.victim(5, kS2, 200);       // 피해자 B — 로스 창 뒤
   h.tick_to(1000);
-  h.attack(7, kS, 1000);  // A의 S-TMSI — peer_uncertain, 걸림 6050
+  h.attack(7, kS, 1000);  // A의 S-TMSI — peer_uncertain, 걸림 4050
   h.tick_to(1500);
-  h.attack(8, kS2, 1500);  // B의 S-TMSI — concurrent, 걸림 6550
+  h.attack(8, kS2, 1500);  // B의 S-TMSI — concurrent, 걸림 4550
   h.f1ap(1570, 5, "DL", "UEContextReleaseCommand");
-  h.tick_to(6700);
+  h.tick_to(4700);
   ASSERT_EQ(h.alerts.size(), 2u);
   EXPECT_EQ(h.alerts[0].kind, AlertEventKind::Raise);
   EXPECT_EQ(h.alerts[0].severity, Severity::Medium);
   EXPECT_EQ(h.alerts[1].kind, AlertEventKind::Update);
   EXPECT_EQ(h.alerts[1].severity, Severity::High);
-  EXPECT_EQ(h.alerts[1].t, kT0 + 6600);  // 1초 간격을 기다리지 않음
+  EXPECT_EQ(h.alerts[1].t, kT0 + 4600);  // 1초 간격을 기다리지 않음
   EXPECT_EQ(h.alerts[1].values.at("victims"), 2);
 }
 
@@ -625,7 +625,7 @@ TEST(BlindDos, T26LossyPeerWithLaterLineIsCertain) {
   h.rrc(200, 3, "UL", "MeasurementReport");
   h.tick_to(1000);
   h.attack(7, kS, 1000);
-  h.tick_to(6100);
+  h.tick_to(4100);
   ASSERT_EQ(h.alerts.size(), 1u);
   EXPECT_EQ(h.alerts[0].cond, kCondConcurrent);
 }
@@ -642,7 +642,7 @@ TEST(BlindDos, T27KeyReuseKeepsOldUid) {
   h.tick_to(3000);
   h.rrc(3050, 7, "UL", "RRCSetupRequest", kRandom);
   h.rrc(3100, 7, "UL", "RRCSetupComplete");
-  h.tick_to(6100);
+  h.tick_to(4100);
   ASSERT_EQ(h.alerts.size(), 1u);
   EXPECT_EQ(h.alerts[0].ues[0].uid, 2);
   EXPECT_EQ(h.alerts[0].ues[0].values.at("closed_ms"), 1000);
@@ -658,10 +658,10 @@ TEST(BlindDos, EndOnInputLostAndSessionReset) {
     h.victim(3, kS, 0);
     h.tick_to(1000);
     h.attack(7, kS, 1000);
-    h.tick_to(6100);
+    h.tick_to(4100);
     ASSERT_EQ(h.alerts.size(), 1u);
-    h.cc.clear();  // 1단계 필수 키가 빠진 칸 — 보류가 H_hold를 넘으면 input_lost (보류 시작 6100 → 9200 칸에서)
-    h.tick_to(9400);
+    h.cc.clear();  // 1단계 필수 키가 빠진 칸 — 보류가 H_hold를 넘으면 input_lost (보류 시작 4100 → 7200 칸에서)
+    h.tick_to(7400);
     ASSERT_EQ(h.alerts.size(), 2u);
     EXPECT_EQ(h.alerts[1].kind, AlertEventKind::End);
     EXPECT_EQ(h.alerts[1].reason, "input_lost");
@@ -671,7 +671,7 @@ TEST(BlindDos, EndOnInputLostAndSessionReset) {
     h.victim(3, kS, 0);
     h.tick_to(1000);
     h.attack(7, kS, 1000);
-    h.tick_to(6100);
+    h.tick_to(4100);
     h.hello("S2");
     ASSERT_EQ(h.alerts.size(), 2u);
     EXPECT_EQ(h.alerts[1].kind, AlertEventKind::End);
@@ -687,38 +687,38 @@ TEST(BlindDos, EndOnInputSilent) {
   h.victim(3, kS, 0);
   h.tick_to(1000);
   h.attack(7, kS, 1000);
-  h.tick_to(6100);  // 마감 6050 → 6100에서 RAISE
+  h.tick_to(4100);  // 마감 4050 → 4100에서 RAISE
   ASSERT_EQ(h.alerts.size(), 1u);
-  h.attack(8, kS, 6100);  // 다음 공격 연결 — t₀ 6150, 마감 11150
-  h.tick_to(6200);
+  h.attack(8, kS, 4100);  // 다음 공격 연결 — t₀ 4150, 마감 7150
+  h.tick_to(4200);
   EXPECT_EQ(h.rule->waiting(), 1u);
   EngineOutput o = h.engine.on_input_silent(10000);
   ASSERT_EQ(o.alerts.size(), 1u);
   EXPECT_EQ(o.alerts[0].kind, AlertEventKind::End);
   EXPECT_EQ(o.alerts[0].reason, "input_silent");
   EXPECT_EQ(o.alerts[0].alert_id, h.alerts[0].alert_id);
-  EXPECT_EQ(o.alerts[0].t, kT0 + 6200);
+  EXPECT_EQ(o.alerts[0].t, kT0 + 4200);
   ASSERT_EQ(o.diags.size(), 1u);
   EXPECT_EQ(o.diags[0].kind, DiagKind::InputSilent);
   EXPECT_EQ(h.rule->waiting(), 1u);
-  h.tick_to(11200);  // 재개 — 마감 11150이 11200에서 걸림 → 새 RAISE
+  h.tick_to(7200);  // 재개 — 마감 7150이 7200에서 걸림 → 새 RAISE
   ASSERT_EQ(h.alerts.size(), 2u);
   EXPECT_EQ(h.alerts[1].kind, AlertEventKind::Raise);
-  EXPECT_EQ(h.alerts[1].t, kT0 + 11200);
+  EXPECT_EQ(h.alerts[1].t, kT0 + 7200);
   EXPECT_NE(h.alerts[1].alert_id, h.alerts[0].alert_id);
   EXPECT_EQ(h.rule->waiting(), 0u);
 }
 
-// late_until (14_ §4.3 — Q-57 해결, 이슈 #46): 공격 연결의 줄이 늦게 오면(순서 역전) 늦은 줄 + 6 s까지만 판정에서 빠진다.
-// 마감(t₀ + 5 s)이 그 안이면 걸림 없음, 뒤면 걸림 — ues[].uncertain에 late
+// late_until (14_ §4.3 — Q-57 해결, 이슈 #46): 공격 연결의 줄이 늦게 오면(순서 역전) 늦은 줄 + 4 s(수락 대기 3 s + UPDATE 모음
+// 지연 1 s)까지만 판정에서 빠진다. 마감(t₀ + 3 s)이 그 안이면 걸림 없음, 뒤면 걸림 — ues[].uncertain에 late
 TEST(BlindDos, LateUntil) {
   {
     Harness h;
     h.victim(3, kS, 0);
     h.tick_to(1100);          // 워터마크 1100
-    h.attack(7, kS, 1000);    // 1000~1060 모두 늦음 → late_until 7060, t₀ 1050 → 마감 6050 < 7060 → 판정 없음
+    h.attack(7, kS, 1000);    // 1000~1060 모두 늦음 → late_until 5060, t₀ 1050 → 마감 4050 < 5060 → 판정 없음
     EXPECT_EQ(h.rule->waiting(), 1u);
-    h.tick_to(7200);
+    h.tick_to(5200);
     EXPECT_EQ(h.rule->waiting(), 0u);
     EXPECT_TRUE(h.alerts.empty());
   }
@@ -726,14 +726,14 @@ TEST(BlindDos, LateUntil) {
     Harness h;
     h.victim(3, kS, 0);
     h.tick_to(1100);
-    h.rrc(1000, 7, "UL", "RRCSetupRequest", part1(kS));  // 늦은 줄 → late_until 7000
+    h.rrc(1000, 7, "UL", "RRCSetupRequest", part1(kS));  // 늦은 줄 → late_until 5000
     h.tick_to(2100);
     h.rrc(2100, 7, "DL", "RRCSetup");
-    h.rrc(2150, 7, "UL", "RRCSetupComplete", stmsi(kS));  // t₀ 2150 → 마감 7150 ≥ 7000 → 판정
+    h.rrc(2150, 7, "UL", "RRCSetupComplete", stmsi(kS));  // t₀ 2150 → 마감 5150 ≥ 5000 → 판정
     h.nas(2150, 7, "UL", "ServiceRequest", stmsi(kS), 1);
-    h.tick_to(7200);
+    h.tick_to(5200);
     ASSERT_EQ(h.alerts.size(), 1u);
-    EXPECT_EQ(h.alerts[0].t, kT0 + 7200);
+    EXPECT_EQ(h.alerts[0].t, kT0 + 5200);
     ASSERT_EQ(h.alerts[0].ues.size(), 1u);
     EXPECT_EQ(h.alerts[0].ues[0].uncertain, (std::vector<std::string>{"late"}));
   }
@@ -747,7 +747,7 @@ TEST(BlindDos, T28EvictionHoldsClear) {
   Harness h(SeriesConfig{}, false, ue_cfg);
   h.victim(3, kS, 0);
   h.tick_to(1000);
-  h.attack(7, kS, 1000);  // t₀ 1050 → 마감 6050 → RAISE 6100, 마지막 걸림 6050
+  h.attack(7, kS, 1000);  // t₀ 1050 → 마감 4050 → RAISE 4100, 마지막 걸림 4050
   h.tick_to(30000);
   ASSERT_EQ(h.alerts.size(), 1u);
   EXPECT_EQ(h.alerts[0].values.at("evicted"), 0);
@@ -755,7 +755,7 @@ TEST(BlindDos, T28EvictionHoldsClear) {
     h.rrc(30000 + i, 1000 + i, "UL", "RRCSetupRequest", kRandom);
     h.rrc(30000 + i, 1000 + i, "UL", "RRCSetupComplete");
   }
-  h.tick_to(66200);  // 보류가 없었다면 6050 + 60 s → 66100에 CLEAR
+  h.tick_to(64200);  // 보류가 없었다면 4050 + 60 s → 64100에 CLEAR
   EXPECT_EQ(h.engine.ue_table().counts(1).evicted, 3);
   EXPECT_EQ(h.alerts.size(), 1u);
   h.tick_to(90100);  // 밀어내기 시각 30100 + 60 s = 90100 — 그 칸에서 창 밖(≤ now − 60 s)이라 풀린다
@@ -764,14 +764,14 @@ TEST(BlindDos, T28EvictionHoldsClear) {
   EXPECT_EQ(h.alerts[1].t, kT0 + 90100);
 }
 
-// 지평 둘 (14_ §1.1·§4.3, 15_ §2.6 — 11/05 Q-72 해결, 이슈 #94): 증거 지평은 수락 대기 + 보류 창(clear_quiet_ms) + UPDATE 모음 지연(66 s) —
-// 상태표는 여기에 여유 1 s를 더해 닫힌 항목의 recent를 보관한다. 늦은 줄 지평(late_until)은 종전대로 수락 대기 + UPDATE 모음 지연(6 s)
+// 지평 둘 (14_ §1.1·§4.3, 15_ §2.6 — 11/05 Q-72 해결, 이슈 #94): 증거 지평은 수락 대기 + 보류 창(clear_quiet_ms) + UPDATE 모음 지연(64 s) —
+// 상태표는 여기에 여유 1 s를 더해 닫힌 항목의 recent를 보관한다. 늦은 줄 지평(late_until)은 종전대로 수락 대기 + UPDATE 모음 지연(4 s)
 TEST(BlindDos, EvidenceHorizon) {
   Harness h;
-  EXPECT_EQ(h.rule->evidence_horizon_ms(), 66000);
-  EXPECT_EQ(h.engine.ue_table().recent_keep_ms(), 67000);
-  EXPECT_EQ(h.rule->late_horizon_ms(), 6000);
-  EXPECT_EQ(h.engine.ue_table().late_horizon_ms(), 6000);
+  EXPECT_EQ(h.rule->evidence_horizon_ms(), 64000);
+  EXPECT_EQ(h.engine.ue_table().recent_keep_ms(), 65000);
+  EXPECT_EQ(h.rule->late_horizon_ms(), 4000);
+  EXPECT_EQ(h.engine.ue_table().late_horizon_ms(), 4000);
 }
 
 // L20-T30 (15_ §2.3 — 11/05 Q-72 해결, 이슈 #94): 짝은 망 수락을 한 번이라도 얻은 열린 항목뿐 — 반복 공격에서 앞선 공격 연결(수락 없음)은
@@ -781,17 +781,17 @@ TEST(BlindDos, T30PeersOnlyAccepted) {
   Harness h;
   h.victim(3, kS, 0);
   h.tick_to(1000);
-  h.attack(7, kS, 1000);  // t₀ 1050, 마감 6050
+  h.attack(7, kS, 1000);  // t₀ 1050, 마감 4050
   h.tick_to(2000);
-  h.attack(8, kS, 2000);  // t₀ 2050, 마감 7050 — 짝은 피해자 3뿐
+  h.attack(8, kS, 2000);  // t₀ 2050, 마감 5050 — 짝은 피해자 3뿐
   h.release(2500, 7);     // 앞선 공격 연결 해제 — 8의 짝이 아니다
-  h.tick_to(7200);
+  h.tick_to(5200);
   ASSERT_EQ(h.alerts.size(), 2u);
   EXPECT_EQ(h.alerts[0].kind, AlertEventKind::Raise);
-  EXPECT_EQ(h.alerts[0].t, kT0 + 6100);
+  EXPECT_EQ(h.alerts[0].t, kT0 + 4100);
   EXPECT_EQ(h.alerts[0].severity, Severity::Medium);
   EXPECT_EQ(h.alerts[1].kind, AlertEventKind::Update);
-  EXPECT_EQ(h.alerts[1].t, kT0 + 7100);
+  EXPECT_EQ(h.alerts[1].t, kT0 + 5100);
   EXPECT_EQ(h.alerts[1].severity, Severity::Medium);
   ASSERT_EQ(h.alerts[1].ues.size(), 1u);
   EXPECT_EQ(h.alerts[1].ues[0].du_ue_id, 8);
@@ -800,25 +800,25 @@ TEST(BlindDos, T30PeersOnlyAccepted) {
   EXPECT_EQ(h.alerts[1].ues[0].values.at("peer"), "concurrent");
 }
 
-// L20-T31 (15_ §2.3 '짝의 확실성' — 11/05 Q-72 해결, 이슈 #94): late 짝은 late_until(늦은 줄 + 6 s)이 지나기 전에만 불확실 — 그 안의 공격은
+// L20-T31 (15_ §2.3 '짝의 확실성' — 11/05 Q-72 해결, 이슈 #94): late 짝은 late_until(늦은 줄 + 4 s)이 지나기 전에만 불확실 — 그 안의 공격은
 // peer_uncertain, 지난 뒤의 공격은 concurrent. 11/04까지는 영구라 세션이 긴 피해자에게 늦은 줄 하나가 붙으면 그 뒤 모든 공격이
 // peer_uncertain이었다(25_ §3.3-5)
 TEST(BlindDos, T31LatePeerExpires) {
   Harness h;
   h.victim(3, kS, 0);
   h.tick_to(1100);
-  h.rrc(1000, 3, "UL", "MeasurementReport");  // 피해자의 늦은 줄 → late_until 7000
-  h.attack(7, kS, 1200);                      // t₀ 1250 < 7000 → peer_uncertain, 마감 6250
-  h.tick_to(6400);
+  h.rrc(1000, 3, "UL", "MeasurementReport");  // 피해자의 늦은 줄 → late_until 5000
+  h.attack(7, kS, 1200);                      // t₀ 1250 < 5000 → peer_uncertain, 마감 4250
+  h.tick_to(4400);
   ASSERT_EQ(h.alerts.size(), 1u);
-  EXPECT_EQ(h.alerts[0].t, kT0 + 6300);
+  EXPECT_EQ(h.alerts[0].t, kT0 + 4300);
   EXPECT_EQ(h.alerts[0].cond, kCondUncertain);
   EXPECT_EQ(h.alerts[0].ues[0].values.at("peer"), "peer_uncertain");
-  h.attack(8, kS, 7000);                      // t₀ 7050 ≥ 7000 → concurrent, 마감 12050
-  h.tick_to(12200);
+  h.attack(8, kS, 5000);                      // t₀ 5050 ≥ 5000 → concurrent, 마감 8050
+  h.tick_to(8200);
   ASSERT_EQ(h.alerts.size(), 2u);
   EXPECT_EQ(h.alerts[1].kind, AlertEventKind::Update);
-  EXPECT_EQ(h.alerts[1].t, kT0 + 12100);
+  EXPECT_EQ(h.alerts[1].t, kT0 + 8100);
   ASSERT_EQ(h.alerts[1].ues.size(), 1u);
   EXPECT_EQ(h.alerts[1].ues[0].du_ue_id, 8);
   EXPECT_EQ(h.alerts[1].ues[0].cond, kCondConcurrent);

@@ -107,6 +107,7 @@ TEST(Config, RepoConfigFileParses) {
   ASSERT_TRUE(bl.ok) << bl.error;
   EXPECT_TRUE(bl.warnings.empty());
   EXPECT_EQ(bl.config.accept_wait_ms, BlindDosConfig{}.accept_wait_ms);
+  EXPECT_EQ(BlindDosConfig{}.accept_wait_ms, 3000);  // 15_ §1.2·§2.4 — 11/15 사용자 결정 5,000 → 3,000
   EXPECT_EQ(bl.config.clear_quiet_ms, BlindDosConfig{}.clear_quiet_ms);
   auto st = parse_auth_stall_config(r.config.rules.at("L3-01-O"));
   ASSERT_TRUE(st.ok) << st.error;
@@ -323,9 +324,9 @@ TEST(Config, Stage2KeysRead) {
   EXPECT_FALSE(parse_config(R"({"alert":{"held_alert":1}})").ok);  // 불리언만
   EXPECT_FALSE(parse_config(R"({"alert":{"held_alert":"true"}})").ok);
 
-  auto bl = parse_blind_dos_config(R"({"accept_wait_ms":3000,"clear_quiet_ms":30000})");
+  auto bl = parse_blind_dos_config(R"({"accept_wait_ms":4000,"clear_quiet_ms":30000})");
   ASSERT_TRUE(bl.ok) << bl.error;
-  EXPECT_EQ(bl.config.accept_wait_ms, 3000);
+  EXPECT_EQ(bl.config.accept_wait_ms, 4000);
   EXPECT_EQ(bl.config.clear_quiet_ms, 30000);
   auto st = parse_auth_stall_config(R"({"auth_wait_ms":1500,"window_ms":5000,"n_stall":3,"clear_quiet_ms":2000,"max_conn":null})");
   ASSERT_TRUE(st.ok) << st.error;

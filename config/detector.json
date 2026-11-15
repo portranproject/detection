@@ -10,7 +10,7 @@
       "h_hold_ms": 10000, "missing_key_slots": 10,
       "max_conn": 96
     },
-    "L3-20": { "accept_wait_ms": 5000, "clear_quiet_ms": 60000 },
+    "L3-20": { "accept_wait_ms": 3000, "clear_quiet_ms": 60000 },
     "L3-01-O": {
       "auth_wait_ms": 2000, "window_ms": 10000, "n_stall": 5,
       "clear_quiet_ms": 60000, "max_conn": 96

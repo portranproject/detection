@@ -10,7 +10,7 @@ stage2_green 데이터는 '직접 작성'하되, 손으로 한 줄씩 치는 대
 기대 경보 시각은 이 생성기가 아니라 명세 식으로 손 계산한 값이다(1단계 gen_kpm2.py와 같은 방식):
  - 마감 d는 그 셀 kpm2의 t_end >= d인 첫 칸(= ceil(d/P)*P)에서 처리된다(14_ §6.1).
  - L3-01-O 고착 = t₀(AuthenticationRequest) + auth_wait_ms(2000); 셀 성립은 그 마감 처리 칸(15_ §4.3).
- - L3-20 걸림 = t₀(s_tmsi 정해진 줄) + accept_wait_ms(5000)(15_ §2.3).
+ - L3-20 걸림 = t₀(s_tmsi 정해진 줄) + accept_wait_ms(3000 — 11/15 전 5000, 15_ §2.3·§2.4).
  - L3-21 갈래① 실패 UE = t_f(첫 실패) + fail_accept_wait_ms(5000); 갈래② 즉시(그 줄 t_ms)(15_ §5.3).
  - CLEAR = 마지막 걸림/성립 + clear_quiet_ms(60000) 이상인 첫 kpm2(15_ §2.5·§4.5·§5.5).
 시각은 모두 데이터 시작(T0)부터의 상대 ms이고, 테스트는 ±tolerance_ms(1칸)를 허용한다.
@@ -500,10 +500,10 @@ def s20_high():
     sc = Scenario("S20_L3-20_CONNECTED_high", "피해자 S-TMSI로 연 공격 연결, 수락 없음, 피해자 해제 → high (L20-T4)", 7000)
     sc.ue(1).normal_register(0, s_tmsi=VIC)
     a = sc.ue(2)
-    a.setup_req(1000).setup(1001).setup_complete(1090, s_tmsi=VIC)   # t₀ = 1090, 마감 6090 → 처리 6100
+    a.setup_req(1000).setup(1001).setup_complete(1090, s_tmsi=VIC)   # t₀ = 1090, 마감 4090 → 처리 4100
     a.svc_req(1091, s_tmsi=VIC)
     sc.ue(1).ctx_release_cmd(1110)   # 피해자 해제 +20 ms → victim_released
-    sc.alert("RAISE", 6100, "L3-20", severity="high", mode="normal")
+    sc.alert("RAISE", 4100, "L3-20", severity="high", mode="normal")
     return sc
 
 
@@ -513,7 +513,7 @@ def s20_medium():
     sc.ue(1).normal_register(0, s_tmsi=VIC)
     a = sc.ue(2)
     a.setup_req(1000).setup(1001).setup_complete(1090, s_tmsi=VIC).svc_req(1091, s_tmsi=VIC)
-    sc.alert("RAISE", 6100, "L3-20", severity="medium", mode="normal")
+    sc.alert("RAISE", 4100, "L3-20", severity="medium", mode="normal")
     return sc
 
 
@@ -524,7 +524,7 @@ def s20_closed():
     a = sc.ue(2)
     a.setup_req(1000).setup(1001).setup_complete(1090, s_tmsi=VIC).svc_req(1091, s_tmsi=VIC)   # t₀ = 1090
     a.svc_reject(2000).ctx_release_complete(2090)   # 닫힘(released), closed_ms ≈ 1000
-    sc.alert("RAISE", 6100, "L3-20", severity="medium", mode="normal")
+    sc.alert("RAISE", 4100, "L3-20", severity="medium", mode="normal")
     return sc
 
 
@@ -545,7 +545,7 @@ def s20_peer_uncertain():
     sc.set_loss(1, 5, ["UL", "DL"])   # t=500 로스 → 피해자 loss, t_loss=600, 이후 줄 없음 → uncertain
     a = sc.ue(2)
     a.setup_req(1000).setup(1001).setup_complete(1090, s_tmsi=VIC).svc_req(1091, s_tmsi=VIC)
-    sc.alert("RAISE", 6100, "L3-20", severity="medium", mode="normal")
+    sc.alert("RAISE", 4100, "L3-20", severity="medium", mode="normal")
     return sc
 
 
@@ -556,37 +556,37 @@ def s20_repeat_update():
     for k, t in enumerate([1000, 2000, 3000]):
         a = sc.ue(2 + k)
         a.setup_req(t).setup(t + 1).setup_complete(t + 90, s_tmsi=VIC).svc_req(t + 91, s_tmsi=VIC)
-    sc.alert("RAISE", 6100, "L3-20", severity="medium", mode="normal")
-    sc.alert("UPDATE", 7100, "L3-20")
-    sc.alert("UPDATE", 8100, "L3-20")
+    sc.alert("RAISE", 4100, "L3-20", severity="medium", mode="normal")
+    sc.alert("UPDATE", 5100, "L3-20")
+    sc.alert("UPDATE", 6100, "L3-20")
     return sc
 
 
 def s20_repeat_prior_attack_released():
     # 15_ §2.3 짝 = 망 수락을 한 번이라도 얻은 열린 항목 (11/05 Q-72 해결, 이슈 #94 — 25_ §3.2-5 재현): 같은 피해자로 공격 연결 2번
     # (1 s 간격), 앞선 공격 연결은 2.5 s에 해제. 둘째 공격의 짝은 피해자뿐이라 앞선 공격의 해제가 victim_released로 세어지지 않는다
-    # → RAISE 6100(앞선 공격, 마감 전 닫힘)·UPDATE 7100 모두 medium. 11/04까지는 앞선 공격 연결도 짝이라 UPDATE가 high였다
+    # → RAISE 4100(앞선 공격, 마감 전 닫힘)·UPDATE 5100 모두 medium(11/15 수락 대기 3 s — 그전 6100·7100). 11/04까지는 앞선 공격 연결도 짝이라 UPDATE가 high였다
     sc = Scenario("S20_L3-20_반복_앞선공격해제_medium",
                   "공격 연결 2번, 앞선 공격 연결을 2.5 s에 해제 — 둘째 공격의 짝은 피해자뿐, medium 유지 (15_ §2.3, 11/05 Q-72)", 7600)
     sc.ue(1).normal_register(0, s_tmsi=VIC)
     a = sc.ue(2)
-    a.setup_req(1000).setup(1001).setup_complete(1090, s_tmsi=VIC).svc_req(1091, s_tmsi=VIC)   # t₀ = 1090, 마감 6090
+    a.setup_req(1000).setup(1001).setup_complete(1090, s_tmsi=VIC).svc_req(1091, s_tmsi=VIC)   # t₀ = 1090, 마감 4090
     b = sc.ue(3)
-    b.setup_req(2000).setup(2001).setup_complete(2090, s_tmsi=VIC).svc_req(2091, s_tmsi=VIC)   # t₀ = 2090, 마감 7090
+    b.setup_req(2000).setup(2001).setup_complete(2090, s_tmsi=VIC).svc_req(2091, s_tmsi=VIC)   # t₀ = 2090, 마감 5090
     a.ctx_release_cmd(2500).ctx_release_complete(2500)   # 앞선 공격 연결 해제 — b의 짝이 아니다
-    sc.alert("RAISE", 6100, "L3-20", severity="medium", mode="normal")
-    sc.alert("UPDATE", 7100, "L3-20", severity="medium")
+    sc.alert("RAISE", 4100, "L3-20", severity="medium", mode="normal")
+    sc.alert("UPDATE", 5100, "L3-20", severity="medium")
     return sc
 
 
 def s20_clear():
-    # L20-T16: RAISE 뒤 60 s 새 걸림 없음 → CLEAR. 마지막 걸림=6090 → t_end>=66090 → 66100
+    # L20-T16: RAISE 뒤 60 s 새 걸림 없음 → CLEAR. 마지막 걸림=4090 → t_end>=64090 → 64100
     sc = Scenario("S20_L3-20_해제_CLEAR", "공격 1건 RAISE 뒤 60 s 조용 → CLEAR (L20-T16)", 66300)
     sc.ue(1).normal_register(0, s_tmsi=VIC)
     a = sc.ue(2)
     a.setup_req(1000).setup(1001).setup_complete(1090, s_tmsi=VIC).svc_req(1091, s_tmsi=VIC)
-    sc.alert("RAISE", 6100, "L3-20", severity="medium", mode="normal")
-    sc.alert("CLEAR", 66100, "L3-20")
+    sc.alert("RAISE", 4100, "L3-20", severity="medium", mode="normal")
+    sc.alert("CLEAR", 64100, "L3-20")
     return sc
 
 
@@ -598,7 +598,7 @@ def s20_session_end():
     a.setup_req(1000).setup(1001).setup_complete(1090, s_tmsi=VIC).svc_req(1091, s_tmsi=VIC)
     sc.ue(1).ctx_release_cmd(1110)
     sc.change_session(70, "S2")   # t=7000: 새 session → END(session_reset)
-    sc.alert("RAISE", 6100, "L3-20", severity="high", mode="normal")
+    sc.alert("RAISE", 4100, "L3-20", severity="high", mode="normal")
     sc.alert("END", 7000, "L3-20", reason="session_reset")
     return sc
 
