@@ -118,10 +118,10 @@ TEST(AlertLog, UeUnitLinesMatchStage2Examples) {
   e.kind = AlertEventKind::Raise;
   e.severity = Severity::High;
   e.log_fields = {{"peer", "concurrent"}, {"ue", "1/7/58"}, {"s_tmsi", "0x0123456789ab"}, {"peers", "1/3/41"},
-                  {"nas", "ServiceRequest"}, {"wait_ms", "5000"}, {"victim_released", "1"}};
+                  {"nas", "ServiceRequest"}, {"wait_ms", "3000"}, {"victim_released", "1"}};
   EXPECT_EQ(format_log_line(e),
             "ALERT RAISE rule=L3-20 cell=1 t=1793005265500 peer=concurrent ue=1/7/58 s_tmsi=0x0123456789ab "
-            "peers=1/3/41 nas=ServiceRequest wait_ms=5000 victim_released=1 severity=high mode=normal candidates=");
+            "peers=1/3/41 nas=ServiceRequest wait_ms=3000 victim_released=1 severity=high mode=normal candidates=");
 
   // UPDATE: 새로 걸린 UE 수(ues 크기)와 누적 수 (14_ §8.2)
   e.kind = AlertEventKind::Update;

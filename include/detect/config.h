@@ -79,7 +79,9 @@ struct AlertConfig {
 
 // 룰 L3-20 Blind DoS (15_ §2.4·§1.2). 설정 파일 rules.L3-20에 키가 없으면 이 기본값을 쓴다 (4_ §1.2)
 struct BlindDosConfig {
-  int64_t accept_wait_ms = 5000;   // accept_wait_ms — T_acc, 망 수락 대기 (15_ §2.3)
+  // accept_wait_ms — T_acc, 망 수락 대기 (15_ §2.3). 11/15 사용자 결정으로 5,000 → 3,000: 정상 접속 300건의 RRCSetupComplete →
+  // RRC SecurityModeCommand(평균 257.0 ms·표준편차 84.4 ms)에 Cantelli 부등식을 쓴 '정상이 넘을 확률 0.1%' 경계 2.93 s (15_ §2.4)
+  int64_t accept_wait_ms = 3000;
   int64_t clear_quiet_ms = 60000;  // clear_quiet_ms — 마지막 걸림 뒤 이만큼 새로 걸린 UE가 없으면 해제 (15_ §2.5)
 };
 

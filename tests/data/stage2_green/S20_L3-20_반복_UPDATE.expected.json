@@ -8,7 +8,7 @@
       "kind": "RAISE",
       "rule": "L3-20",
       "cell": 1,
-      "t_rel_ms": 6100,
+      "t_rel_ms": 4100,
       "mode": "normal",
       "severity": "medium"
     },
@@ -16,13 +16,13 @@
       "kind": "UPDATE",
       "rule": "L3-20",
       "cell": 1,
-      "t_rel_ms": 7100
+      "t_rel_ms": 5100
     },
     {
       "kind": "UPDATE",
       "rule": "L3-20",
       "cell": 1,
-      "t_rel_ms": 8100
+      "t_rel_ms": 6100
     }
   ]
 }
