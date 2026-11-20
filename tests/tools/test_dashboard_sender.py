@@ -227,7 +227,7 @@ class Base(unittest.TestCase):
         c = {
             "url": self.srv.url() if self.srv else "https://127.0.0.1:9/ingest",
             "ca_file": CERTS["a"][0] if CERTS else None,
-            "env": "lab",
+            "env": "on-premise",
             "inputs": [{"path": self.ev, "kind": "evidence"}],
             "state_path": self.state,
             "batch_interval_ms": 100,
@@ -314,7 +314,7 @@ class Sending(Base):
             self.assertLessEqual(len(b), 1048576)
             self.assertTrue(b.endswith(b"\n"))
             self.assertEqual(h.get("Content-Type"), "application/x-ndjson")
-            self.assertEqual(h.get("X-Env"), "lab")
+            self.assertEqual(h.get("X-Env"), "on-premise")
             self.assertNotIn("Authorization", h)
             self.assertTrue(h.get("User-Agent", "").startswith("ran-detect-sender/"))
         self.assertEqual(self.state_offset(), len(data))
@@ -616,17 +616,18 @@ class Config(Base):
         r = subprocess.run([sys.executable, SENDER], capture_output=True, text=True)
         self.assertEqual(r.returncode, 1)
 
-    def test_S51_env_format(self):
-        # S51 (이슈 #104, 19_ §3): env(X-Env)는 첫 글자 영숫자 — 대시보드는 '영숫자로 시작, 영숫자·._- 64자 이하'가 아니면
-        #      400으로 묶음을 거부하므로, '-'로 시작하는 값은 시작할 때 막는다. 지금 쓰는 값과 32자는 통과
+    def test_S51_env_values(self):
+        # S51 (11/20 이슈 #119, 19_ §3): env(X-Env)는 aws·on-premise 둘만 — 예전 이름(p4·lab·p5·sample·replay-kpm-only),
+        #      대소문자·구분자가 다른 것, 앞뒤 공백, 형식 오류(이슈 #104의 '-'로 시작 등), 문자열이 아닌 값은 시작할 때 막는다
         self.write(lines_bytes([L(1)]))
-        for bad in ("-p4", "-", "-lab-", "a" * 33, ""):
+        for bad in ("p4", "lab", "p5", "sample", "replay-kpm-only", "AWS", "On-Premise", "on_premise", "onpremise",
+                    "on-prem", " aws", "aws ", "-p4", "-", "", None, 1, ["aws"]):
             with self.subTest(env=bad):
                 r = self.run_sender(self.cfg(env=bad), "--dry-run")
                 self.assertEqual(r.returncode, 1, r.stderr)
                 self.assertIn("config_error", r.stderr)
                 self.assertIn("env:", r.stderr)
-        for good in ("p4", "lab", "sample", "replay-kpm-only", "7", "a" * 32):
+        for good in ("aws", "on-premise"):
             with self.subTest(env=good):
                 r = self.run_sender(self.cfg(env=good), "--dry-run")
                 self.assertEqual(r.returncode, 0, r.stderr)

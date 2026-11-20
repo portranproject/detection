@@ -568,7 +568,7 @@ class RunScript(unittest.TestCase):
 
     def sender_cfg(self):
         # 실행 스크립트를 띄운 폴더 기준 상대 경로 — 탐지 엔진 기본값 evidence.jsonl과 같은 파일
-        c = {"url": self.srv.url(), "ca_file": CERT["a"][0], "env": "lab",
+        c = {"url": self.srv.url(), "ca_file": CERT["a"][0], "env": "on-premise",
              "inputs": [{"path": "evidence.jsonl", "kind": "evidence"}], "state_path": "sender_state.json",
              "batch_interval_ms": 100, "poll_ms": 50, "timeout_ms": 2000, "retry_initial_ms": 100,
              "retry_max_ms": 400, "stats_interval_ms": 0}

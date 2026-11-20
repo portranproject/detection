@@ -11,6 +11,7 @@
   python3 tools/dashboard_sender.py --config config/sender.json --check-detector-config config/detector.json
 
 - 줄의 내용을 바꾸지 않는다. 환경 이름은 헤더 X-Env로 붙이고 토큰은 쓰지 않는다 (19_ §1, 17_ §1.3).
+  환경 이름은 aws·on-premise 둘뿐이다 (19_ §3, 11/20 이슈 #119).
   예외는 상시 경로의 묶은 kpm2 줄과 hello의 node_id뿐이다 (24_ §4.2).
 - 보낸 위치는 200·400을 받은 뒤에만 상태 파일에 저장한다 — '최소 한 번' (19_ §4.3, 17_ §1.5).
 - 종료 코드: 0 정상, 1 설정 오류, 2 약속에 없는 응답, 3 TLS 검증 실패, 4 상태 파일 저장 실패, 5 잠금 실패 (19_ §7).
@@ -87,7 +88,7 @@ class ConfigError(Exception):
 DEFAULTS = {
     "url": "https://3.39.170.31/ingest",
     "ca_file": None,
-    "env": "lab",
+    "env": "on-premise",        # 헤더 X-Env — aws·on-premise 둘뿐, 기본은 온프레미스 (19_ §3, 11/20 이슈 #119)
     "inputs": [{"path": "evidence.jsonl", "kind": "evidence"}],
     "state_path": "sender_state.json",
     "start_at": "beginning",
@@ -119,10 +120,11 @@ INT_RANGES = {
     "kpm2_close_lag_ms": (100, 60000),  # 24_ §4.1
 }
 
-# 헤더 X-Env 값 형식 (19_ §3, 이슈 #104) — 대시보드는 '영숫자로 시작, 영숫자·._- 64자 이하'가 아니면 묶음 전체를 400으로
-# 거부하고, 전송기는 400을 받은 묶음을 다시 보내지 않고 넘긴다(19_ §6). 그래서 그 부분집합(소문자·숫자·-, 첫 글자 영숫자,
-# 32자 이하)만 받아, 설정 실수로 모든 묶음이 조용히 버려지지 않게 시작할 때 막는다.
-ENV_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
+# 헤더 X-Env 값 (19_ §3, 11/20 사용자 결정 — 이슈 #119): 환경 이름을 AWS 테스트베드는 aws, 연구실(온프레미스)은
+# on-premise 두 가지로 고정한다. 그 전에는 형식만 보고(이슈 #104 — 첫 글자 영숫자) p4·lab·p5·sample 등 무엇이든 받아
+# 같은 환경이 여러 이름으로 대시보드에 갔다. 그 밖의 값은 시작할 때 설정 오류로 막는다 — 두 값 모두 대시보드 형식
+# ('영숫자로 시작, 영숫자·._- 64자 이하', 어기면 400 — 19_ §6)을 지킨다.
+ENV_VALUES = ("aws", "on-premise")
 
 
 def _is_int(v):
@@ -179,8 +181,8 @@ def load_config(path):
     cfg["ca_file"] = ca
 
     env = val("env")
-    if not isinstance(env, str) or not ENV_RE.fullmatch(env):
-        raise ConfigError("env: must match [a-z0-9][a-z0-9-]{0,31}")
+    if not isinstance(env, str) or env not in ENV_VALUES:
+        raise ConfigError("env: must be one of " + ", ".join(ENV_VALUES))
     cfg["env"] = env
 
     # 따라 읽을 파일 — evidence 1개 이상(반드시) + input 0~1개. input 항목이 있으면 상시 KPM이 켜진다 (24_ §4.1)

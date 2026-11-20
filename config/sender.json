@@ -1,7 +1,7 @@
 {
   "url": "https://3.39.170.31/ingest",
   "ca_file": null,
-  "env": "lab",
+  "env": "on-premise",
   "inputs": [{"path": "evidence.jsonl", "kind": "evidence"}],
   "state_path": "sender_state.json",
   "start_at": "beginning",
