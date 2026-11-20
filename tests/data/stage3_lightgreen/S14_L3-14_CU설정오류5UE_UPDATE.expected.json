@@ -1,0 +1,27 @@
+{
+  "scenario": "S14_L3-14_CU설정오류5UE_UPDATE",
+  "description": "5개 UE가 200 ms 간격으로 모두 C2 — RAISE(첫 UE) + 1 s 모음 UPDATE (L14-T12)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-14",
+      "cell": 1,
+      "t_rel_ms": 1200,
+      "severity": "high",
+      "branch": "2",
+      "alert_kind": "attack",
+      "conditions": []
+    },
+    {
+      "kind": "UPDATE",
+      "rule": "L3-14",
+      "cell": 1,
+      "t_rel_ms": 2200,
+      "severity": "high",
+      "branch": "2",
+      "alert_kind": "attack"
+    }
+  ]
+}

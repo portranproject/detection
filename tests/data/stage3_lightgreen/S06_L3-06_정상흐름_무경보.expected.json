@@ -1,0 +1,7 @@
+{
+  "scenario": "S06_L3-06_정상흐름_무경보",
+  "description": "기본 흐름 F + 해제 — 정상 명령 → Complete, Reject 없음 (L06-T1)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

@@ -1,0 +1,19 @@
+{
+  "scenario": "S21_L3-21_정상_무경보",
+  "description": "정상 등록 + 동기 실패 뒤 재인증 수락 — L3-21 경보 없음 (L21-T1·T2). 동기 실패(#21)는 4단계 이상 유형 AN-01이 명세대로 받는다 — t0+520 실패가 든 창 kpm2(t0+600)에 AN-01 RAISE (21_ §3.3, 11/04 M9 이슈 #70 — '무경보'는 L3-21 기준이라 이름은 그대로, 1_ §6)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "AN-01",
+      "cell": 1,
+      "t_rel_ms": 600,
+      "severity": "medium",
+      "alert_kind": "anomaly",
+      "candidates": [
+        "L3-07-OV"
+      ]
+    }
+  ]
+}

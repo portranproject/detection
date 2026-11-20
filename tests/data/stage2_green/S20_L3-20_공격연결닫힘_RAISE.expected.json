@@ -1,0 +1,16 @@
+{
+  "scenario": "S20_L3-20_공격연결닫힘_RAISE",
+  "description": "공격 연결이 1 s 뒤 거절·해제 — 마감 때 걸림 (L20-T6)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-20",
+      "cell": 1,
+      "t_rel_ms": 4100,
+      "mode": "normal",
+      "severity": "medium"
+    }
+  ]
+}

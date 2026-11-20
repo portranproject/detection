@@ -1,0 +1,19 @@
+{
+  "scenario": "SAN04_AN-04_DU해제요청_RAISE",
+  "description": "P에서 est_cause mo-Data, 해제가 DU의 UEContextReleaseRequest(rl-failure) 뒤 × 3 — 후보 L3-33-V (AN04-T4)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "AN-04",
+      "cell": 1,
+      "t_rel_ms": 42300,
+      "severity": "medium",
+      "alert_kind": "anomaly",
+      "candidates": [
+        "L3-33-V"
+      ]
+    }
+  ]
+}

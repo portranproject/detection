@@ -1,0 +1,7 @@
+{
+  "scenario": "S14_L3-14_정상흐름_무경보",
+  "description": "F + 해제 — 능력 요청은 RRC 보안 뒤, 응답은 짝이 있음 (L14-T1)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

@@ -1,0 +1,19 @@
+{
+  "scenario": "S06_L3-06_같은연결추가거부_RAISE",
+  "description": "T4 + t0+135(J2)·t0+250(AS 무결성 뒤) 거부 — RAISE 1번, UPDATE 없음 (L06-T7)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-06",
+      "cell": 1,
+      "t_rel_ms": 1100,
+      "severity": "medium",
+      "alert_kind": "attack",
+      "conditions": [
+        "mitm_ul_relay"
+      ]
+    }
+  ]
+}

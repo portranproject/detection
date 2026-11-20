@@ -1,0 +1,19 @@
+{
+  "scenario": "S24_L3-24_UL로스_RAISE",
+  "description": "T4 + 응답 창 ue_evt_lost [\"UL\"] — DL 로스 아님 → RAISE (L24-T11)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-24",
+      "cell": 1,
+      "t_rel_ms": 1100,
+      "severity": "medium",
+      "alert_kind": "attack",
+      "conditions": [
+        "mitm_ul_relay"
+      ]
+    }
+  ]
+}

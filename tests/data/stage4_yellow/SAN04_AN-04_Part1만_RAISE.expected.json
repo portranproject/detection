@@ -1,0 +1,21 @@
+{
+  "scenario": "SAN04_AN-04_Part1만_RAISE",
+  "description": "RRCSetupComplete·ServiceRequest에 s_tmsi 없이 Part1만 아는 P × 3 — Part1 색인으로 세어 RAISE (AN04-T6)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "AN-04",
+      "cell": 1,
+      "t_rel_ms": 42300,
+      "severity": "medium",
+      "alert_kind": "anomaly",
+      "candidates": [
+        "L3-02-Oa",
+        "L3-34-OV",
+        "L3-12-V"
+      ]
+    }
+  ]
+}

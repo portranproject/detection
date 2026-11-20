@@ -1,0 +1,7 @@
+{
+  "scenario": "SAN06a_AN-06a_정상흐름_무경보",
+  "description": "기본 흐름 F + 해제 — 보안 뒤 명령이 다시 오지 않음 (AN06a-T1)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

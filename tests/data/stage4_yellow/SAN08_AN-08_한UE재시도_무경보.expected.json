@@ -1,0 +1,7 @@
+{
+  "scenario": "SAN08_AN-08_한UE재시도_무경보",
+  "description": "S1이 이동 등록을 10 s 간격 5번(실패 뒤 T3511 재시도 — 연결마다 새 du) — 서로 다른 S-TMSI 1 (11/04 사용자 결정, AN08-T8)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

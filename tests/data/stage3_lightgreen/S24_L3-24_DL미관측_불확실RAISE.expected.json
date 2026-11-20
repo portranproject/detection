@@ -1,0 +1,24 @@
+{
+  "scenario": "S24_L3-24_DL미관측_불확실RAISE",
+  "description": "모든 kpm2 ue_evt_lost [\"DL\"], DL 줄 없음(T2) — 응답이 보류돼 불확실 경보만 (L24-T22). t0+175 능력 응답도 rrc_sec OFF·R 0이라 L3-14 불확실 경보가 같은 칸에 함께 남 (L14-T16)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-24",
+      "cell": 1,
+      "t_rel_ms": 1200,
+      "severity": "medium",
+      "alert_kind": "anomaly"
+    },
+    {
+      "kind": "RAISE",
+      "rule": "L3-14",
+      "cell": 1,
+      "t_rel_ms": 1200,
+      "severity": "medium",
+      "alert_kind": "anomaly"
+    }
+  ]
+}

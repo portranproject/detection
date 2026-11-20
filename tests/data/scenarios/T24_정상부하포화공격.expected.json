@@ -1,0 +1,20 @@
+{
+  "scenario": "T24_정상부하포화공격",
+  "description": "정상 60/s + 공격 50/s 5~20 s(점유 ≈100 > 96 포화) — ratio ≈ 0.45 < θ라 비율로는 못 잡고 C2a(F_w ≥ 10)로 잡음 (10/27 Q-41). 셀 한도 96 → F_abs = 10 (11/12)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "cell": 1,
+      "t_rel_ms": 6400,
+      "mode": "normal"
+    },
+    {
+      "kind": "CLEAR",
+      "cell": 1,
+      "t_rel_ms": 24800,
+      "mode": "normal"
+    }
+  ]
+}

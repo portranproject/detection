@@ -1,0 +1,18 @@
+{
+  "scenario": "S14_L3-14_연결당한번_RAISE",
+  "description": "C2 + t0+125 보안 전 능력 요청 하나 더 — 갈래 ② 걸림 1번(extra 1) (L14-T10)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-14",
+      "cell": 1,
+      "t_rel_ms": 1200,
+      "severity": "high",
+      "branch": "2",
+      "alert_kind": "attack",
+      "conditions": []
+    }
+  ]
+}

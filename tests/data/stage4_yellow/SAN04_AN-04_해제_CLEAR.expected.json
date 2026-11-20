@@ -1,0 +1,28 @@
+{
+  "scenario": "SAN04_AN-04_해제_CLEAR",
+  "description": "P × 3 RAISE 뒤 마지막 걸림 + 60 s 이상인 첫 kpm2에 CLEAR (AN04-T8)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "AN-04",
+      "cell": 1,
+      "t_rel_ms": 42300,
+      "severity": "medium",
+      "alert_kind": "anomaly",
+      "candidates": [
+        "L3-02-Oa",
+        "L3-34-OV",
+        "L3-12-V"
+      ]
+    },
+    {
+      "kind": "CLEAR",
+      "rule": "AN-04",
+      "cell": 1,
+      "t_rel_ms": 102200,
+      "alert_kind": "anomaly"
+    }
+  ]
+}

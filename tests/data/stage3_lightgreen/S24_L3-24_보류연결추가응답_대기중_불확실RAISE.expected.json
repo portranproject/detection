@@ -1,0 +1,16 @@
+{
+  "scenario": "S24_L3-24_보류연결추가응답_대기중_불확실RAISE",
+  "description": "T9 + 마감 처리 전 t0+135에 응답 하나 더 — 다시 후보를 만들지 않음, held_w 1 (L24-T20)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-24",
+      "cell": 1,
+      "t_rel_ms": 1200,
+      "severity": "medium",
+      "alert_kind": "anomaly"
+    }
+  ]
+}

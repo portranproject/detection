@@ -1,0 +1,21 @@
+{
+  "scenario": "SAN04_AN-04_짧은연결3번_RAISE",
+  "description": "P × 3(1.2 s 연결, 20 s 간격, est_cause mt-Access) — 3번째 닫힘에서 K 3, RAISE 후보는 페이징 셋 (AN04-T2)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "AN-04",
+      "cell": 1,
+      "t_rel_ms": 42300,
+      "severity": "medium",
+      "alert_kind": "anomaly",
+      "candidates": [
+        "L3-02-Oa",
+        "L3-34-OV",
+        "L3-12-V"
+      ]
+    }
+  ]
+}

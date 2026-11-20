@@ -1,0 +1,20 @@
+{
+  "scenario": "S14_L3-14_늦은응답줄_RAISE",
+  "description": "C1 줄(t_ms t0+98)이 t0+100 kpm2 뒤에 도착(late) — 다음 kpm2 t0+200에 갈래 ① RAISE (L14-T15, 11/05 Q-74)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-14",
+      "cell": 1,
+      "t_rel_ms": 1200,
+      "severity": "medium",
+      "branch": "1",
+      "alert_kind": "attack",
+      "conditions": [
+        "mitm_ul_relay"
+      ]
+    }
+  ]
+}

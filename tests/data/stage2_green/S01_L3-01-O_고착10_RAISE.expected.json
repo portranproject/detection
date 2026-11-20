@@ -1,0 +1,16 @@
+{
+  "scenario": "S01_L3-01-O_고착10_RAISE",
+  "description": "인증 무응답 10대(200 ms 간격) — 창 안 고착 10건 성립 → medium (L01-T3)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-01-O",
+      "cell": 1,
+      "t_rel_ms": 4000,
+      "mode": "normal",
+      "severity": "medium"
+    }
+  ]
+}

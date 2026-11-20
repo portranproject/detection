@@ -1,0 +1,14 @@
+{
+  "scenario": "T22c_hello전kpm2_ver2",
+  "description": "hello 전 kpm2 한 줄, 8 s에 ver=2 줄 — 둘 다 버림, 판정은 T03과 같음",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "cell": 1,
+      "t_rel_ms": 6400,
+      "mode": "normal"
+    }
+  ]
+}

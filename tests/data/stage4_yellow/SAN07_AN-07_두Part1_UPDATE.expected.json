@@ -1,0 +1,28 @@
+{
+  "scenario": "SAN07_AN-07_두Part1_UPDATE",
+  "description": "Part1 하나 × 4(RAISE, 4번째는 경보 값 extra — 11/04 결정) + 둘째 Part1 × 3(25 s부터) — 둘째가 걸린 칸에 UPDATE",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "AN-07",
+      "cell": 1,
+      "t_rel_ms": 23100,
+      "severity": "medium",
+      "alert_kind": "anomaly",
+      "candidates": [
+        "L3-11-V1",
+        "L3-11-V2"
+      ]
+    },
+    {
+      "kind": "UPDATE",
+      "rule": "AN-07",
+      "cell": 1,
+      "t_rel_ms": 47100,
+      "severity": "medium",
+      "alert_kind": "anomaly"
+    }
+  ]
+}

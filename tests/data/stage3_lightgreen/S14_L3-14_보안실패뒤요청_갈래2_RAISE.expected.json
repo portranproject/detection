@@ -1,0 +1,18 @@
+{
+  "scenario": "S14_L3-14_보안실패뒤요청_갈래2_RAISE",
+  "description": "RRC SecurityModeFailure(t0+145) 뒤 t0+150 능력 요청(FAILED) — K = t0+200에 갈래 ② RAISE (L14-T5)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-14",
+      "cell": 1,
+      "t_rel_ms": 1200,
+      "severity": "high",
+      "branch": "2",
+      "alert_kind": "attack",
+      "conditions": []
+    }
+  ]
+}

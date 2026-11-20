@@ -1,0 +1,16 @@
+{
+  "scenario": "S01_L3-01-O_순서역전1줄_만료뒤_RAISE",
+  "description": "RegistrationRequest 한 줄이 늦은 10대 — 2 s 마감은 late_until 안(판정 없음), 17 s 뒤 재요청 무응답은 고착 → RAISE (이슈 #46, 15_ L01-T21)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-01-O",
+      "cell": 1,
+      "t_rel_ms": 21000,
+      "mode": "normal",
+      "severity": "medium"
+    }
+  ]
+}

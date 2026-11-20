@@ -1,0 +1,21 @@
+{
+  "url": "https://3.39.170.31/ingest",
+  "ca_file": null,
+  "env": "lab",
+  "inputs": [{"path": "evidence.jsonl", "kind": "evidence"}],
+  "state_path": "sender_state.json",
+  "start_at": "beginning",
+  "batch_interval_ms": 1000,
+  "batch_max_lines": 500,
+  "batch_max_bytes": 1048576,
+  "line_max_bytes": 65536,
+  "poll_ms": 200,
+  "timeout_ms": 10000,
+  "retry_initial_ms": 1000,
+  "retry_max_ms": 60000,
+  "stats_interval_ms": 60000,
+  "kpm2_interval_ms": 3000,
+  "send_ue_evt": false,
+  "kpm2_close_lag_ms": 2000,
+  "hello_node_id": "cu"
+}

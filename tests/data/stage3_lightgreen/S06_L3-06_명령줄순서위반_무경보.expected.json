@@ -1,0 +1,7 @@
+{
+  "scenario": "S06_L3-06_명령줄순서위반_무경보",
+  "description": "같은 창에서 명령 줄(t0+125)이 Complete 줄(t0+131) 뒤에 옴, 주입 거부 없음 — Complete는 후보 줄이 아님 (L06-T19)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

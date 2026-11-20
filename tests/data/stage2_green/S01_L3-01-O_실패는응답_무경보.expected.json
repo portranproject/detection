@@ -1,0 +1,7 @@
+{
+  "scenario": "S01_L3-01-O_실패는응답_무경보",
+  "description": "인증 응답이 AuthenticationFailure — 고착 아님 (L01-T5)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

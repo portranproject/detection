@@ -1,0 +1,11 @@
+build/
+build-*/
+__pycache__/
+evidence.jsonl
+input.jsonl
+sender_state.json
+sender_state.json.lock
+# 출력 파일 회전·로그 (29_ §2.3·§5.2, 이슈 #102)
+evidence.jsonl.*
+input.jsonl.*
+logs/

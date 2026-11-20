@@ -1,0 +1,19 @@
+{
+  "scenario": "S06_L3-06_정상완료뒤주입_RAISE",
+  "description": "F + J2(t0+135) — Complete를 응답으로 세어 R 1·A 1 → K = t0+200에 RAISE (L06-T5)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-06",
+      "cell": 1,
+      "t_rel_ms": 1200,
+      "severity": "medium",
+      "alert_kind": "attack",
+      "conditions": [
+        "mitm_ul_relay"
+      ]
+    }
+  ]
+}

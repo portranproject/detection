@@ -1,0 +1,7 @@
+{
+  "scenario": "T04_저속공격",
+  "description": "저속 공격 3/s — A_w = 4 < A_min",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

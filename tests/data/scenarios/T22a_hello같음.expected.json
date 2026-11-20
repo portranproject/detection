@@ -1,0 +1,14 @@
+{
+  "scenario": "T22a_hello같음",
+  "description": "공격 중 10 s에 같은 session·같은 파라미터 hello — 상태 유지",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "cell": 1,
+      "t_rel_ms": 6400,
+      "mode": "normal"
+    }
+  ]
+}

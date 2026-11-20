@@ -1,0 +1,14 @@
+{
+  "scenario": "T13_포화2",
+  "description": "포화 ②: 공격 60/s 5~10 s, 이후 거절 60/s(Att + NetworkReject) 10~20 s",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "cell": 1,
+      "t_rel_ms": 6300,
+      "mode": "normal"
+    }
+  ]
+}

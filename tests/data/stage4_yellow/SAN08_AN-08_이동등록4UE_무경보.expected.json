@@ -1,0 +1,7 @@
+{
+  "scenario": "SAN08_AN-08_이동등록4UE_무경보",
+  "description": "M에서 4 UE만 — 창 안 4 (AN08-T3)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

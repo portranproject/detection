@@ -1,0 +1,7 @@
+{
+  "scenario": "S24_L3-24_NAS암호_무경보",
+  "description": "공격 응답이 ProtectedNAS — 이름이 보이지 않아 판정 없음 (L24-T17)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

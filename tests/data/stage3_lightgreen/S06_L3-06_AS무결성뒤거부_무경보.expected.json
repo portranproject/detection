@@ -1,0 +1,7 @@
+{
+  "scenario": "S06_L3-06_AS무결성뒤거부_무경보",
+  "description": "F 뒤 t0+220 거부 — AS 무결성(nia2) 뒤라 후보 없음 (L06-T6)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

@@ -1,0 +1,20 @@
+{
+  "scenario": "SAN07_AN-07_미완료3번_RAISE",
+  "description": "Q × 3(Complete 없이 2 s 뒤 CU 해제, 10 s 간격) — 3번째 닫힘에서 K 3, RAISE 후보 L3-11-V1·V2 (AN07-T2)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "AN-07",
+      "cell": 1,
+      "t_rel_ms": 23100,
+      "severity": "medium",
+      "alert_kind": "anomaly",
+      "candidates": [
+        "L3-11-V1",
+        "L3-11-V2"
+      ]
+    }
+  ]
+}

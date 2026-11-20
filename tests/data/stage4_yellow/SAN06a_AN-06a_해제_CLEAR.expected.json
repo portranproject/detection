@@ -1,0 +1,26 @@
+{
+  "scenario": "SAN06a_AN-06a_해제_CLEAR",
+  "description": "R 뒤 마지막 걸림(t0+1,250) + 60 s 이상인 첫 kpm2에 CLEAR (AN06a-T9)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "AN-06a",
+      "cell": 1,
+      "t_rel_ms": 2300,
+      "severity": "medium",
+      "alert_kind": "anomaly",
+      "candidates": [
+        "L3-06-O1"
+      ]
+    },
+    {
+      "kind": "CLEAR",
+      "rule": "AN-06a",
+      "cell": 1,
+      "t_rel_ms": 62300,
+      "alert_kind": "anomaly"
+    }
+  ]
+}

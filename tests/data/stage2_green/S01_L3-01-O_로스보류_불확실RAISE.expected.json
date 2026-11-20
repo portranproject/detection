@@ -1,0 +1,17 @@
+{
+  "scenario": "S01_L3-01-O_로스보류_불확실RAISE",
+  "description": "인증 무응답 10대지만 대기 구간 UL 로스 → 모두 보류, 공격 경보 없이 불확실 경보 RAISE (L01-T9·L01-T20)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-01-O",
+      "cell": 1,
+      "t_rel_ms": 4000,
+      "mode": "normal",
+      "severity": "medium",
+      "alert_kind": "anomaly"
+    }
+  ]
+}

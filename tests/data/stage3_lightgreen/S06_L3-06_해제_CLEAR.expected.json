@@ -1,0 +1,26 @@
+{
+  "scenario": "S06_L3-06_해제_CLEAR",
+  "description": "T4 뒤 마지막 걸림(t0+98) + 60 s 이상인 첫 kpm2에 CLEAR (L06-T16)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-06",
+      "cell": 1,
+      "t_rel_ms": 1100,
+      "severity": "medium",
+      "alert_kind": "attack",
+      "conditions": [
+        "mitm_ul_relay"
+      ]
+    },
+    {
+      "kind": "CLEAR",
+      "rule": "L3-06",
+      "cell": 1,
+      "t_rel_ms": 61100,
+      "alert_kind": "attack"
+    }
+  ]
+}

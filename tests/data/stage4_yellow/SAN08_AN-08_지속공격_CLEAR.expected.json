@@ -1,0 +1,33 @@
+{
+  "scenario": "SAN08_AN-08_지속공격_CLEAR",
+  "description": "S1~S5 할당 뒤 5 UE가 20 s 간격으로 12회씩 이동 등록 — 5번째에서 RAISE, 그 뒤 회복 전 재등록 55회는 extra이고 반복마다 마지막 성립이 밀려 공격 내내 경보 하나, 마지막 재등록 + 60 s에 CLEAR(values extra 55) — 11/04 Q-69 (가), 이슈 #86 (21_ §8.3-1·§8.5, 14_ §8.3)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "AN-08",
+      "cell": 1,
+      "t_rel_ms": 29100,
+      "severity": "medium",
+      "alert_kind": "anomaly",
+      "candidates": [
+        "L3-17-OV",
+        "L3-26-O"
+      ],
+      "ues_total": 5
+    },
+    {
+      "kind": "CLEAR",
+      "rule": "AN-08",
+      "cell": 1,
+      "t_rel_ms": 309100,
+      "alert_kind": "anomaly",
+      "ues_total": 5,
+      "values": {
+        "extra": 55,
+        "evicted": 0
+      }
+    }
+  ]
+}

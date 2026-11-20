@@ -1,0 +1,7 @@
+{
+  "scenario": "SAN06a_AN-06a_완료줄로스_무경보",
+  "description": "F의 t0+131 완료 줄을 로스로 놓침(그 창 ue_evt_lost [\"UL\",\"DL\"]) — nas_sec이 CMD로 남아 R의 재등장을 못 봄 (AN06a-T8)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

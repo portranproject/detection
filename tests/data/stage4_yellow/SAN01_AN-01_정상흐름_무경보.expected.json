@@ -1,0 +1,7 @@
+{
+  "scenario": "SAN01_AN-01_정상흐름_무경보",
+  "description": "기본 흐름 F + 해제 — 실패 줄 없음 (AN01-T1)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": []
+}

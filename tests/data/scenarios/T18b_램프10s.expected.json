@@ -1,0 +1,14 @@
+{
+  "scenario": "T18b_램프10s",
+  "description": "정상 2/s, 40 s부터 0→30/s를 10 s에 걸쳐",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "cell": 1,
+      "t_rel_ms": 42700,
+      "mode": "normal"
+    }
+  ]
+}

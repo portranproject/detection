@@ -1,0 +1,14 @@
+{
+  "scenario": "T25b_정상웜업",
+  "description": "T25와 같되 F가 처음부터 있음 — 웜업 평균 base 5·σ 0(일정), 11/12 C3 = base + z·σ 참 → RAISE 36.9 s (25_ X3b)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "cell": 1,
+      "t_rel_ms": 36900,
+      "mode": "normal"
+    }
+  ]
+}

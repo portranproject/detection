@@ -1,0 +1,45 @@
+{
+  "socket_path": "/run/ran-detect/kpm.sock",
+  "max_line_bytes": 65536,
+  "max_cells": 64, "max_slots": 1024, "input_silent_ms": 10000,
+  "rules": {
+    "L3-01-V": {
+      "window_ms": 1000, "a_min": 5, "theta": 0.5, "f_abs_frac": 0.1, "z": 3,
+      "m_raise": 3, "k_clear": 10, "h_sat_ms": 3000,
+      "warmup_ms": 30000, "baseline_tau_s": 300,
+      "h_hold_ms": 10000, "missing_key_slots": 10,
+      "max_conn": 96
+    },
+    "L3-20": { "accept_wait_ms": 3000, "clear_quiet_ms": 60000 },
+    "L3-01-O": {
+      "auth_wait_ms": 2000, "window_ms": 10000, "n_stall": 5, "n_stall_frac": 0.1,
+      "clear_quiet_ms": 60000, "max_conn": 96
+    },
+    "L3-21": {
+      "window_ms": 10000, "n_fail": 5, "n_fail_frac": 0.1, "max_conn": 96,
+      "fail_accept_wait_ms": 3000, "reg_repeat": 3, "clear_quiet_ms": 60000,
+      "ignore_causes": []
+    },
+    "L3-24": { "clear_quiet_ms": 60000 },
+    "L3-14": { "clear_quiet_ms": 60000 },
+    "L3-06": { "clear_quiet_ms": 60000 },
+    "AN-01": { "window_ms": 60000, "n_sync": 1, "clear_quiet_ms": 60000 },
+    "AN-06a": { "n_reauth": 1, "clear_quiet_ms": 60000 },
+    "AN-02": { "window_ms": 60000, "n_idreq": 5, "clear_quiet_ms": 60000 },
+    "AN-04": { "short_ms": 5000, "window_ms": 300000, "n_short": 3, "clear_quiet_ms": 60000 },
+    "AN-07": { "window_ms": 60000, "n_fail": 3, "clear_quiet_ms": 60000 },
+    "AN-08": { "window_ms": 60000, "n_reg": 5, "known_ms": 600000, "clear_quiet_ms": 60000 }
+  },
+  "ue_table": { "max_ues": 4096, "recent_n": 16, "stale_setup_ms": 30000, "closed_recent_max": 1024,
+                "tomb_ms": 600000, "tomb_max": 4096, "alloc_ms": 3600000, "alloc_max": 4096,
+                "ghost_k": 2, "ghost_margin": 16, "ghost_hold_ms": 5000, "evict_protect_ms": 5000,
+                "dl_unobserved_ms": 5000, "recent_keep_margin_ms": 1000 },
+  "alert": { "ues_max": 50, "update_min_ms": 1000, "ue_evidence_max": 50, "held_alert": true },
+  "evidence": {
+    "mode": "full", "pre_slots": null, "post_slots": 10,
+    "queue_max": 4096, "out_path": "evidence.jsonl",
+    "rotate_s": 3600, "rotate_max_bytes": 268435456, "keep_s": 604800
+  },
+  "input_record": { "path": null, "queue_max_bytes": 8388608,
+                    "rotate_s": 3600, "rotate_max_bytes": 268435456, "keep_s": 259200, "min_free_bytes": 2147483648 }
+}

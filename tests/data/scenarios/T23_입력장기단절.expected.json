@@ -1,0 +1,21 @@
+{
+  "scenario": "T23_입력장기단절",
+  "description": "공격 중 10~21 s 입력 끊김(11 s > H_hold 10 s), 이후 정상만",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "cell": 1,
+      "t_rel_ms": 6400,
+      "mode": "normal"
+    },
+    {
+      "kind": "END",
+      "cell": 1,
+      "t_rel_ms": 21100,
+      "mode": "normal",
+      "reason": "input_lost"
+    }
+  ]
+}

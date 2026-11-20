@@ -1,0 +1,20 @@
+{
+  "scenario": "SAN08_AN-08_이동등록5UE_RAISE",
+  "description": "M — S1~S5를 할당받은 5 UE가 20 s 뒤부터 10 s 간격으로 이동 등록(5G-GUTI Si) — 5번째에서 서로 다른 S-TMSI 5, RAISE (AN08-T2)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "AN-08",
+      "cell": 1,
+      "t_rel_ms": 61100,
+      "severity": "medium",
+      "alert_kind": "anomaly",
+      "candidates": [
+        "L3-17-OV",
+        "L3-26-O"
+      ]
+    }
+  ]
+}

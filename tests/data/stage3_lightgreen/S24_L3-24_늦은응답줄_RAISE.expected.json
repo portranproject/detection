@@ -1,0 +1,19 @@
+{
+  "scenario": "S24_L3-24_늦은응답줄_RAISE",
+  "description": "공격 응답 줄(t_ms t0+98)이 t0+100 kpm2 뒤에 도착(late) — 다음 kpm2 t0+200에 RAISE (L24-T15, 11/05 Q-74)",
+  "t0_ms": 1792209000000,
+  "tolerance_ms": 100,
+  "alerts": [
+    {
+      "kind": "RAISE",
+      "rule": "L3-24",
+      "cell": 1,
+      "t_rel_ms": 1200,
+      "severity": "medium",
+      "alert_kind": "attack",
+      "conditions": [
+        "mitm_ul_relay"
+      ]
+    }
+  ]
+}
